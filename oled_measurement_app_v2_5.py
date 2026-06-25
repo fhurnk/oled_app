@@ -51,7 +51,7 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = "series_config.json"
 JOURNAL_FILE = "series_journal.xlsx"

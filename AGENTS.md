@@ -1,5 +1,14 @@
 # Codex Project Instructions
 
+## Read First
+
+When a new Codex chat starts in this repository, read these files before changing code:
+
+1. `CODEX_PROJECT.md` - concise machine-oriented project map and current-version pointers.
+2. `docs/project_manifest.json` - structured source of truth for paths, version files, release commands, and ignored local data.
+3. `AGENTS.md` - operational rules for Codex work.
+4. `CHANGELOG.md` and the latest `docs/versions/vX.Y.Z.md` - recent behavior changes.
+
 ## Versioning, Changelog, And GitHub Releases
 
 For every user-visible behavior change, bug fix, documentation change, or release preparation:
@@ -11,7 +20,7 @@ For every user-visible behavior change, bug fix, documentation change, or releas
    - Increment `MAJOR` only for breaking data/layout/project changes.
 3. Add a new top entry to `CHANGELOG.md` with the date and concise sections such as `Добавлено`, `Изменено`, `Исправлено`.
 4. Add `docs/versions/vX.Y.Z.md` for the new version.
-5. Update visible current-version references in `README.md` and `PROJECT_OVERVIEW.md`.
+5. Update visible current-version references in `README.md`, `PROJECT_OVERVIEW.md`, `CODEX_PROJECT.md`, and `docs/project_manifest.json`.
 6. If `docs/versions/` is listed in any project tree, include the new version file there.
 7. Commit the version bump and code/docs changes together with a short message.
 8. Publish the commit to GitHub.

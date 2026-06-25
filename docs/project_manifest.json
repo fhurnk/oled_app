@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "OLED Measurement App",
+    "repository": "fhurnk/oled_app",
+    "current_version": "v1.5.6",
+    "app_version_source": {
+      "file": "oled_measurement_app_v2_5.py",
+      "symbol": "APP_VERSION"
+    }
+  },
+  "codex_read_order": [
+    "CODEX_PROJECT.md",
+    "docs/project_manifest.json",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "docs/versions/v1.5.6.md"
+  ],
+  "entry_points": {
+    "application": "oled_measurement_app_v2_5.py",
+    "release_script": "scripts/create_github_release.py",
+    "requirements": "requirements.txt",
+    "simulator_config_example": "oled_simulator_config.json"
+  },
+  "documentation": {
+    "human_readme": "README.md",
+    "human_project_overview": "PROJECT_OVERVIEW.md",
+    "codex_project_map": "CODEX_PROJECT.md",
+    "codex_instructions": "AGENTS.md",
+    "changelog": "CHANGELOG.md",
+    "release_workflow": "docs/GITHUB_RELEASE_WORKFLOW.md",
+    "version_archive_dir": "docs/versions"
+  },
+  "versioning": {
+    "format": "vMAJOR.MIDDLE.MINOR",
+    "must_update_for_release": [
+      "oled_measurement_app_v2_5.py",
+      "README.md",
+      "PROJECT_OVERVIEW.md",
+      "CODEX_PROJECT.md",
+      "docs/project_manifest.json",
+      "CHANGELOG.md",
+      "docs/versions/vX.Y.Z.md"
+    ],
+    "release_command": ".\\env\\Scripts\\python.exe .\\scripts\\create_github_release.py vX.Y.Z",
+    "tag_required": true,
+    "github_release_required": true
+  },
+  "measurement_workflows": {
+    "IVL": "Voltage/current/light sweep and pixel status classification.",
+    "SPECTRUM": "Spectral measurement after known opening voltage, with integration-time optimization.",
+    "STABILITY": "Constant-current stability measurement after IVL."
+  },
+  "git": {
+    "primary_remote": "oled_app",
+    "fallback_git_dir": ".git-local",
+    "ignored_local_data": [
+      "OLED_series/",
+      "oled_app_settings.json",
+      "env/",
+      ".venv/",
+      "__pycache__/",
+      "Backup/"
+    ]
+  }
+}
