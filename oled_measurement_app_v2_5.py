@@ -51,7 +51,7 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.6.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = "series_config.json"
 JOURNAL_FILE = "series_journal.xlsx"
@@ -305,7 +305,7 @@ def build_holder_layout(width: int = 930, height: int = 620) -> Dict[int, Dict[s
     left_x1, left_x2, left_x3 = 170, 305, 238
     right_x1, right_x2, right_x3 = width - 390, width - 255, width - 322
     top_y1, top_y3 = 170, 260
-    bottom_y1, bottom_y3 = 355, 445
+    bottom_y1, bottom_y3 = 320, 405
 
     quarter_layout = {
         2: {
@@ -463,6 +463,32 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     },
     "ui": {
         "last_ivl_graph_mode": "raw",
+    },
+    "measurement_defaults": {
+        "ivl": {
+            "sweep_start_V": "0",
+            "sweep_end_V": "5",
+            "step_V": "0.02",
+            "time_per_point_s": "0.01",
+            "cycles": "1",
+            "delay_between_cycles_s": "1",
+            "current_limit_mA": "10",
+        },
+        "spectrum": {
+            "voltage_end_V": "5",
+            "voltage_step_V": "0.1",
+            "current_limit_mA": "6",
+            "led_type": "auto",
+            "use_opening_voltage": True,
+        },
+        "stability": {
+            "current_setpoint_mA": "3.5",
+            "voltage_limit_V": "5",
+            "current_limit_mA": "10",
+            "measurement_time_s": "86400",
+            "sample_interval_s": "1",
+            "autosave_interval_s": "600",
+        },
     },
 }
 
@@ -1221,7 +1247,8 @@ class SeriesJournal:
                 break
 
         if row_idx:
-            ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
+            if measurement_type in {"IVL", "STABILITY"}:
+                ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
             ws_pixels.cell(row=row_idx, column=col["Last updated"], value=date_text)
             if opening_voltage is not None:
                 ws_pixels.cell(row=row_idx, column=col["Opening voltage (V)"], value=float(opening_voltage))
@@ -1693,6 +1720,8 @@ class SpectrumHelper:
         self.log = log
         self._last_integration_time_us: Optional[int] = None
         self.last_optimization_started_saturated = False
+        self.last_optimization_started_saturated_at_10ms = False
+        self.adaptive_initial_time_enabled = False
 
     def init_spectrometer(self):
         import seabreeze
@@ -1912,6 +1941,7 @@ class SpectrumHelper:
         best = None
         best_score = float("inf")
         self.last_optimization_started_saturated = False
+        self.last_optimization_started_saturated_at_10ms = False
 
         self.log(f"  Подбор T_int: цель {p.target_intensity:.0f} counts, область {p.peak_search_mode_for_tint}")
         for iteration in range(1, p.max_iterations + 1):
@@ -1919,6 +1949,7 @@ class SpectrumHelper:
             peak_int, peak_wl, fwhm, is_sat, is_weak, _, _, status = self.analyze_quality(wl, inten, p.peak_search_mode_for_tint)
             if iteration == 1 and is_sat:
                 self.last_optimization_started_saturated = True
+                self.last_optimization_started_saturated_at_10ms = actual_t >= 0.0095
             if is_sat:
                 score = float("inf")
             elif is_weak:
@@ -2215,12 +2246,15 @@ def run_spectrum_measurement(
                     peak_int = peaks[0]["intensity"]
                     peak_wl = peaks[0]["wavelength_nm"]
                     fwhm = peaks[0]["fwhm_nm"]
-                if status not in {"SATURATED", "FAILED", "NO_PEAK"}:
+                if status not in {"SATURATED", "FAILED", "NO_PEAK"} and (
+                    helper.adaptive_initial_time_enabled or helper.last_optimization_started_saturated_at_10ms
+                ):
                     previous_t = float(params.t_int_initial_s)
                     params.t_int_initial_s = float(t_int)
-                    if helper.last_optimization_started_saturated:
+                    helper.adaptive_initial_time_enabled = True
+                    if helper.last_optimization_started_saturated_at_10ms:
                         log(
-                            f"  Первая проба была saturated; следующее начальное T_int: "
+                            f"  Первая проба на 10 мс была saturated; следующее начальное T_int: "
                             f"{params.t_int_initial_s*1000:.2f} мс вместо {previous_t*1000:.2f} мс"
                         )
                 peaks_nm = ", ".join(f"{p['wavelength_nm']:.1f}" for p in peaks)
@@ -2310,8 +2344,9 @@ def run_spectrum_measurement(
                 if progress_callback is not None:
                     progress_callback(idx, float(voltage), float(t_int), wavelengths, processed["raw"], spectrum_to_save, peaks, status)
                 log(f"  Сохранено: T_int={t_int*1000:.2f} мс, peak={peak_int:.0f} @ {peak_wl:.1f} нм, {status}")
-                wb.save(filename)
-                gc.collect()
+                if idx % 3 == 0 or idx == len(voltage_array):
+                    wb.save(filename)
+                    gc.collect()
         finally:
             safe_shutdown_smu(smu)
 
@@ -2852,18 +2887,32 @@ class SpectrumProgressWindow:
     def update_spectrum(self, point: int, voltage: float, t_int: float, wavelengths: np.ndarray, raw: np.ndarray, normalized: np.ndarray, peaks: List[Dict[str, float]], status: str):
         if self.closed:
             return
+        wavelengths_arr = np.asarray(wavelengths, dtype=np.float64)
+        normalized_arr = np.asarray(normalized, dtype=np.float64)
+        if normalized_arr.size and np.any(np.isfinite(normalized_arr)):
+            max_idx = int(np.nanargmax(normalized_arr))
+            max_wavelength = float(wavelengths_arr[max_idx])
+            max_intensity = float(normalized_arr[max_idx])
+        else:
+            max_wavelength = 0.0
+            max_intensity = 0.0
         self.last = {
             "point": point,
             "voltage": voltage,
             "t_int": t_int,
-            "wavelengths": np.asarray(wavelengths, dtype=np.float64),
+            "wavelengths": wavelengths_arr,
             "raw": np.asarray(raw, dtype=np.float64),
-            "normalized": np.asarray(normalized, dtype=np.float64),
+            "normalized": normalized_arr,
             "peaks": peaks,
             "status": status,
+            "max_wavelength": max_wavelength,
+            "max_intensity": max_intensity,
         }
         peak_text = ", ".join(f"{p['wavelength_nm']:.1f}" for p in peaks[:5]) or "нет"
-        self.status_var.set(f"Точка {point}, V={voltage:.3f} В, T_int={t_int*1000:.2f} мс, пики: {peak_text}, {status}")
+        self.status_var.set(
+            f"Точка {point}, V={voltage:.3f} В, T_int={t_int*1000:.2f} мс, "
+            f"max={max_wavelength:.1f} нм / {max_intensity:.0f}, пики: {peak_text}, {status}"
+        )
         self._redraw()
         try:
             self.win.update_idletasks()
@@ -2923,6 +2972,13 @@ class SpectrumProgressWindow:
             c.create_line(*raw_coords, fill="#999999", width=1)
         if len(norm_coords) >= 4:
             c.create_line(*norm_coords, fill="#0B61A4", width=2)
+        max_wavelength = float(self.last.get("max_wavelength") or 0.0)
+        max_intensity = float(self.last.get("max_intensity") or 0.0)
+        if max_wavelength > 0:
+            x, y = to_xy(max_wavelength, max_intensity / max(float(np.nanmax(norm)), 1e-9))
+            c.create_line(x, top, x, bottom, fill="#C43C30", dash=(4, 3))
+            c.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#C43C30", outline="#C43C30")
+            c.create_text(x + 8, max(top + 30, y - 10), text=f"max {max_wavelength:.1f} нм", anchor="w", fill="#C43C30", font=("Segoe UI", 8, "bold"))
 
         for peak in self.last["peaks"][:8]:
             x, y = to_xy(peak["wavelength_nm"], peak["intensity"] / max(float(np.nanmax(norm)), 1e-9))
@@ -2957,6 +3013,18 @@ class OLEDApp(tk.Tk):
 
     def save_ui_preference(self, key: str, value: Any) -> None:
         self.app_settings.setdefault("ui", {})[key] = value
+        save_app_settings(self.app_settings)
+
+    def measurement_defaults(self, section: str) -> Dict[str, Any]:
+        defaults = deepcopy(DEFAULT_APP_SETTINGS.get("measurement_defaults", {}).get(section, {}))
+        saved = self.app_settings.get("measurement_defaults", {}).get(section, {})
+        return deep_update(defaults, saved) if isinstance(saved, dict) else defaults
+
+    def save_measurement_defaults(self, section: str, values: Dict[str, Any]) -> None:
+        self.app_settings.setdefault("measurement_defaults", {})
+        current = self.measurement_defaults(section)
+        current.update(values)
+        self.app_settings["measurement_defaults"][section] = current
         save_app_settings(self.app_settings)
 
     def _set_initial_window_geometry(self):
@@ -3807,8 +3875,7 @@ class OLEDApp(tk.Tk):
         self.tree.column("stability", width=190, minwidth=150, stretch=True)
         table_frame.pack(fill="both", expand=True)
 
-        self.log_widget = ScrolledText(main, height=10, state="disabled")
-        self.log_widget.pack(fill="x", pady=(10, 0))
+        self.log_widget = None
         self.refresh_pixel_table()
         if state_after_ivl == "disabled":
             self.log("В журнале пока нет ВАЯХ: кнопки 'Спектры' и 'Стабильность' неактивны.")
@@ -3883,15 +3950,16 @@ class OLEDApp(tk.Tk):
         pixel_combo = ttk.Combobox(frm, textvariable=pixel_var, values=self.pixel_ids(), width=24, state="readonly")
         pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
 
+        saved_ivl = self.measurement_defaults("ivl")
         fields = [
             ("COM port", str(self.app_settings.get("com_port", "COM3"))),
-            ("Sweep start, V", "0"),
-            ("Sweep end, V", "5"),
-            ("Step, V", "0.02"),
-            ("Time per point, s", "0.01"),
-            ("Cycles", "1"),
-            ("Delay between cycles, s", "1"),
-            ("Current limit, mA", "10"),
+            ("Sweep start, V", str(saved_ivl.get("sweep_start_V", "0"))),
+            ("Sweep end, V", str(saved_ivl.get("sweep_end_V", "5"))),
+            ("Step, V", str(saved_ivl.get("step_V", "0.02"))),
+            ("Time per point, s", str(saved_ivl.get("time_per_point_s", "0.01"))),
+            ("Cycles", str(saved_ivl.get("cycles", "1"))),
+            ("Delay between cycles, s", str(saved_ivl.get("delay_between_cycles_s", "1"))),
+            ("Current limit, mA", str(saved_ivl.get("current_limit_mA", "10"))),
         ]
         vars_ = {}
         for i, (label, default) in enumerate(fields, start=2):
@@ -3924,6 +3992,15 @@ class OLEDApp(tk.Tk):
                     pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
                     luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
                 )
+                self.save_measurement_defaults("ivl", {
+                    "sweep_start_V": vars_["Sweep start, V"].get(),
+                    "sweep_end_V": vars_["Sweep end, V"].get(),
+                    "step_V": vars_["Step, V"].get(),
+                    "time_per_point_s": vars_["Time per point, s"].get(),
+                    "cycles": vars_["Cycles"].get(),
+                    "delay_between_cycles_s": vars_["Delay between cycles, s"].get(),
+                    "current_limit_mA": vars_["Current limit, mA"].get(),
+                })
                 selected_pixel = pixel_var.get()
                 win.destroy()
                 if mode_var.get() == "single":
@@ -4132,16 +4209,17 @@ class OLEDApp(tk.Tk):
         pixel_combo.grid(row=0, column=1, sticky="w", pady=5)
         first_pixel = self.series.journal.get_pixel(pixels[0])
         first_opening = as_float_or_none(first_pixel.get("Opening voltage (V)")) if first_pixel else None
-        use_opening_var = tk.BooleanVar(value=True)
+        saved_spectrum = self.measurement_defaults("spectrum")
+        use_opening_var = tk.BooleanVar(value=bool(saved_spectrum.get("use_opening_voltage", True)))
         opening_info_var = tk.StringVar(value=f"V открытия: {first_opening:.3f} В" if first_opening is not None else "V открытия: нет")
 
         fields = [
             ("COM port", str(self.app_settings.get("com_port", "COM3"))),
             ("Voltage start, V", f"{first_opening:.3f}" if first_opening is not None else "2.0"),
-            ("Voltage end, V", "5"),
-            ("Voltage step, V", "0.1"),
-            ("Current limit, mA", "6"),
-            ("LED type", "auto"),
+            ("Voltage end, V", str(saved_spectrum.get("voltage_end_V", "5"))),
+            ("Voltage step, V", str(saved_spectrum.get("voltage_step_V", "0.1"))),
+            ("Current limit, mA", str(saved_spectrum.get("current_limit_mA", "6"))),
+            ("LED type", str(saved_spectrum.get("led_type", "auto"))),
         ]
         vars_ = {}
         for i, (label, default) in enumerate(fields, start=1):
@@ -4207,6 +4285,13 @@ class OLEDApp(tk.Tk):
                     pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
                     luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
                 )
+                self.save_measurement_defaults("spectrum", {
+                    "voltage_end_V": vars_["Voltage end, V"].get(),
+                    "voltage_step_V": vars_["Voltage step, V"].get(),
+                    "current_limit_mA": vars_["Current limit, mA"].get(),
+                    "led_type": vars_["LED type"].get(),
+                    "use_opening_voltage": bool(use_opening_var.get()),
+                })
                 output_dir = ensure_measurement_folder(
                     self.series.series_folder,
                     "SPECTRUM",
@@ -4258,14 +4343,15 @@ class OLEDApp(tk.Tk):
         pixel_var = tk.StringVar(value=pixels[0])
         ttk.Combobox(frm, values=pixels, textvariable=pixel_var, state="readonly", width=26).grid(row=0, column=1, sticky="w", pady=5)
 
+        saved_stability = self.measurement_defaults("stability")
         fields = [
             ("COM port", str(self.app_settings.get("com_port", "COM3"))),
-            ("Current setpoint, mA", "3.5"),
-            ("Voltage limit, V", "5"),
-            ("Current limit, mA", "10"),
-            ("Measurement time, s", "86400"),
-            ("Sample interval, s", "1"),
-            ("Autosave interval, s", "600"),
+            ("Current setpoint, mA", str(saved_stability.get("current_setpoint_mA", "3.5"))),
+            ("Voltage limit, V", str(saved_stability.get("voltage_limit_V", "5"))),
+            ("Current limit, mA", str(saved_stability.get("current_limit_mA", "10"))),
+            ("Measurement time, s", str(saved_stability.get("measurement_time_s", "86400"))),
+            ("Sample interval, s", str(saved_stability.get("sample_interval_s", "1"))),
+            ("Autosave interval, s", str(saved_stability.get("autosave_interval_s", "600"))),
         ]
         vars_ = {}
         for i, (label, default) in enumerate(fields, start=1):
@@ -4321,6 +4407,14 @@ class OLEDApp(tk.Tk):
                     pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
                     luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
                 )
+                self.save_measurement_defaults("stability", {
+                    "current_setpoint_mA": vars_["Current setpoint, mA"].get(),
+                    "voltage_limit_V": vars_["Voltage limit, V"].get(),
+                    "current_limit_mA": vars_["Current limit, mA"].get(),
+                    "measurement_time_s": vars_["Measurement time, s"].get(),
+                    "sample_interval_s": vars_["Sample interval, s"].get(),
+                    "autosave_interval_s": vars_["Autosave interval, s"].get(),
+                })
                 output_dir = ensure_measurement_folder(
                     self.series.series_folder,
                     "STABILITY",
