@@ -51,7 +51,7 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.5.3"
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = "series_config.json"
 JOURNAL_FILE = "series_journal.xlsx"
@@ -421,7 +421,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "photodiode_range": 4,
         "photodiode_threshold_uA": 0.5,
         "burnout_current_threshold_mA": 10.0,
-        "mark_current_limit_as_burnout": True,
+        "mark_current_limit_as_burnout": False,
         "no_contact_max_led_current_mA": 0.05,
         "burned_confirmation_cycles": 1,
     },
@@ -1299,7 +1299,7 @@ class IVLParams:
     photodiode_range: int = 4
     photodiode_threshold_uA: float = 0.5
     burnout_current_threshold_mA: float = 10.0
-    mark_current_limit_as_burnout: bool = True
+    mark_current_limit_as_burnout: bool = False
     no_contact_max_led_current_mA: float = 0.05
     burned_confirmation_cycles: int = 1
     pixel_area_mm2: float = 1.0
@@ -1337,10 +1337,9 @@ def define_ivl_pixel_status(
 ) -> Tuple[str, str]:
     light_detected = max_photo_uA >= params.photodiode_threshold_uA
     burnout_by_high_current = max_led_current_mA >= params.burnout_current_threshold_mA
-    burnout_by_limit = params.mark_current_limit_as_burnout and current_limit_reached
 
-    if burnout_by_high_current or burnout_by_limit:
-        return "BURNED", "Пробой / сгорание / превышение тока"
+    if burnout_by_high_current:
+        return "BURNED", "Пробой / сгорание по току"
     if light_detected:
         return "WORKING", "Рабочий: фототок выше порога"
     if max_led_current_mA <= params.no_contact_max_led_current_mA:
@@ -1360,7 +1359,7 @@ def describe_ivl_first_measurement(cycles: List[Dict]) -> str:
     if not cycles:
         return "ВАЯХ не выполнена"
     burned = next(
-        (c for c in cycles if c.get("status") == "BURNED" or c.get("current_limit_reached")),
+        (c for c in cycles if c.get("status") == "BURNED"),
         None,
     )
     if burned is not None:
@@ -1608,7 +1607,7 @@ def run_ivl_measurement(
     max_photo = max([c["max_photo_uA"] for c in cycles], default=0.0)
     ivl_diagnosis = describe_ivl_first_measurement(cycles)
     burned_cycle = next(
-        (int(c.get("cycle", 1) or 1) for c in cycles if c.get("status") == "BURNED" or c.get("current_limit_reached")),
+        (int(c.get("cycle", 1) or 1) for c in cycles if c.get("status") == "BURNED"),
         None,
     )
     final_status = "BURNED" if burned_cycle is not None else cycles[-1]["status"] if cycles else "FAILED"
@@ -3325,9 +3324,7 @@ class OLEDApp(tk.Tk):
             return {k: tk.StringVar(value=str(v)) for k, v in self.app_settings.get(section, {}).items() if not isinstance(v, bool)}
 
         ivl_vars = make_vars("ivl_advanced")
-        ivl_bool_vars = {
-            "mark_current_limit_as_burnout": tk.BooleanVar(value=bool(self.app_settings.get("ivl_advanced", {}).get("mark_current_limit_as_burnout", True)))
-        }
+        ivl_bool_vars: Dict[str, tk.BooleanVar] = {}
         ivl_labels = [
             ("photodiode_bias_V", "Смещение фотодиода, В"),
             ("photodiode_range", "Диапазон фотодиода"),
@@ -3338,7 +3335,7 @@ class OLEDApp(tk.Tk):
         ]
         for row, (key, label) in enumerate(ivl_labels):
             self._add_settings_entry(ivl_tab, row, label, ivl_vars[key])
-        ttk.Checkbutton(ivl_tab, text="Считать достижение лимита тока пробоем", variable=ivl_bool_vars["mark_current_limit_as_burnout"]).grid(row=len(ivl_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(ivl_tab, text="BURNED ставится только при достижении тока пробоя/сгорания.", foreground="#555555").grid(row=len(ivl_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Label(ivl_tab, text="Эти параметры убраны из основного окна ВАЯХ, чтобы оно не было перегружено.", foreground="#555555").grid(row=len(ivl_labels)+1, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
         spec_vars = make_vars("spectrum_advanced")
@@ -3872,7 +3869,7 @@ class OLEDApp(tk.Tk):
                     photodiode_range=int(adv.get("photodiode_range", 4)),
                     photodiode_threshold_uA=float(adv.get("photodiode_threshold_uA", 0.5)),
                     burnout_current_threshold_mA=float(adv.get("burnout_current_threshold_mA", 10.0)),
-                    mark_current_limit_as_burnout=bool(adv.get("mark_current_limit_as_burnout", True)),
+                    mark_current_limit_as_burnout=bool(adv.get("mark_current_limit_as_burnout", False)),
                     no_contact_max_led_current_mA=float(adv.get("no_contact_max_led_current_mA", 0.05)),
                     burned_confirmation_cycles=int(adv.get("burned_confirmation_cycles", 1)),
                     pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
