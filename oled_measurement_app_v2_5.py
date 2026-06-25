@@ -51,7 +51,7 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "1.5.3"
+APP_VERSION = "1.5.4"
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = "series_config.json"
 JOURNAL_FILE = "series_journal.xlsx"
@@ -461,6 +461,9 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "photodiode_threshold_uA": 0.1,
         "photodiode_range": 4,
     },
+    "ui": {
+        "last_ivl_graph_mode": "raw",
+    },
 }
 
 
@@ -492,6 +495,23 @@ def load_app_settings() -> Dict[str, Any]:
 
 def save_app_settings(settings: Dict[str, Any]) -> None:
     app_settings_path().write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def fit_toplevel_to_content(win: tk.Toplevel, min_width: int, min_height: int, padding: int = 36) -> None:
+    try:
+        win.update_idletasks()
+        screen_w = int(win.winfo_screenwidth())
+        screen_h = int(win.winfo_screenheight())
+        req_w = int(win.winfo_reqwidth()) + padding
+        req_h = int(win.winfo_reqheight()) + padding
+        width = min(max(min_width, req_w), max(320, screen_w - 80))
+        height = min(max(min_height, req_h), max(260, screen_h - 100))
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 3)
+        win.geometry(f"{width}x{height}+{x}+{y}")
+        win.minsize(min(width, min_width), min(height, min_height))
+    except Exception:
+        win.geometry(f"{min_width}x{min_height}")
 
 
 def ensure_default_sim_config(config_path: Optional[Path] = None) -> Path:
@@ -1672,6 +1692,7 @@ class SpectrumHelper:
         self.params = params
         self.log = log
         self._last_integration_time_us: Optional[int] = None
+        self.last_optimization_started_saturated = False
 
     def init_spectrometer(self):
         import seabreeze
@@ -1890,11 +1911,14 @@ class SpectrumHelper:
         integral = 0.0
         best = None
         best_score = float("inf")
+        self.last_optimization_started_saturated = False
 
         self.log(f"  Подбор T_int: цель {p.target_intensity:.0f} counts, область {p.peak_search_mode_for_tint}")
         for iteration in range(1, p.max_iterations + 1):
             wl, inten, actual_t = self.get_spectrum(spec, t_int)
             peak_int, peak_wl, fwhm, is_sat, is_weak, _, _, status = self.analyze_quality(wl, inten, p.peak_search_mode_for_tint)
+            if iteration == 1 and is_sat:
+                self.last_optimization_started_saturated = True
             if is_sat:
                 score = float("inf")
             elif is_weak:
@@ -2191,6 +2215,14 @@ def run_spectrum_measurement(
                     peak_int = peaks[0]["intensity"]
                     peak_wl = peaks[0]["wavelength_nm"]
                     fwhm = peaks[0]["fwhm_nm"]
+                if status not in {"SATURATED", "FAILED", "NO_PEAK"}:
+                    previous_t = float(params.t_int_initial_s)
+                    params.t_int_initial_s = float(t_int)
+                    if helper.last_optimization_started_saturated:
+                        log(
+                            f"  Первая проба была saturated; следующее начальное T_int: "
+                            f"{params.t_int_initial_s*1000:.2f} мс вместо {previous_t*1000:.2f} мс"
+                        )
                 peaks_nm = ", ".join(f"{p['wavelength_nm']:.1f}" for p in peaks)
                 if peak_int and (
                     best_spectrum_metrics["spectrum_max_intensity"] is None
@@ -2583,7 +2615,7 @@ class IVLProgressWindow:
         self.points: List[Tuple[float, float, float, float, float]] = []
         self.win = tk.Toplevel(parent)
         self.win.title(f"ВАЯХ: {pixel_id}")
-        self.win.geometry("820x560")
+        self.win.geometry("980x700")
         self.win.minsize(680, 460)
         self.win.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -2594,9 +2626,10 @@ class IVLProgressWindow:
         controls = ttk.Frame(main)
         controls.pack(fill="x", pady=(0, 8))
         ttk.Button(controls, text="Остановить измерение и поставить 0 В", command=self.request_stop).pack(side="left")
-        self.graph_mode = tk.StringVar(value="raw")
-        ttk.Radiobutton(controls, text="I / ФД", variable=self.graph_mode, value="raw", command=self._redraw_plot).pack(side="left", padx=(14, 0))
-        ttk.Radiobutton(controls, text="J / L", variable=self.graph_mode, value="converted", command=self._redraw_plot).pack(side="left", padx=(8, 0))
+        ui_settings = getattr(parent, "app_settings", {}).get("ui", {}) if hasattr(parent, "app_settings") else {}
+        self.graph_mode = tk.StringVar(value=str(ui_settings.get("last_ivl_graph_mode", "raw") or "raw"))
+        ttk.Radiobutton(controls, text="I / ФД", variable=self.graph_mode, value="raw", command=self._on_graph_mode_changed).pack(side="left", padx=(14, 0))
+        ttk.Radiobutton(controls, text="J / L", variable=self.graph_mode, value="converted", command=self._on_graph_mode_changed).pack(side="left", padx=(8, 0))
         ttk.Label(
             controls,
             text=f"S={params.pixel_area_mm2:g} мм^2; k={params.luminance_cd_m2_per_uA:g} кд/м^2/мкА",
@@ -2633,6 +2666,7 @@ class IVLProgressWindow:
         xscroll.grid(row=1, column=0, sticky="ew")
         table_wrap.rowconfigure(0, weight=1)
         table_wrap.columnconfigure(0, weight=1)
+        fit_toplevel_to_content(self.win, 980, 700)
         self._redraw_plot()
         self._safe_update()
 
@@ -2699,6 +2733,15 @@ class IVLProgressWindow:
         )
         self._redraw_plot()
         self._safe_update()
+
+    def _on_graph_mode_changed(self):
+        parent = self.win.master
+        try:
+            if hasattr(parent, "save_ui_preference"):
+                parent.save_ui_preference("last_ivl_graph_mode", self.graph_mode.get())
+        except Exception:
+            pass
+        self._redraw_plot()
 
     def _redraw_plot(self):
         if self.closed:
@@ -2784,7 +2827,7 @@ class SpectrumProgressWindow:
         self.last: Optional[Dict[str, Any]] = None
         self.win = tk.Toplevel(parent)
         self.win.title(f"Спектр: {pixel_id}")
-        self.win.geometry("860x560")
+        self.win.geometry("980x700")
         self.win.minsize(680, 460)
         self.win.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -2795,6 +2838,7 @@ class SpectrumProgressWindow:
         self.canvas = tk.Canvas(main, width=820, height=360, bg="white", highlightthickness=1, highlightbackground="#BFBFBF")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _event: self._redraw())
+        fit_toplevel_to_content(self.win, 980, 700)
 
     def close(self):
         if self.closed:
@@ -2910,6 +2954,10 @@ class OLEDApp(tk.Tk):
         self.app_settings: Dict[str, Any] = load_app_settings()
         ensure_default_sim_config(Path(self.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
         self.show_start_screen()
+
+    def save_ui_preference(self, key: str, value: Any) -> None:
+        self.app_settings.setdefault("ui", {})[key] = value
+        save_app_settings(self.app_settings)
 
     def _set_initial_window_geometry(self):
         try:
@@ -3428,6 +3476,7 @@ class OLEDApp(tk.Tk):
         bottom.pack(fill="x", pady=(12, 0))
         ttk.Button(bottom, text="Отмена", command=win.destroy).pack(side="left")
         ttk.Button(bottom, text="Сохранить", command=save).pack(side="right")
+        fit_toplevel_to_content(win, 860, 760)
 
     def _browse_file_for_var(self, var: tk.StringVar):
         filename = filedialog.askopenfilename(title="Выберите JSON-конфиг", filetypes=[("JSON", "*.json"), ("All files", "*.*")])
@@ -3887,6 +3936,7 @@ class OLEDApp(tk.Tk):
         ttk.Label(frm, text="Дополнительные параметры ВАЯХ вынесены в Настройки → ВАЯХ доп.", foreground="#555555").grid(row=len(fields)+2, column=0, columnspan=2, sticky="w", pady=(10, 2))
         ttk.Button(frm, text="Открыть настройки", command=self.open_settings_window).grid(row=len(fields)+3, column=0, sticky="w", pady=12)
         ttk.Button(frm, text="Начать ВАЯХ", command=start).grid(row=len(fields)+3, column=1, sticky="w", pady=12)
+        fit_toplevel_to_content(win, 620, 620)
 
     def measure_one_ivl(self, pixel_id: str, params: IVLParams, return_to_menu: bool = True) -> Optional[Dict[str, Any]]:
         assert self.series is not None
@@ -4059,6 +4109,7 @@ class OLEDApp(tk.Tk):
             result["value"] = var.get()
             dlg.destroy()
         ttk.Button(dlg, text="OK", command=ok).pack(pady=8)
+        fit_toplevel_to_content(dlg, 420, 160)
         self.wait_window(dlg)
         return result["value"]
 
@@ -4188,6 +4239,7 @@ class OLEDApp(tk.Tk):
         ttk.Label(frm, text="V открытия остается в журнале. Для спектра можно временно выбрать другое стартовое напряжение.", foreground="#555555", wraplength=500).grid(row=len(fields)+3, column=0, columnspan=2, sticky="w", pady=(8, 2))
         ttk.Button(frm, text="Открыть настройки", command=self.open_settings_window).grid(row=len(fields)+4, column=0, sticky="w", pady=16)
         ttk.Button(frm, text="Начать съемку спектров", command=start).grid(row=len(fields)+4, column=1, sticky="w", pady=16)
+        fit_toplevel_to_content(win, 620, 650)
 
     # -------------------------- окно стабильности --------------------------
     def open_stability_window(self):
@@ -4287,6 +4339,7 @@ class OLEDApp(tk.Tk):
 
         ttk.Button(frm, text="Открыть настройки", command=self.open_settings_window).grid(row=len(fields)+3, column=0, sticky="w", pady=16)
         ttk.Button(frm, text="Начать стабильность", command=start).grid(row=len(fields)+3, column=1, sticky="w", pady=16)
+        fit_toplevel_to_content(win, 660, 650)
 
 
 def main():
