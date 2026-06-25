@@ -16,7 +16,7 @@ For every user-visible behavior change, bug fix, documentation change, or releas
 7. Commit the version bump and code/docs changes together with a short message.
 8. Publish the commit to GitHub.
 9. Create a git tag for the exact version, for example `v1.5.4`, and push it.
-10. Create a GitHub Release for every version tag. The release title should be the version, and the body should summarize the matching `CHANGELOG.md` entry and link or mention `docs/versions/vX.Y.Z.md`.
+10. Create a GitHub Release for every version tag using `scripts/create_github_release.py vX.Y.Z`, or `gh release create` if GitHub CLI is available. The release title should be the version, and the body should summarize the matching `CHANGELOG.md` entry and link or mention `docs/versions/vX.Y.Z.md`.
 
 Do not leave a code change without a matching version/changelog entry unless the user explicitly asks for an unversioned scratch change.
 

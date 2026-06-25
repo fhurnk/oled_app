@@ -22,10 +22,23 @@ git push <remote> vX.Y.Z
 10. Create a GitHub Release for the same tag:
 
 ```powershell
-gh release create vX.Y.Z --title "vX.Y.Z" --notes-file docs/versions/vX.Y.Z.md
+.\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z
 ```
 
-If `gh` is unavailable, create the release in GitHub's web UI from the pushed tag and use the matching version note as the release body.
+The script uses GitHub CLI if `gh` is installed. Otherwise it calls the GitHub REST API and requires `GITHUB_TOKEN` or `GH_TOKEN` in the environment:
+
+```powershell
+$env:GITHUB_TOKEN = "<token with repo contents access>"
+.\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z
+```
+
+Useful options:
+
+```powershell
+.\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --draft
+.\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --repo fhurnk/oled_app
+.\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --dry-run
+```
 
 ## Local Git Note
 
