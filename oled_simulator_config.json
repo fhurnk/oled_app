@@ -1,0 +1,105 @@
+{
+  "active": true,
+  "global": {
+    "random_seed": 42,
+    "current_noise_relative": 0.01,
+    "photodiode_noise_uA": 0.01,
+    "voltage_noise_V": 0.002,
+    "spectrum_noise_relative": 0.008
+  },
+  "default_pixel": {
+    "mode": "working",
+    "turn_on_voltage_V": 2.65,
+    "current_at_5V_mA": 6.0,
+    "iv_exponent": 2.0,
+    "leakage_mA": 0.0005,
+    "max_current_mA": 30.0,
+    "short_resistance_ohm": 120.0,
+    "burnout_voltage_V": null,
+    "burnout_after_s": null,
+    "photodiode_gain_uA_per_mA": 0.55,
+    "degradation_tau_s": null,
+    "voltage_drift_V_per_s": 0.0,
+    "spectrum": {
+      "dark_offset_counts": 120.0,
+      "dark_counts_per_s": 250.0,
+      "background_counts_per_s": 50.0,
+      "counts_per_mA_per_s": 1200000.0,
+      "saturation_counts": 65535.0,
+      "peaks": [
+        {
+          "center_nm": 465.0,
+          "fwhm_nm": 42.0,
+          "amplitude": 0.75
+        },
+        {
+          "center_nm": 535.0,
+          "fwhm_nm": 70.0,
+          "amplitude": 1.0
+        },
+        {
+          "center_nm": 625.0,
+          "fwhm_nm": 85.0,
+          "amplitude": 0.62
+        }
+      ]
+    }
+  },
+  "pixels": {
+    "Q1_1_1": {
+      "mode": "working",
+      "turn_on_voltage_V": 2.6,
+      "current_at_5V_mA": 6.5,
+      "photodiode_gain_uA_per_mA": 0.6
+    },
+    "Q1_1_2": {
+      "mode": "weak",
+      "photodiode_gain_uA_per_mA": 0.05,
+      "spectrum": {
+        "counts_per_mA_per_s": 130000.0
+      }
+    },
+    "Q1_1_3": {
+      "mode": "nonworking",
+      "photodiode_gain_uA_per_mA": 0.0
+    },
+    "Q1_1_4": {
+      "mode": "no_contact",
+      "leakage_mA": 0.001
+    },
+    "Q1_2_1": {
+      "mode": "working",
+      "burnout_voltage_V": 3.45,
+      "short_resistance_ohm": 80.0
+    },
+    "Q1_2_2": {
+      "mode": "working",
+      "degradation_tau_s": 35.0,
+      "voltage_drift_V_per_s": 0.001
+    },
+    "Q1_2_3": {
+      "mode": "working",
+      "turn_on_voltage_V": 2.75,
+      "current_at_5V_mA": 5.5,
+      "spectrum": {
+        "peaks": [
+          {
+            "center_nm": 455.0,
+            "fwhm_nm": 38.0,
+            "amplitude": 0.95
+          },
+          {
+            "center_nm": 540.0,
+            "fwhm_nm": 72.0,
+            "amplitude": 0.9
+          },
+          {
+            "center_nm": 610.0,
+            "fwhm_nm": 92.0,
+            "amplitude": 0.7
+          }
+        ]
+      }
+    }
+  }
+}

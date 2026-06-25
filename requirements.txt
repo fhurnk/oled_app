@@ -1,0 +1,9 @@
+# Base libraries required to start the GUI and use the built-in simulator.
+numpy>=1.23
+openpyxl>=3.1
+pyserial>=3.5
+
+# Hardware libraries required for real OLED measurements.
+# Install vendor drivers for the SMU and spectrometer before using real mode.
+xtralien
+seabreeze

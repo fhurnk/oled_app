@@ -1,0 +1,17 @@
+OLED_series/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.vs/
+.vscode/.ropeproject/
+*.log
+*.tmp
+~$*.xlsx
+oled_app_settings.json
+Backup/
+UpgradeLog.htm
+.git-local/

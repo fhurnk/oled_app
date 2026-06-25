@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "OLED Measurement App",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/oled_measurement_app_v2_5.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}
