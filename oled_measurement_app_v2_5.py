@@ -28,6 +28,7 @@ import math
 import os
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -51,7 +52,7 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = "series_config.json"
 JOURNAL_FILE = "series_journal.xlsx"
@@ -273,6 +274,8 @@ def pixel_status_color(status: str) -> str:
         return "#8FD694"
     if status == "NO_CONTACT":
         return "#F2D96B"
+    if status == "NEEDS_REVIEW":
+        return "#F4A261"
     if status in {"NONWORKING", "BURNED", "FAILED", "CURRENT_LIMIT_STOP", "CURRENT_LIMIT"}:
         return "#F28B82"
     return "#D9D9D9"
@@ -284,6 +287,8 @@ def ivl_status_marker(status: str) -> str:
         return "↑ WORKING"
     if status == "NO_CONTACT":
         return "→ NO_CONTACT"
+    if status == "NEEDS_REVIEW":
+        return "? NEEDS_REVIEW"
     if status in {"NONWORKING", "FAILED"}:
         return "↓ " + status
     if status in {"BURNED", "CURRENT_LIMIT_STOP", "CURRENT_LIMIT"}:
@@ -304,7 +309,7 @@ def build_holder_layout(width: int = 930, height: int = 620) -> Dict[int, Dict[s
     # Подложки расположены внутри овала с большим запасом между соседями.
     left_x1, left_x2, left_x3 = 170, 305, 238
     right_x1, right_x2, right_x3 = width - 390, width - 255, width - 322
-    top_y1, top_y3 = 170, 260
+    top_y1, top_y3 = 145, 235
     bottom_y1, bottom_y3 = 320, 405
 
     quarter_layout = {
@@ -1000,6 +1005,30 @@ def parse_int(text: str, field_name: str) -> int:
         raise ValueError(f"Поле '{field_name}' должно быть целым числом")
 
 
+def build_report_voltage_grid(start: float, stop: float, step: float) -> List[float]:
+    if step <= 0:
+        raise ValueError("Шаг напряжения должен быть положительным")
+    if stop < start:
+        raise ValueError("Конец диапазона должен быть не меньше начала")
+    values: List[float] = []
+    current = float(start)
+    while current <= stop + step / 2:
+        values.append(round(current, 6))
+        current += step
+        if len(values) > 10000:
+            raise ValueError("Слишком большая сетка напряжений для отчета")
+    return values
+
+
+def voltage_grid_missing(requested: Iterable[float], available: Iterable[float]) -> List[float]:
+    available_set = {round(float(value), 6) for value in available}
+    return [value for value in requested if round(float(value), 6) not in available_set]
+
+
+def format_voltage(value: float) -> str:
+    return f"{float(value):g}"
+
+
 # -----------------------------------------------------------------------------
 # Серия и журнал
 # -----------------------------------------------------------------------------
@@ -1248,6 +1277,8 @@ class SeriesJournal:
 
         if row_idx:
             if measurement_type in {"IVL", "STABILITY"}:
+                ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
+            elif measurement_type == "SPECTRUM" and str(status).upper() == "NEEDS_REVIEW":
                 ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
             ws_pixels.cell(row=row_idx, column=col["Last updated"], value=date_text)
             if opening_voltage is not None:
@@ -2204,7 +2235,7 @@ def run_spectrum_measurement(
                 row = summary_header_row + idx
                 spectra_col = idx + 1
                 if i_led_mA >= params.current_limit_mA:
-                    status = "CURRENT_LIMIT"
+                    status = "NEEDS_REVIEW"
                     log(f"  Стоп: ток {i_led_mA:.3f} мА >= {params.current_limit_mA:.3f} мА")
                     summary_values = [idx, float(voltage), v_led, i_led_mA, j_led, v_pd, i_pd_uA, lum, "—", "—", "—", "—", status, get_column_letter(spectra_col), 0, "", "", ""]
                     for c, val in enumerate(summary_values, start=1):
@@ -3741,14 +3772,15 @@ class OLEDApp(tk.Tk):
         legend = [
             ("#8FD694", "рабочий"),
             ("#F2D96B", "нет контакта"),
+            ("#F4A261", "требует уточнения"),
             ("#F28B82", "нераб./пробой"),
             ("#D9D9D9", "не измерен"),
         ]
-        lx = 135
+        lx = 70
         for color, label in legend:
             canvas.create_rectangle(lx, legend_y - 7, lx + 16, legend_y + 7, fill=color, outline="#808080")
             canvas.create_text(lx + 22, legend_y, text=label, anchor="w", font=("Segoe UI", 8))
-            lx += 175
+            lx += 165
 
     def _create_ivl_history_tree(self, parent):
         table_frame, tree = self._tree_with_scrollbars(parent, columns=("pixel",), height=8)
@@ -3832,6 +3864,7 @@ class OLEDApp(tk.Tk):
         ttk.Button(btns, text="Стабильность", command=self.open_stability_window, width=18, state=state_after_ivl).grid(row=0, column=2, padx=8)
         ttk.Button(btns, text="Обновить", command=self.refresh_pixel_table, width=14).grid(row=0, column=3, padx=8)
         ttk.Button(btns, text="Журнал", command=lambda: messagebox.showinfo("Журнал", str(self.series.journal.path)), width=12).grid(row=0, column=4, padx=8)
+        ttk.Button(btns, text="Составить отчет", command=self.open_report_window, width=18, state=state_after_ivl).grid(row=0, column=5, padx=8)
 
         status_history = ttk.Frame(main)
         status_history.pack(fill="both", expand=True, pady=(0, 10))
@@ -4189,6 +4222,287 @@ class OLEDApp(tk.Tk):
         fit_toplevel_to_content(dlg, 420, 160)
         self.wait_window(dlg)
         return result["value"]
+
+    # -------------------------- отчет Origin --------------------------
+    def _read_report_spectrum_voltages(self, path: Path) -> List[float]:
+        try:
+            wb = load_workbook(path, read_only=True, data_only=True)
+        except Exception:
+            return []
+        try:
+            sheet_name = "Processed counts per s"
+            if sheet_name not in wb.sheetnames:
+                return []
+            ws = wb[sheet_name]
+            voltage_row = None
+            for row in range(1, min(ws.max_row, 30) + 1):
+                if ws.cell(row=row, column=1).value == "V set (V)":
+                    voltage_row = row
+                    break
+            if voltage_row is None:
+                return []
+            voltages = []
+            for col in range(2, ws.max_column + 1):
+                value = ws.cell(row=voltage_row, column=col).value
+                if isinstance(value, (int, float)):
+                    voltages.append(round(float(value), 6))
+            return voltages
+        finally:
+            wb.close()
+
+    def _collect_report_spectrum_candidates(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        assert self.series is not None
+        spectra_root = self.series.series_folder / "measurements" / MEASUREMENT_FOLDER_NAMES["SPECTRUM"]
+        if not spectra_root.exists():
+            return {}
+        latest_by_pixel: Dict[str, Tuple[float, str, Path]] = {}
+        for path in spectra_root.rglob("SPECTRUM_*.xlsx"):
+            try:
+                rel = path.relative_to(spectra_root)
+            except Exception:
+                continue
+            parts = rel.parts
+            if len(parts) < 5:
+                continue
+            subseries = parts[2]
+            pixel = parts[3]
+            mtime = path.stat().st_mtime
+            prev = latest_by_pixel.get(pixel)
+            if prev is None or mtime > prev[0]:
+                latest_by_pixel[pixel] = (mtime, subseries, path)
+
+        candidates: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for pixel, (_mtime, subseries, path) in latest_by_pixel.items():
+            voltages = self._read_report_spectrum_voltages(path)
+            if voltages:
+                candidates.setdefault(subseries, {})[pixel] = {"file": path, "voltages": voltages}
+        return candidates
+
+    def _selected_report_candidates(
+        self,
+        candidates: Dict[str, Dict[str, Dict[str, Any]]],
+        selection_vars: Dict[str, tk.StringVar],
+    ) -> Dict[str, Dict[str, Any]]:
+        selected: Dict[str, Dict[str, Any]] = {}
+        for subseries, var in selection_vars.items():
+            pixel = var.get().strip()
+            info = candidates.get(subseries, {}).get(pixel)
+            if info:
+                selected[pixel] = {"subseries": subseries, **info}
+        return selected
+
+    def _default_report_step(self, voltages: List[float]) -> float:
+        values = sorted({round(float(value), 6) for value in voltages})
+        diffs = [round(b - a, 6) for a, b in zip(values, values[1:]) if b > a]
+        return min(diffs) if diffs else 0.1
+
+    def _common_report_voltages(self, selected: Dict[str, Dict[str, Any]]) -> List[float]:
+        common: Optional[set] = None
+        for info in selected.values():
+            values = {round(float(value), 6) for value in info["voltages"]}
+            common = values if common is None else common & values
+        return sorted(common or [])
+
+    def open_report_window(self):
+        if self.series is None:
+            return
+        candidates = self._collect_report_spectrum_candidates()
+        if not candidates:
+            messagebox.showwarning("Отчет", "В серии не найдены спектры для отчета.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Составить отчет")
+        win.geometry("760x680")
+        main = ttk.Frame(win, padding=14)
+        main.pack(fill="both", expand=True)
+
+        ttk.Label(main, text="Выбор спектров для отчета", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        selection_frame = ttk.LabelFrame(main, text="Пиксель на подсерии")
+        selection_frame.pack(fill="x", pady=(8, 10))
+        selection_vars: Dict[str, tk.StringVar] = {}
+        for row, subseries in enumerate(sorted(candidates)):
+            pixels = sorted(candidates[subseries])
+            selection_vars[subseries] = tk.StringVar(value=pixels[0])
+            ttk.Label(selection_frame, text=subseries + ":").grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
+            ttk.Combobox(
+                selection_frame,
+                values=pixels,
+                textvariable=selection_vars[subseries],
+                state="readonly",
+                width=28,
+            ).grid(row=row, column=1, sticky="w", padx=(0, 8), pady=3)
+            note = "несколько спектральных пикселей" if len(pixels) > 1 else "выбран автоматически"
+            ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
+
+        output_var = tk.StringVar(value=str(self.series.series_folder / f"report_{today_iso()}.opju"))
+        out_frame = ttk.Frame(main)
+        out_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(out_frame, text="Файл отчета:").pack(side="left")
+        ttk.Entry(out_frame, textvariable=output_var, width=68).pack(side="left", padx=8, fill="x", expand=True)
+
+        def browse_output():
+            filename = filedialog.asksaveasfilename(
+                parent=win,
+                title="Куда сохранить отчет",
+                initialdir=str(self.series.series_folder),
+                initialfile=Path(output_var.get()).name,
+                defaultextension=".opju",
+                filetypes=[("Origin project", "*.opju"), ("Debug Excel", "*.xlsx"), ("All files", "*.*")],
+            )
+            if filename:
+                output_var.set(filename)
+
+        ttk.Button(out_frame, text="Выбрать", command=browse_output).pack(side="left")
+
+        same_grid_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            main,
+            text="Одинаковый диапазон и шаг напряжения для всех выбранных пикселей",
+            variable=same_grid_var,
+        ).pack(anchor="w", pady=(0, 6))
+
+        grid_frame = ttk.LabelFrame(main, text="Диапазон напряжения")
+        grid_frame.pack(fill="x", pady=(0, 10))
+        global_vars = {"start": tk.StringVar(value=""), "stop": tk.StringVar(value=""), "step": tk.StringVar(value="")}
+        for col, (key, label) in enumerate((("start", "Начало, В"), ("stop", "Конец, В"), ("step", "Шаг, В"))):
+            ttk.Label(grid_frame, text=label).grid(row=0, column=col * 2, sticky="e", padx=(8, 4), pady=6)
+            ttk.Entry(grid_frame, textvariable=global_vars[key], width=10).grid(row=0, column=col * 2 + 1, sticky="w", padx=(0, 8), pady=6)
+
+        per_pixel_frame = ttk.LabelFrame(main, text="Индивидуальные диапазоны")
+        per_pixel_frame.pack(fill="both", expand=True, pady=(0, 10))
+        per_pixel_vars: Dict[str, Dict[str, tk.StringVar]] = {}
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(main, textvariable=status_var, foreground="#555555", wraplength=700).pack(anchor="w", pady=(0, 8))
+
+        def refresh_defaults(*_args):
+            selected = self._selected_report_candidates(candidates, selection_vars)
+            common = self._common_report_voltages(selected)
+            if common:
+                global_vars["start"].set(format_voltage(common[0]))
+                global_vars["stop"].set(format_voltage(common[-1]))
+                global_vars["step"].set(format_voltage(self._default_report_step(common)))
+                status_var.set(
+                    f"Общие доступные напряжения: {format_voltage(common[0])}...{format_voltage(common[-1])} В; "
+                    f"максимум для общего графика {format_voltage(common[-1])} В."
+                )
+            else:
+                status_var.set("У выбранных спектров нет общего напряжения для общего графика.")
+
+            for widget in per_pixel_frame.winfo_children():
+                widget.destroy()
+            per_pixel_vars.clear()
+            for col, header in enumerate(["Пиксель", "Начало, В", "Конец, В", "Шаг, В", "Доступно"]):
+                ttk.Label(per_pixel_frame, text=header, font=("Segoe UI", 9, "bold")).grid(row=0, column=col, sticky="w", padx=6, pady=(6, 3))
+            for row, (pixel, info) in enumerate(sorted(selected.items()), start=1):
+                voltages = sorted(info["voltages"])
+                per_pixel_vars[pixel] = {
+                    "start": tk.StringVar(value=format_voltage(voltages[0])),
+                    "stop": tk.StringVar(value=format_voltage(voltages[-1])),
+                    "step": tk.StringVar(value=format_voltage(self._default_report_step(voltages))),
+                }
+                ttk.Label(per_pixel_frame, text=pixel).grid(row=row, column=0, sticky="w", padx=6, pady=3)
+                for col, key in enumerate(("start", "stop", "step"), start=1):
+                    ttk.Entry(per_pixel_frame, textvariable=per_pixel_vars[pixel][key], width=10).grid(row=row, column=col, sticky="w", padx=6, pady=3)
+                ttk.Label(
+                    per_pixel_frame,
+                    text=f"{format_voltage(voltages[0])}...{format_voltage(voltages[-1])} В",
+                    foreground="#555555",
+                ).grid(row=row, column=4, sticky="w", padx=6, pady=3)
+
+        for var in selection_vars.values():
+            var.trace_add("write", refresh_defaults)
+        refresh_defaults()
+
+        def build_command() -> List[str]:
+            selected = self._selected_report_candidates(candidates, selection_vars)
+            if not selected:
+                raise ValueError("Не выбран ни один спектральный пиксель")
+            output_text = output_var.get().strip()
+            if not output_text:
+                raise ValueError("Не задан файл отчета")
+            output = Path(output_text)
+
+            cmd = [
+                sys.executable,
+                str(SCRIPT_DIR / "scripts" / "build_report_origin_workbook.py"),
+                "--measurements-dir",
+                str(self.series.series_folder / "measurements"),
+                "--output",
+                str(output),
+                "--require-spectrum-pixel-selection",
+                "--strict",
+            ]
+            for pixel, info in sorted(selected.items()):
+                cmd.extend(["--spectrum-pixel", f"{info['subseries']}={pixel}"])
+
+            if same_grid_var.get():
+                start = parse_float(global_vars["start"].get(), "Начало напряжения")
+                stop = parse_float(global_vars["stop"].get(), "Конец напряжения")
+                step = parse_float(global_vars["step"].get(), "Шаг напряжения")
+                requested = build_report_voltage_grid(start, stop, step)
+                for pixel, info in selected.items():
+                    missing = voltage_grid_missing(requested, info["voltages"])
+                    if missing:
+                        raise ValueError(f"{pixel}: в спектре нет напряжений {', '.join(format_voltage(v) for v in missing[:8])}")
+                cmd.extend(["--voltage-start", str(start), "--voltage-stop", str(stop), "--voltage-step", str(step)])
+            else:
+                selected_grids: Dict[str, List[float]] = {}
+                for pixel, info in selected.items():
+                    vars_for_pixel = per_pixel_vars[pixel]
+                    start = parse_float(vars_for_pixel["start"].get(), f"{pixel}: начало напряжения")
+                    stop = parse_float(vars_for_pixel["stop"].get(), f"{pixel}: конец напряжения")
+                    step = parse_float(vars_for_pixel["step"].get(), f"{pixel}: шаг напряжения")
+                    requested = build_report_voltage_grid(start, stop, step)
+                    missing = voltage_grid_missing(requested, info["voltages"])
+                    if missing:
+                        raise ValueError(f"{pixel}: в спектре нет напряжений {', '.join(format_voltage(v) for v in missing[:8])}")
+                    selected_grids[pixel] = requested
+                    cmd.extend(["--spectrum-voltage-grid", f"{pixel}={start}:{stop}:{step}"])
+                common = set(round(value, 6) for value in next(iter(selected_grids.values())))
+                for grid in list(selected_grids.values())[1:]:
+                    common &= {round(value, 6) for value in grid}
+                if not common:
+                    raise ValueError("У индивидуальных диапазонов нет общего напряжения для общего графика")
+            return cmd
+
+        def run_report():
+            try:
+                cmd = build_command()
+            except Exception as exc:
+                messagebox.showerror("Параметры отчета", str(exc), parent=win)
+                return
+            status_var.set("Отчет создается...")
+            run_button.configure(state="disabled")
+
+            def finish(returncode: int, stdout: str, stderr: str):
+                run_button.configure(state="normal")
+                if returncode == 0:
+                    self.log(stdout.strip() or f"Отчет создан: {output_var.get()}")
+                    messagebox.showinfo("Отчет", f"Отчет создан:\n{output_var.get()}", parent=win)
+                    win.destroy()
+                else:
+                    details = (stderr or stdout or "Неизвестная ошибка").strip()
+                    self.log(details)
+                    status_var.set("Ошибка создания отчета.")
+                    messagebox.showerror("Ошибка отчета", details, parent=win)
+
+            def worker():
+                try:
+                    completed = subprocess.run(cmd, cwd=str(SCRIPT_DIR), text=True, capture_output=True)
+                    self.after(0, finish, completed.returncode, completed.stdout, completed.stderr)
+                except Exception as exc:
+                    self.after(0, finish, 1, "", str(exc))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        buttons = ttk.Frame(main)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Закрыть", command=win.destroy).pack(side="right")
+        run_button = ttk.Button(buttons, text="Составить отчет", command=run_report)
+        run_button.pack(side="right", padx=(0, 8))
+        fit_toplevel_to_content(win, 800, 720)
 
     # -------------------------- окно спектров --------------------------
     def open_spectrum_window(self):

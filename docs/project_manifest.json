@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.6.0",
+    "current_version": "v1.7.0",
     "app_version_source": {
       "file": "oled_measurement_app_v2_5.py",
       "symbol": "APP_VERSION"
@@ -14,11 +14,12 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.6.0.md"
+    "docs/versions/v1.7.0.md"
   ],
   "entry_points": {
     "application": "oled_measurement_app_v2_5.py",
     "release_script": "scripts/create_github_release.py",
+    "report_script": "scripts/build_report_origin_workbook.py",
     "requirements": "requirements.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },

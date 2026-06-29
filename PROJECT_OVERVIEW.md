@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.6.0`
+Версия: `v1.7.0`
 
 ## Назначение
 
@@ -30,8 +30,10 @@ oled_app_v2_5_package/
   CHANGELOG.md
   scripts/
     create_github_release.py
+    build_report_origin_workbook.py
   docs/
     GITHUB_RELEASE_WORKFLOW.md
+    report_origin_pipeline.md
     project_manifest.json
     versions/
       v1.5.2.md
@@ -40,6 +42,7 @@ oled_app_v2_5_package/
       v1.5.5.md
       v1.5.6.md
       v1.6.0.md
+      v1.7.0.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 
@@ -66,6 +69,7 @@ OLED_series/
 4. Для рабочего пикселя подтвердить напряжение открытия.
 5. Снять спектры от напряжения открытия или от вручную заданного стартового напряжения.
 6. При необходимости снять стабильность.
+7. Составить Origin-отчет по серии через кнопку `Составить отчет`, выбрав спектральные пиксели и сетку напряжений.
 
 ## Учёт Площади И Светимости
 

@@ -4,7 +4,7 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.6.0`
+- Current app version: `v1.7.0`
 - Python source of truth: `APP_VERSION` in `oled_measurement_app_v2_5.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
@@ -25,6 +25,7 @@ When changing user-visible behavior, update all version references in the same c
 - IVL / ВАЯХ: creates current/light curves and pixel status.
 - Spectrum: uses known opening voltage, auto-selects integration time, saves raw and processed spectra.
 - Stability: runs constant-current stability measurements after IVL.
+- Report: GUI button runs `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with selectable spectrum pixels and voltage grids.
 - Series journal: `series_journal.xlsx` inside each series folder.
 
 Generated measurement data belongs in `OLED_series/` and must not be committed.
