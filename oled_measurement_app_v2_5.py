@@ -52,7 +52,7 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = "series_config.json"
 JOURNAL_FILE = "series_journal.xlsx"
@@ -420,6 +420,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     "default_root": str(SCRIPT_DIR / DEFAULT_ROOT),
     "hardware_mode": HARDWARE_MODE_SIM,
     "com_port": "SIM",
+    "auto_com_port": False,
     "simulator_config_path": str(SCRIPT_DIR / SIM_CONFIG_FILE),
     "ivl_advanced": {
         "photodiode_bias_V": -5.0,
@@ -556,6 +557,66 @@ def hardware_mode_label(settings: Dict[str, Any]) -> str:
     return "Эмулятор" if settings.get("hardware_mode") == HARDWARE_MODE_SIM else "Реальное оборудование"
 
 
+def list_serial_ports() -> List[Any]:
+    try:
+        from serial.tools import list_ports
+    except Exception:
+        return []
+    try:
+        return list(list_ports.comports())
+    except Exception:
+        return []
+
+
+def find_ossila_com_port(log: Optional[Callable[[str], None]] = None) -> Optional[str]:
+    ports = list_serial_ports()
+    if not ports:
+        return None
+
+    def port_text(port) -> str:
+        return " ".join(
+            str(getattr(port, attr, "") or "")
+            for attr in ("device", "description", "manufacturer", "product", "hwid")
+        ).lower()
+
+    preferred_words = ("ossila", "xtralien")
+    preferred = [port for port in ports if any(word in port_text(port) for word in preferred_words)]
+    candidates = preferred + [port for port in ports if port not in preferred]
+
+    try:
+        uninstall_simulator_modules()
+        import xtralien
+    except Exception:
+        return str(getattr(preferred[0], "device", "")) if preferred else None
+
+    for port in candidates:
+        device = str(getattr(port, "device", "") or "")
+        if not device:
+            continue
+        try:
+            with xtralien.Device(device) as smu:
+                try:
+                    smu.smu1.set.voltage(0, response=0)
+                    smu.smu2.set.voltage(0, response=0)
+                except Exception:
+                    pass
+            if log:
+                log(f"Авто-COM Ossila: найден {device}")
+            return device
+        except Exception as exc:
+            if log:
+                log(f"Авто-COM Ossila: {device} не подошел ({exc})")
+    return None
+
+
+def effective_com_port(settings: Dict[str, Any], log: Optional[Callable[[str], None]] = None) -> str:
+    if settings.get("hardware_mode") == HARDWARE_MODE_REAL and bool(settings.get("auto_com_port", False)):
+        found = find_ossila_com_port(log)
+        if found:
+            return found
+    return str(settings.get("com_port") or "COM3")
+
+
 # -----------------------------------------------------------------------------
 # Встроенный эмулятор xtralien + seabreeze, включается только флажком в настройках
 # -----------------------------------------------------------------------------
@@ -581,8 +642,10 @@ def probe_hardware(settings: Dict[str, Any]) -> Dict[str, Any]:
         "spectrometer": "",
     }
     messages: List[str] = []
-    com_port = str(settings.get("com_port") or "COM3")
     uninstall_simulator_modules()
+    com_port = effective_com_port(settings)
+    if settings.get("auto_com_port") and com_port != str(settings.get("com_port") or ""):
+        result["auto_com_port"] = com_port
 
     try:
         import xtralien
@@ -597,7 +660,6 @@ def probe_hardware(settings: Dict[str, Any]) -> Dict[str, Any]:
         result["level"] = "error"
         result["title"] = "SMU не отвечает"
         result["smu"] = f"xtralien ERROR ({com_port})"
-        messages.append(f"SMU: {exc}")
 
     try:
         import seabreeze.spectrometers as sb
@@ -609,13 +671,11 @@ def probe_hardware(settings: Dict[str, Any]) -> Dict[str, Any]:
                 result["level"] = "warning"
                 result["title"] = "SMU готов, спектрометр не найден"
             result["spectrometer"] = "Спектрометр не найден"
-            messages.append("seabreeze: устройств не найдено")
     except Exception as exc:
         if result["level"] != "error":
             result["level"] = "warning"
             result["title"] = "SMU готов, ошибка спектрометра"
         result["spectrometer"] = "seabreeze ERROR"
-        messages.append(f"seabreeze: {exc}")
 
     result["details"] = "; ".join(messages) if messages else f"{result['smu']}; {result['spectrometer']}"
     return result
@@ -3222,7 +3282,8 @@ class OLEDApp(tk.Tk):
             self._hardware_status_title.set("Оборудование: идет проверка")
         if self._hardware_status_detail is not None:
             mode = hardware_mode_label(self.app_settings)
-            self._hardware_status_detail.set(f"{mode}, COM: {self.app_settings.get('com_port', 'COM3')}")
+            com_text = "авто-COM" if self.app_settings.get("auto_com_port") else f"COM: {self.app_settings.get('com_port', 'COM3')}"
+            self._hardware_status_detail.set(f"{mode}, {com_text}")
 
         settings_snapshot = deepcopy(self.app_settings)
 
@@ -3245,13 +3306,19 @@ class OLEDApp(tk.Tk):
         self._hardware_probe_running = False
         level = str(result.get("level") or "unknown")
         self._set_hardware_status_indicator(level)
+        auto_com = str(result.get("auto_com_port") or "")
+        if auto_com:
+            try:
+                self.app_settings["com_port"] = auto_com
+                save_app_settings(self.app_settings)
+            except Exception:
+                pass
         if self._hardware_status_title is not None:
             self._hardware_status_title.set(f"Оборудование: {result.get('title', 'неизвестно')}")
         if self._hardware_status_detail is not None:
-            detail = str(result.get("details") or "")
             smu = str(result.get("smu") or "")
             spectrometer = str(result.get("spectrometer") or "")
-            parts = [part for part in [smu, spectrometer, detail] if part]
+            parts = [part for part in [smu, spectrometer] if part]
             self._hardware_status_detail.set(" | ".join(parts) if parts else "Нет деталей проверки.")
         try:
             self.log(f"Проверка оборудования: {result.get('title')}; {result.get('details')}")
@@ -3426,6 +3493,7 @@ class OLEDApp(tk.Tk):
         root_var = tk.StringVar(value=str(self.app_settings.get("default_root", "")))
         mode_var = tk.StringVar(value=str(self.app_settings.get("hardware_mode", HARDWARE_MODE_SIM)))
         com_var = tk.StringVar(value=str(self.app_settings.get("com_port", "COM3")))
+        auto_com_var = tk.BooleanVar(value=bool(self.app_settings.get("auto_com_port", False)))
         units = self.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
         pixel_area_var = tk.StringVar(value=str(units.get("pixel_area_mm2", 1.0)))
         luminance_coeff_var = tk.StringVar(value=str(units.get("luminance_cd_m2_per_uA", 1.0)))
@@ -3442,15 +3510,16 @@ class OLEDApp(tk.Tk):
             width=18,
         ).grid(row=1, column=1, sticky="w", pady=4)
         self._add_settings_entry(general, 2, "COM port по умолчанию", com_var)
-        self._add_settings_entry(general, 3, "Площадь пикселя, мм^2", pixel_area_var)
-        self._add_settings_entry(general, 4, "Коэфф. мкА → кд/м^2", luminance_coeff_var)
+        ttk.Checkbutton(general, text="Автонастройка COM порта Ossila", variable=auto_com_var).grid(row=3, column=1, sticky="w", pady=3)
+        self._add_settings_entry(general, 4, "Площадь пикселя, мм^2", pixel_area_var)
+        self._add_settings_entry(general, 5, "Коэфф. мкА → кд/м^2", luminance_coeff_var)
         ttk.Label(
             general,
             text="simulator = встроенная эмуляция пикселя; real = настоящие xtralien/seabreeze из Python-среды.",
             foreground="#555555",
             wraplength=610,
             justify="left",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
         general.columnconfigure(1, weight=1)
 
         sim_cfg_var = tk.StringVar(value=str(self.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
@@ -3553,6 +3622,7 @@ class OLEDApp(tk.Tk):
                 settings["default_root"] = root_var.get().strip() or str(SCRIPT_DIR / DEFAULT_ROOT)
                 settings["hardware_mode"] = mode_var.get().strip() or HARDWARE_MODE_REAL
                 settings["com_port"] = com_var.get().strip() or "COM3"
+                settings["auto_com_port"] = bool(auto_com_var.get())
                 settings["measurement_units"] = {
                     "pixel_area_mm2": parse_float(pixel_area_var.get(), "Площадь пикселя"),
                     "luminance_cd_m2_per_uA": parse_float(luminance_coeff_var.get(), "Коэффициент яркости"),
@@ -4007,7 +4077,7 @@ class OLEDApp(tk.Tk):
                 adv = self.app_settings.get("ivl_advanced", DEFAULT_APP_SETTINGS["ivl_advanced"])
                 units = self.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
                 params = IVLParams(
-                    com_port=vars_["COM port"].get().strip(),
+                    com_port=effective_com_port({**self.app_settings, "com_port": vars_["COM port"].get().strip()}, self.log),
                     sweep_start=parse_float(vars_["Sweep start, V"].get(), "Sweep start"),
                     sweep_end=parse_float(vars_["Sweep end, V"].get(), "Sweep end"),
                     sweep_increment=parse_float(vars_["Step, V"].get(), "Step"),
@@ -4250,7 +4320,7 @@ class OLEDApp(tk.Tk):
         finally:
             wb.close()
 
-    def _collect_report_spectrum_candidates(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def _collect_report_spectrum_candidates(self, date_filter: Optional[str] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
         assert self.series is not None
         spectra_root = self.series.series_folder / "measurements" / MEASUREMENT_FOLDER_NAMES["SPECTRUM"]
         if not spectra_root.exists():
@@ -4263,6 +4333,8 @@ class OLEDApp(tk.Tk):
                 continue
             parts = rel.parts
             if len(parts) < 5:
+                continue
+            if date_filter and parts[0] != date_filter:
                 continue
             subseries = parts[2]
             pixel = parts[3]
@@ -4277,6 +4349,13 @@ class OLEDApp(tk.Tk):
             if voltages:
                 candidates.setdefault(subseries, {})[pixel] = {"file": path, "voltages": voltages}
         return candidates
+
+    def _measurement_dates_for_report(self, measurement_type: str) -> List[str]:
+        assert self.series is not None
+        folder = self.series.series_folder / "measurements" / MEASUREMENT_FOLDER_NAMES[measurement_type]
+        if not folder.exists():
+            return []
+        return sorted([path.name for path in folder.iterdir() if path.is_dir()])
 
     def _selected_report_candidates(
         self,
@@ -4306,9 +4385,19 @@ class OLEDApp(tk.Tk):
     def open_report_window(self):
         if self.series is None:
             return
-        candidates = self._collect_report_spectrum_candidates()
-        if not candidates:
+        ivl_dates = self._measurement_dates_for_report("IVL")
+        spectrum_dates = self._measurement_dates_for_report("SPECTRUM")
+        if not ivl_dates:
+            messagebox.showwarning("Отчет", "В серии не найдены ВАЯХ для отчета.")
+            return
+        if not spectrum_dates:
             messagebox.showwarning("Отчет", "В серии не найдены спектры для отчета.")
+            return
+        ivl_date_var = tk.StringVar(value=ivl_dates[-1])
+        spectrum_date_var = tk.StringVar(value=spectrum_dates[-1])
+        candidates = self._collect_report_spectrum_candidates(spectrum_date_var.get())
+        if not candidates:
+            messagebox.showwarning("Отчет", f"За {spectrum_date_var.get()} не найдены спектры для отчета.")
             return
 
         win = tk.Toplevel(self)
@@ -4317,23 +4406,39 @@ class OLEDApp(tk.Tk):
         main = ttk.Frame(win, padding=14)
         main.pack(fill="both", expand=True)
 
+        date_frame = ttk.LabelFrame(main, text="Даты измерений")
+        date_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(date_frame, text="ВАЯХ:").grid(row=0, column=0, sticky="e", padx=(8, 4), pady=6)
+        ttk.Combobox(date_frame, values=ivl_dates, textvariable=ivl_date_var, state="readonly", width=14).grid(row=0, column=1, sticky="w", padx=(0, 16), pady=6)
+        ttk.Label(date_frame, text="Спектры:").grid(row=0, column=2, sticky="e", padx=(8, 4), pady=6)
+        ttk.Combobox(date_frame, values=spectrum_dates, textvariable=spectrum_date_var, state="readonly", width=14).grid(row=0, column=3, sticky="w", padx=(0, 8), pady=6)
+
         ttk.Label(main, text="Выбор спектров для отчета", font=("Segoe UI", 12, "bold")).pack(anchor="w")
         selection_frame = ttk.LabelFrame(main, text="Пиксель на подсерии")
         selection_frame.pack(fill="x", pady=(8, 10))
         selection_vars: Dict[str, tk.StringVar] = {}
-        for row, subseries in enumerate(sorted(candidates)):
-            pixels = sorted(candidates[subseries])
-            selection_vars[subseries] = tk.StringVar(value=pixels[0])
-            ttk.Label(selection_frame, text=subseries + ":").grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
-            ttk.Combobox(
-                selection_frame,
-                values=pixels,
-                textvariable=selection_vars[subseries],
-                state="readonly",
-                width=28,
-            ).grid(row=row, column=1, sticky="w", padx=(0, 8), pady=3)
-            note = "несколько спектральных пикселей" if len(pixels) > 1 else "выбран автоматически"
-            ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
+
+        def rebuild_selection():
+            for widget in selection_frame.winfo_children():
+                widget.destroy()
+            selection_vars.clear()
+            if not candidates:
+                ttk.Label(selection_frame, text="За выбранную дату спектры не найдены.", foreground="#555555").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+                return
+            for row, subseries in enumerate(sorted(candidates)):
+                pixels = sorted(candidates[subseries])
+                selection_vars[subseries] = tk.StringVar(value=pixels[0])
+                selection_vars[subseries].trace_add("write", refresh_defaults)
+                ttk.Label(selection_frame, text=subseries + ":").grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
+                ttk.Combobox(
+                    selection_frame,
+                    values=pixels,
+                    textvariable=selection_vars[subseries],
+                    state="readonly",
+                    width=28,
+                ).grid(row=row, column=1, sticky="w", padx=(0, 8), pady=3)
+                note = "несколько спектральных пикселей" if len(pixels) > 1 else "выбран автоматически"
+                ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
 
         output_var = tk.StringVar(value=str(self.series.series_folder / f"report_{today_iso()}.opju"))
         out_frame = ttk.Frame(main)
@@ -4370,11 +4475,18 @@ class OLEDApp(tk.Tk):
             ttk.Entry(grid_frame, textvariable=global_vars[key], width=10).grid(row=0, column=col * 2 + 1, sticky="w", padx=(0, 8), pady=6)
 
         per_pixel_frame = ttk.LabelFrame(main, text="Индивидуальные диапазоны")
-        per_pixel_frame.pack(fill="both", expand=True, pady=(0, 10))
         per_pixel_vars: Dict[str, Dict[str, tk.StringVar]] = {}
 
+        def update_per_pixel_visibility(*_args):
+            if same_grid_var.get():
+                per_pixel_frame.pack_forget()
+            else:
+                per_pixel_frame.pack(fill="both", expand=True, pady=(0, 10), before=status_label)
+
         status_var = tk.StringVar(value="")
-        ttk.Label(main, textvariable=status_var, foreground="#555555", wraplength=700).pack(anchor="w", pady=(0, 8))
+        status_label = ttk.Label(main, textvariable=status_var, foreground="#555555", wraplength=700)
+        status_label.pack(anchor="w", pady=(0, 8))
+        same_grid_var.trace_add("write", update_per_pixel_visibility)
 
         def refresh_defaults(*_args):
             selected = self._selected_report_candidates(candidates, selection_vars)
@@ -4411,8 +4523,15 @@ class OLEDApp(tk.Tk):
                     foreground="#555555",
                 ).grid(row=row, column=4, sticky="w", padx=6, pady=3)
 
-        for var in selection_vars.values():
-            var.trace_add("write", refresh_defaults)
+        def change_spectrum_date(*_args):
+            nonlocal candidates
+            candidates = self._collect_report_spectrum_candidates(spectrum_date_var.get())
+            rebuild_selection()
+            refresh_defaults()
+
+        spectrum_date_var.trace_add("write", change_spectrum_date)
+        rebuild_selection()
+        update_per_pixel_visibility()
         refresh_defaults()
 
         def build_command() -> List[str]:
@@ -4431,6 +4550,10 @@ class OLEDApp(tk.Tk):
                 str(self.series.series_folder / "measurements"),
                 "--output",
                 str(output),
+                "--ivl-date",
+                ivl_date_var.get(),
+                "--spectrum-date",
+                spectrum_date_var.get(),
                 "--require-spectrum-pixel-selection",
                 "--strict",
             ]
@@ -4565,7 +4688,7 @@ class OLEDApp(tk.Tk):
                 adv = self.app_settings.get("spectrum_advanced", DEFAULT_APP_SETTINGS["spectrum_advanced"])
                 units = self.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
                 params = SpectrumParams(
-                    com_port=vars_["COM port"].get().strip(),
+                    com_port=effective_com_port({**self.app_settings, "com_port": vars_["COM port"].get().strip()}, self.log),
                     voltage_start=voltage_start,
                     voltage_end=parse_float(vars_["Voltage end, V"].get(), "Voltage end"),
                     voltage_step=parse_float(vars_["Voltage step, V"].get(), "Voltage step"),
@@ -4705,7 +4828,7 @@ class OLEDApp(tk.Tk):
                 adv = self.app_settings.get("stability_advanced", DEFAULT_APP_SETTINGS["stability_advanced"])
                 units = self.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
                 params = StabilityParams(
-                    com_port=vars_["COM port"].get().strip(),
+                    com_port=effective_com_port({**self.app_settings, "com_port": vars_["COM port"].get().strip()}, self.log),
                     current_setpoint_mA=target_current,
                     voltage_start=voltage_start,
                     voltage_limit=parse_float(vars_["Voltage limit, V"].get(), "Voltage limit"),

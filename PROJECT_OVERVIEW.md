@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.0`
+Версия: `v1.7.1`
 
 ## Назначение
 
@@ -34,6 +34,7 @@ oled_app_v2_5_package/
   docs/
     GITHUB_RELEASE_WORKFLOW.md
     report_origin_pipeline.md
+    modularization_plan.md
     project_manifest.json
     versions/
       v1.5.2.md
@@ -43,6 +44,7 @@ oled_app_v2_5_package/
       v1.5.6.md
       v1.6.0.md
       v1.7.0.md
+      v1.7.1.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

@@ -4,7 +4,7 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.0`
+- Current app version: `v1.7.1`
 - Python source of truth: `APP_VERSION` in `oled_measurement_app_v2_5.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`

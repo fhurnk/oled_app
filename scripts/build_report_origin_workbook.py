@@ -154,12 +154,14 @@ def split_measurement_path(root: Path, path: Path) -> MeasurementPath:
     return MeasurementPath(path, parts[0], parts[1], parts[2], parts[3], parse_timestamp(path))
 
 
-def latest_by_pixel(root: Path, pattern: str) -> dict[str, MeasurementPath]:
+def latest_by_pixel(root: Path, pattern: str, date_filter: str | None = None) -> dict[str, MeasurementPath]:
     latest: dict[str, MeasurementPath] = {}
     for path in root.rglob(pattern):
         try:
             meta = split_measurement_path(root, path)
         except Exception:
+            continue
+        if date_filter and meta.date_dir != date_filter:
             continue
         prev = latest.get(meta.pixel)
         if prev is None or meta.timestamp > prev.timestamp:
@@ -250,9 +252,9 @@ def read_iv_record(meta: MeasurementPath, warnings: list[str]) -> IvRecord | Non
         wb.close()
 
 
-def collect_iv_records(iv_root: Path, warnings: list[str]) -> list[IvRecord]:
+def collect_iv_records(iv_root: Path, warnings: list[str], date_filter: str | None = None) -> list[IvRecord]:
     records: list[IvRecord] = []
-    for meta in latest_by_pixel(iv_root, "IVL_*.xlsx").values():
+    for meta in latest_by_pixel(iv_root, "IVL_*.xlsx", date_filter).values():
         record = read_iv_record(meta, warnings)
         if record is None:
             continue
@@ -346,10 +348,11 @@ def collect_spectrum_records(
     sheet_name: str,
     require_explicit_selection: bool,
     warnings: list[str],
+    date_filter: str | None = None,
 ) -> list[SpectrumRecord]:
     latest: dict[str, MeasurementPath] = {}
     candidates_by_subseries: dict[str, list[MeasurementPath]] = {}
-    for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx").values():
+    for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
         candidates_by_subseries.setdefault(meta.subseries, []).append(meta)
 
     for subseries, candidates in candidates_by_subseries.items():
@@ -508,6 +511,8 @@ def write_readme(ws, args: argparse.Namespace, iv_count: int, spectra_count: int
         ("OLED report origin-preparation workbook", None),
         ("Created by", "scripts/build_report_origin_workbook.py"),
         ("Measurements dir", str(args.measurements_dir)),
+        ("IVL date", args.ivl_date or "latest"),
+        ("Spectrum date", args.spectrum_date or "latest"),
         ("IVL working pixels", iv_count),
         ("Selected spectrum pixels", spectra_count),
         ("Spectrum source sheet", args.spectrum_sheet),
@@ -1004,7 +1009,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
     if not spectra_root.exists():
         warnings.append(f"Spectrum root not found: {spectra_root}")
 
-    iv_records = collect_iv_records(iv_root, warnings) if iv_root.exists() else []
+    iv_records = collect_iv_records(iv_root, warnings, args.ivl_date) if iv_root.exists() else []
     explicit_pixels = parse_spectrum_pixels(args.spectrum_pixel or [])
     spectrum_records = (
         collect_spectrum_records(
@@ -1013,6 +1018,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
             args.spectrum_sheet,
             args.require_spectrum_pixel_selection,
             warnings,
+            args.spectrum_date,
         )
         if spectra_root.exists()
         else []
@@ -1288,6 +1294,8 @@ def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
             "OLED report Origin project",
             "Created by scripts/build_report_origin_workbook.py",
             f"Measurements dir: {args.measurements_dir}",
+            f"IVL date: {args.ivl_date or 'latest'}",
+            f"Spectrum date: {args.spectrum_date or 'latest'}",
             f"IVL working pixels: {len(data.iv_records)}",
             f"Selected spectrum pixels: {len(data.spectrum_records)}",
             f"Spectrum source sheet: {args.spectrum_sheet}",
@@ -1615,6 +1623,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="Processed counts per s",
         help="Spectrum worksheet to use.",
     )
+    parser.add_argument("--ivl-date", default=None, help="Use IVL files only from this YYYY-MM-DD measurement date.")
+    parser.add_argument("--spectrum-date", default=None, help="Use spectrum files only from this YYYY-MM-DD measurement date.")
     parser.add_argument(
         "--spectrum-pixel",
         action="append",
