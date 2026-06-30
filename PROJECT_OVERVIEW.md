@@ -25,7 +25,7 @@
 - workflow спектров подготовлен в `oled_app/measurements/spectrum.py` для будущего подключения нового GUI.
 - workflow стабильности подготовлен в `oled_app/measurements/stability.py` для будущего подключения нового GUI.
 - первые общие GUI helpers и progress windows подготовлены в `oled_app/gui/widgets.py` и `oled_app/gui/progress.py`.
-- базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек и окно ВАЯХ подготовлены в `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py` и `oled_app/gui/ivl_window.py`.
+- базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ и окно спектров подготовлены в `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py` и `oled_app/gui/spectrum_window.py`.
 
 ## Структура Проекта
 
@@ -45,6 +45,7 @@ oled_app_v2_5_package/
       measurement_menu.py
       settings_window.py
       ivl_window.py
+      spectrum_window.py
       widgets.py
       progress.py
     series/

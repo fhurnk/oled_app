@@ -33,6 +33,7 @@
     "gui_measurement_menu_module": "oled_app/gui/measurement_menu.py",
     "gui_settings_window_module": "oled_app/gui/settings_window.py",
     "gui_ivl_window_module": "oled_app/gui/ivl_window.py",
+    "gui_spectrum_window_module": "oled_app/gui/spectrum_window.py",
     "requirements": "requirements.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },
