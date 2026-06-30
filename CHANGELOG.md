@@ -13,6 +13,7 @@
 - Добавлены `oled_app/measurements/ivl.py` и `oled_app/measurements/spectrum.py` с workflow ВАЯХ/IVL и спектров.
 - Добавлен `oled_app/measurements/stability.py` с workflow стабильности, чтением IVL для стартового напряжения и сохранением Excel-книги.
 - Добавлены `oled_app/gui/widgets.py` и `oled_app/gui/progress.py` с первыми общими GUI helpers и progress windows для нового каркаса.
+- Добавлены `oled_app/gui/app.py` и `oled_app/gui/start_screen.py` с базовым классом нового GUI и стартовым экраном.
 
 ### Изменено
 
