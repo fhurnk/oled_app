@@ -15,6 +15,7 @@
 - Добавлены `oled_app/gui/widgets.py` и `oled_app/gui/progress.py` с первыми общими GUI helpers и progress windows для нового каркаса.
 - Добавлены `oled_app/gui/app.py` и `oled_app/gui/start_screen.py` с базовым классом нового GUI и стартовым экраном.
 - Добавлен `oled_app/gui/measurement_menu.py` с меню открытой серии, картой статусов, историей ВАЯХ, таблицей последних метрик и панелью проверки оборудования.
+- Добавлен `oled_app/gui/settings_window.py` с окном настроек нового GUI, сохранением `oled_app_settings.json` и созданием JSON-примера эмулятора.
 
 ### Изменено
 
@@ -23,6 +24,7 @@
 - `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
 - `oled_app/main.py` показывает, что первые части GUI-слоя уже подготовлены.
 - `OLEDModularApp` теперь делегирует меню открытой серии отдельному GUI-модулю; окна измерений и отчета пока остаются следующими подэтапами.
+- `OLEDModularApp` теперь открывает перенесенное окно настроек вместо временной заглушки.
 - `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 

@@ -1,0 +1,224 @@
+"""Settings window for the modular OLED GUI."""
+
+from __future__ import annotations
+
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+from typing import Any, Dict
+
+from oled_app.constants import DEFAULT_ROOT, HARDWARE_MODE_REAL, HARDWARE_MODE_SIM, SCRIPT_DIR, SIM_CONFIG_FILE
+from oled_app.settings import DEFAULT_APP_SETTINGS, ensure_default_sim_config, load_app_settings, save_app_settings
+from oled_app.utils import parse_float, parse_int
+
+from .widgets import create_scrollable_frame, fit_toplevel_to_content
+
+
+def open_settings_window(app) -> None:
+    app.app_settings = load_app_settings()
+    win = tk.Toplevel(app)
+    win.title("Настройки приложения")
+    win.geometry("720x640")
+    win.transient(app)
+
+    main = ttk.Frame(win, padding=12)
+    main.pack(fill="both", expand=True)
+    notebook = ttk.Notebook(main)
+    notebook.pack(fill="both", expand=True)
+
+    general = scrollable_notebook_tab(notebook, "Общие")
+    sim_tab = scrollable_notebook_tab(notebook, "Эмулятор")
+    ivl_tab = scrollable_notebook_tab(notebook, "ВАЯХ доп.")
+    spec_tab = scrollable_notebook_tab(notebook, "Спектры доп.")
+    stab_tab = scrollable_notebook_tab(notebook, "Стабильность доп.")
+
+    root_var = tk.StringVar(value=str(app.app_settings.get("default_root", "")))
+    mode_var = tk.StringVar(value=str(app.app_settings.get("hardware_mode", HARDWARE_MODE_SIM)))
+    com_var = tk.StringVar(value=str(app.app_settings.get("com_port", "COM3")))
+    auto_com_var = tk.BooleanVar(value=bool(app.app_settings.get("auto_com_port", False)))
+    units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
+    pixel_area_var = tk.StringVar(value=str(units.get("pixel_area_mm2", 1.0)))
+    luminance_coeff_var = tk.StringVar(value=str(units.get("luminance_cd_m2_per_uA", 1.0)))
+
+    ttk.Label(general, text="Корневая папка серий:").grid(row=0, column=0, sticky="e", pady=4, padx=(0, 8))
+    ttk.Entry(general, textvariable=root_var, width=62).grid(row=0, column=1, sticky="we", pady=4)
+    ttk.Button(general, text="Обзор", command=lambda: browse_root(root_var)).grid(row=0, column=2, padx=(8, 0))
+    ttk.Label(general, text="Режим оборудования:").grid(row=1, column=0, sticky="e", pady=4, padx=(0, 8))
+    ttk.Combobox(
+        general,
+        textvariable=mode_var,
+        values=[HARDWARE_MODE_SIM, HARDWARE_MODE_REAL],
+        state="readonly",
+        width=18,
+    ).grid(row=1, column=1, sticky="w", pady=4)
+    add_settings_entry(general, 2, "COM port по умолчанию", com_var)
+    ttk.Checkbutton(general, text="Автонастройка COM порта Ossila", variable=auto_com_var).grid(row=3, column=1, sticky="w", pady=3)
+    add_settings_entry(general, 4, "Площадь пикселя, мм^2", pixel_area_var)
+    add_settings_entry(general, 5, "Коэфф. мкА -> кд/м^2", luminance_coeff_var)
+    ttk.Label(
+        general,
+        text="simulator = встроенная эмуляция пикселя; real = настоящие xtralien/seabreeze из Python-среды.",
+        foreground="#555555",
+        wraplength=610,
+        justify="left",
+    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    general.columnconfigure(1, weight=1)
+
+    sim_cfg_var = tk.StringVar(value=str(app.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
+    ttk.Label(sim_tab, text="JSON-конфиг пикселей:").grid(row=0, column=0, sticky="e", pady=4, padx=(0, 8))
+    ttk.Entry(sim_tab, textvariable=sim_cfg_var, width=62).grid(row=0, column=1, sticky="we", pady=4)
+    ttk.Button(sim_tab, text="Обзор", command=lambda: browse_file_for_var(sim_cfg_var)).grid(row=0, column=2, padx=(8, 0))
+    ttk.Button(sim_tab, text="Создать/обновить пример JSON", command=lambda: write_default_sim_config_from_settings(sim_cfg_var)).grid(row=1, column=1, sticky="w", pady=(8, 4))
+    ttk.Label(
+        sim_tab,
+        text="В этом JSON задаются режимы пикселя: working, weak, nonworking, no_contact, burned/short; напряжение открытия, ток, фототок, спектральные пики, деградация.",
+        foreground="#555555",
+        wraplength=620,
+        justify="left",
+    ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    sim_tab.columnconfigure(1, weight=1)
+
+    def make_vars(section: str) -> Dict[str, tk.StringVar]:
+        return {key: tk.StringVar(value=str(value)) for key, value in app.app_settings.get(section, {}).items() if not isinstance(value, bool)}
+
+    ivl_vars = make_vars("ivl_advanced")
+    ivl_bool_vars: Dict[str, tk.BooleanVar] = {}
+    ivl_labels = [
+        ("photodiode_bias_V", "Смещение фотодиода, В"),
+        ("photodiode_range", "Диапазон фотодиода"),
+        ("photodiode_threshold_uA", "Порог фототока, мкА"),
+        ("burnout_current_threshold_mA", "Ток пробоя/сгорания, мА"),
+        ("no_contact_max_led_current_mA", "Макс. ток при отсутствии контакта, мА"),
+        ("burned_confirmation_cycles", "Доп. циклов после BURNED"),
+    ]
+    for row, (key, label) in enumerate(ivl_labels):
+        add_settings_entry(ivl_tab, row, label, ivl_vars[key])
+    ttk.Label(ivl_tab, text="BURNED ставится только при достижении тока пробоя/сгорания.", foreground="#555555").grid(row=len(ivl_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ttk.Label(ivl_tab, text="Эти параметры убраны из основного окна ВАЯХ, чтобы оно не было перегружено.", foreground="#555555").grid(row=len(ivl_labels) + 1, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+    spec_vars = make_vars("spectrum_advanced")
+    spec_bool_vars = {
+        "discard_first_scan_after_tint_change": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("discard_first_scan_after_tint_change", True))),
+        "dark_spectrum_enabled": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("dark_spectrum_enabled", False))),
+        "baseline_correction_enabled": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("baseline_correction_enabled", True))),
+        "peak_detection_enabled": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("peak_detection_enabled", False))),
+    }
+    spec_labels = [
+        ("photodiode_bias_V", "Смещение фотодиода, В"),
+        ("photodiode_range", "Диапазон фотодиода"),
+        ("target_intensity", "Целевая интенсивность, counts"),
+        ("intensity_min", "Мин. интенсивность, counts"),
+        ("intensity_max", "Макс. интенсивность, counts"),
+        ("saturation_level", "Насыщение, counts"),
+        ("min_peak_width_nm", "Мин. FWHM, нм"),
+        ("max_peak_width_nm", "Макс. FWHM, нм"),
+        ("t_int_initial_s", "Начальное T_int, с"),
+        ("t_int_min_s", "Мин. T_int, с"),
+        ("t_int_max_s", "Макс. T_int, с"),
+        ("kp", "Kp подбора T_int"),
+        ("ki", "Ki подбора T_int"),
+        ("max_iterations", "Макс. итераций"),
+        ("tolerance", "Допуск подбора"),
+        ("peak_search_mode_for_tint", "Область поиска пика"),
+        ("settle_time_voltage_s", "Пауза после напряжения, с"),
+        ("settle_time_spectrum_s", "Пауза спектрометра, с"),
+        ("dark_spectrum_scans", "Число dark-сканов"),
+    ]
+    for row, (key, label) in enumerate(spec_labels):
+        add_settings_entry(spec_tab, row, label, spec_vars[key])
+    ttk.Checkbutton(spec_tab, text="Сбрасывать первый спектр после смены T_int", variable=spec_bool_vars["discard_first_scan_after_tint_change"]).grid(row=len(spec_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ttk.Checkbutton(spec_tab, text="Снимать dark spectrum", variable=spec_bool_vars["dark_spectrum_enabled"]).grid(row=len(spec_labels) + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(spec_tab, text="Вычитать средний фон из raw-спектра", variable=spec_bool_vars["baseline_correction_enabled"]).grid(row=len(spec_labels) + 2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(spec_tab, text="Искать пики производными", variable=spec_bool_vars["peak_detection_enabled"]).grid(row=len(spec_labels) + 3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+    stab_vars = make_vars("stability_advanced")
+    stab_labels = [
+        ("voltage_step_max", "Макс. шаг напряжения, В"),
+        ("current_control_kp", "Kp удержания тока, В/мА"),
+        ("photodiode_bias_V", "Смещение фотодиода, В"),
+        ("photodiode_threshold_uA", "Порог фототока, мкА"),
+        ("photodiode_range", "Диапазон фотодиода"),
+    ]
+    for row, (key, label) in enumerate(stab_labels):
+        add_settings_entry(stab_tab, row, label, stab_vars[key])
+
+    def save() -> None:
+        try:
+            settings = load_app_settings()
+            settings["default_root"] = root_var.get().strip() or str(SCRIPT_DIR / DEFAULT_ROOT)
+            settings["hardware_mode"] = mode_var.get().strip() or HARDWARE_MODE_REAL
+            settings["com_port"] = com_var.get().strip() or "COM3"
+            settings["auto_com_port"] = bool(auto_com_var.get())
+            settings["measurement_units"] = {
+                "pixel_area_mm2": parse_float(pixel_area_var.get(), "Площадь пикселя"),
+                "luminance_cd_m2_per_uA": parse_float(luminance_coeff_var.get(), "Коэффициент яркости"),
+            }
+            settings["simulator_config_path"] = sim_cfg_var.get().strip() or str(SCRIPT_DIR / SIM_CONFIG_FILE)
+            settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
+            settings["spectrum_advanced"] = collect_section("spectrum_advanced", spec_vars, spec_bool_vars)
+            settings["stability_advanced"] = collect_section("stability_advanced", stab_vars, {})
+            save_app_settings(settings)
+            app.app_settings = settings
+            if settings["hardware_mode"] == HARDWARE_MODE_SIM:
+                ensure_default_sim_config(Path(settings["simulator_config_path"]))
+            messagebox.showinfo("Настройки", "Настройки сохранены.", parent=win)
+            win.destroy()
+            app.show_start_screen()
+        except Exception as exc:
+            messagebox.showerror("Ошибка настроек", str(exc), parent=win)
+
+    bottom = ttk.Frame(main)
+    bottom.pack(fill="x", pady=(12, 0))
+    ttk.Button(bottom, text="Отмена", command=win.destroy).pack(side="left")
+    ttk.Button(bottom, text="Сохранить", command=save).pack(side="right")
+    fit_toplevel_to_content(win, 860, 760)
+
+
+def scrollable_notebook_tab(notebook, title: str, padding: int = 12) -> ttk.Frame:
+    outer, frame = create_scrollable_frame(notebook, padding=padding)
+    notebook.add(outer, text=title)
+    return frame
+
+
+def add_settings_entry(parent, row: int, label: str, var: tk.StringVar, width: int = 18) -> None:
+    ttk.Label(parent, text=label + ":").grid(row=row, column=0, sticky="e", pady=3, padx=(0, 8))
+    ttk.Entry(parent, textvariable=var, width=width).grid(row=row, column=1, sticky="w", pady=3)
+
+
+def browse_root(var: tk.StringVar) -> None:
+    folder = filedialog.askdirectory(title="Корневая папка для серий")
+    if folder:
+        var.set(folder)
+
+
+def browse_file_for_var(var: tk.StringVar) -> None:
+    filename = filedialog.askopenfilename(title="Выберите JSON-конфиг", filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+    if filename:
+        var.set(filename)
+
+
+def write_default_sim_config_from_settings(var: tk.StringVar) -> None:
+    try:
+        path = ensure_default_sim_config(Path(var.get().strip() or SCRIPT_DIR / SIM_CONFIG_FILE))
+        var.set(str(path))
+        messagebox.showinfo("Эмулятор", f"Пример конфига создан/найден:\n{path}")
+    except Exception as exc:
+        messagebox.showerror("Эмулятор", str(exc))
+
+
+def cast_like(default_value, raw: str):
+    if isinstance(default_value, int) and not isinstance(default_value, bool):
+        return parse_int(raw, "настройка")
+    if isinstance(default_value, float):
+        return parse_float(raw, "настройка")
+    return str(raw)
+
+
+def collect_section(section: str, vars_dict: Dict[str, tk.StringVar], bool_vars: Dict[str, tk.BooleanVar]) -> Dict[str, Any]:
+    defaults = DEFAULT_APP_SETTINGS[section]
+    result: Dict[str, Any] = {}
+    for key, var in vars_dict.items():
+        result[key] = cast_like(defaults.get(key, ""), var.get())
+    for key, var in bool_vars.items():
+        result[key] = bool(var.get())
+    return result

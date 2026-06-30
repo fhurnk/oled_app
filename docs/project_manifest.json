@@ -31,6 +31,7 @@
     "gui_app_module": "oled_app/gui/app.py",
     "gui_start_screen_module": "oled_app/gui/start_screen.py",
     "gui_measurement_menu_module": "oled_app/gui/measurement_menu.py",
+    "gui_settings_window_module": "oled_app/gui/settings_window.py",
     "requirements": "requirements.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },
