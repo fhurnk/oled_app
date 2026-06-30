@@ -1,6 +1,6 @@
 # OLED Measurement App
 
-Версия: `v1.7.6`
+Версия: `v1.7.7`
 
 Приложение для ведения серий измерений OLED-пикселей: ВАЯХ/IVL, спектры, стабильность, журнал серии и экспорт данных в Excel.
 
@@ -48,6 +48,7 @@ py -3 -m venv env
 - `scripts/build_report_origin_workbook.py` - совместимый CLI-вход подготовки Origin-отчета по серии измерений.
 - `oled_app/reports/origin_report.py` - модульная логика подготовки Origin-отчета.
 - `oled_app/measurements/ivl.py` - модульная логика ВАЯХ/IVL для нового каркаса.
+- `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового каркаса.
 - `docs/versions/` - архив описаний версий.
 - `docs/GITHUB_RELEASE_WORKFLOW.md` - порядок публикации версий и GitHub Releases.
 
@@ -59,4 +60,4 @@ py -3 -m venv env
 - `MIDDLE` - функциональное обновление среднего масштаба.
 - `MINOR` - небольшая правка или точечное добавление.
 
-Текущая версия: `v1.7.6`.
+Текущая версия: `v1.7.7`.

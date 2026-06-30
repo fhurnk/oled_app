@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.6`
+Версия: `v1.7.7`
 
 ## Назначение
 
@@ -22,6 +22,7 @@
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` для будущего подключения нового GUI.
+- workflow спектров подготовлен в `oled_app/measurements/spectrum.py` для будущего подключения нового GUI.
 
 ## Структура Проекта
 
@@ -50,6 +51,7 @@ oled_app_v2_5_package/
       spectrometer.py
     measurements/
       ivl.py
+      spectrum.py
     reports/
       origin_report.py
   requirements.txt
@@ -81,6 +83,7 @@ oled_app_v2_5_package/
       v1.7.4.md
       v1.7.5.md
       v1.7.6.md
+      v1.7.7.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

@@ -4,7 +4,7 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.6`
+- Current app version: `v1.7.7`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
@@ -26,13 +26,14 @@ When changing user-visible behavior, update all version references in the same c
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular scaffold.
+- Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular scaffold.
 
 During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`.
 
 ## Measurement Workflows
 
 - IVL / ВАЯХ: modular workflow is prepared in `oled_app/measurements/ivl.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Spectrum: uses known opening voltage, auto-selects integration time, saves raw and processed spectra.
+- Spectrum: modular workflow is prepared in `oled_app/measurements/spectrum.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Stability: runs constant-current stability measurements after IVL.
 - Report: report builder logic is in `oled_app/reports/origin_report.py`; the GUI can continue to run `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with selectable spectrum pixels and voltage grids.
 - Series journal: `series_journal.xlsx` inside each series folder.
