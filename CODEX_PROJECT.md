@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.7`
+- Current app version: `v1.7.2`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit.
+When changing user-visible behavior, update all version references in the same commit. During the current prerelease modularization, keep migration progress on the existing `v1.7.2` release/tag and do not create later modularization releases unless the user explicitly asks.
 
 ## Main Entry Points
 
@@ -28,7 +28,7 @@ When changing user-visible behavior, update all version references in the same c
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular scaffold.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular scaffold.
 
-During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`.
+During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`. Keep this modularization line on `v1.7.2`.
 
 ## Measurement Workflows
 

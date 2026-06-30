@@ -1,88 +1,24 @@
 # История Обновлений
 
-## v1.7.7 - 2026-06-30
-
-### Добавлено
-
-- Добавлен модуль `oled_app/measurements/spectrum.py` с workflow спектров: параметры, `SpectrumHelper`, подбор `T_int`, обработка спектра, поиск пиков и сохранение Excel-книги.
-- `oled_app/measurements/__init__.py` экспортирует основные функции и классы spectrum-слоя для нового каркаса.
-
-### Изменено
-
-- `oled_app/main.py` показывает, что подэтап `measurements.spectrum` уже подготовлен.
-- `docs/modularization_plan.md` отмечает выполненную часть этапа 6: спектры готовы, стабильность остается следующим подэтапом.
-- Документация и manifest обновлены под версию `v1.7.7`.
-
-## v1.7.6 - 2026-06-30
-
-### Добавлено
-
-- Добавлен модуль `oled_app/measurements/ivl.py` с workflow ВАЯХ/IVL: параметры, цикл измерения, классификация статуса и сохранение Excel-книги.
-- `oled_app/measurements/__init__.py` экспортирует основные функции и классы IVL-слоя для нового каркаса.
-
-### Изменено
-
-- `oled_app/main.py` показывает, что подэтап `measurements.ivl` уже подготовлен.
-- `docs/modularization_plan.md` отмечает выполненную часть этапа 6: ВАЯХ/IVL готова, спектры и стабильность остаются следующими подэтапами.
-- Документация и manifest обновлены под версию `v1.7.6`.
-
-## v1.7.5 - 2026-06-30
-
-### Добавлено
-
-- Добавлен модуль `oled_app/reports/origin_report.py` с логикой подготовки Origin-отчета.
-- `oled_app/reports/__init__.py` экспортирует основные функции report-слоя для нового каркаса.
-
-### Изменено
-
-- `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
-- `oled_app/main.py` показывает, что report-слой уже подготовлен в модульном каркасе.
-- `docs/modularization_plan.md` отмечает этап 5 `reports/` как выполненный.
-- Документация и manifest обновлены под версию `v1.7.5`.
-
-## v1.7.4 - 2026-06-30
-
-### Добавлено
-
-- Добавлены модули hardware-слоя нового каркаса: `oled_app/hardware/probe.py`, `auto_com.py`, `simulator.py`, `ossila.py`, `spectrometer.py`.
-- В новый hardware-слой подготовлены проверка оборудования, авто-COM Ossila, установка/снятие встроенного симулятора `xtralien`/`seabreeze`, helper безопасного выключения SMU и поиск спектрометров.
-
-### Изменено
-
-- `oled_app/main.py` показывает, что hardware-слой уже подготовлен в модульном каркасе.
-- `docs/modularization_plan.md` отмечает этап 4 `hardware/` как выполненный.
-- Документация и manifest обновлены под версию `v1.7.4`.
-
-## v1.7.3 - 2026-06-30
-
-### Добавлено
-
-- Добавлены модули `oled_app/series/manager.py`, `journal.py`, `paths.py`, `statuses.py` и `layout.py`.
-- В `docs/modularization_plan.md` добавлен чеклист статуса миграции с отмеченными выполненными этапами.
-- Добавлен отдельный запуск нового модульного каркаса `oled_modular_app.py`.
-
-### Изменено
-
-- `SeriesManager`, `SeriesJournal`, `PixelInfo`, генерация пикселей, пути папок измерений, цвета статусов и геометрия карты подложкодержателя подготовлены в `oled_app/series/` для нового каркаса.
-- `oled_app/main.py` больше не запускает референсный монолит, а работает как самостоятельный каркас.
-- Документация и manifest обновлены: `oled_measurement_app_v2_5.py` считается нетронутым референсом, новый вход - `oled_modular_app.py`.
-
-### Исправлено
-
-- `oled_measurement_app_v2_5.py` восстановлен как оригинальное референсное приложение без импортов из нового пакета.
-
 ## v1.7.2 - 2026-06-30
 
 ### Добавлено
 
 - Создан пакет `oled_app/` с каркасом целевой модульной структуры: `gui`, `series`, `hardware`, `measurements`, `reports`.
-- Добавлены модули `oled_app/constants.py`, `oled_app/settings.py`, `oled_app/utils.py` и временный package-entrypoint `oled_app/main.py`.
+- Добавлен отдельный запуск нового модульного каркаса `oled_modular_app.py`.
+- Добавлены модули `oled_app/constants.py`, `oled_app/settings.py`, `oled_app/utils.py` и package-entrypoint `oled_app/main.py`.
+- Подготовлены модули `oled_app/series/manager.py`, `journal.py`, `paths.py`, `statuses.py` и `layout.py`.
+- Подготовлены модули hardware-слоя: `oled_app/hardware/probe.py`, `auto_com.py`, `simulator.py`, `ossila.py`, `spectrometer.py`.
+- Добавлен `oled_app/reports/origin_report.py` с логикой подготовки Origin-отчета.
+- Добавлены `oled_app/measurements/ivl.py` и `oled_app/measurements/spectrum.py` с workflow ВАЯХ/IVL и спектров.
 
 ### Изменено
 
 - Общие константы, `APP_VERSION`, настройки приложения, настройки симулятора и безопасные утилиты вынесены из монолита в `oled_app/`.
-- `oled_measurement_app_v2_5.py` сохраняет прежний запуск и импортирует вынесенный слой из нового пакета.
-- Документация и manifest обновлены под новый источник версии `oled_app/constants.py`.
+- `oled_measurement_app_v2_5.py` сохраняет прежний запуск и остается нетронутым референсом; новый каркас развивается через `oled_modular_app.py`.
+- `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
+- `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
+- Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 
 ## v1.7.1 - 2026-06-29
 
