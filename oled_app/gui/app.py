@@ -31,6 +31,7 @@ from .ivl_window import (
 from .measurement_menu import pixel_ids, refresh_pixel_table, show_measurement_menu
 from .settings_window import open_settings_window
 from .spectrum_window import open_spectrum_window
+from .stability_window import open_stability_window
 from .start_screen import show_new_series_screen, show_start_screen
 
 
@@ -182,7 +183,7 @@ class OLEDModularApp(tk.Tk):
         open_spectrum_window(self)
 
     def open_stability_window(self) -> None:
-        messagebox.showinfo("Стабильность", "Окно стабильности будет подключено следующим GUI-подэтапом.")
+        open_stability_window(self)
 
     def open_report_window(self) -> None:
         messagebox.showinfo("Составить отчет", "Окно отчета будет подключено следующим GUI-подэтапом.")

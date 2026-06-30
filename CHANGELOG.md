@@ -18,6 +18,7 @@
 - Добавлен `oled_app/gui/settings_window.py` с окном настроек нового GUI, сохранением `oled_app_settings.json` и созданием JSON-примера эмулятора.
 - Добавлен `oled_app/gui/ivl_window.py` с окном ВАЯХ для нового GUI: одиночный пиксель, последовательная съемка серии, progress window и обновление журнала.
 - Добавлен `oled_app/gui/spectrum_window.py` с окном спектров для нового GUI: старт от напряжения открытия, ручной старт, progress window и обновление журнала.
+- Добавлен `oled_app/gui/stability_window.py` с окном стабильности для нового GUI: расчет стартового напряжения по ВАЯХ, запуск workflow стабильности и обновление журнала.
 
 ### Изменено
 
@@ -29,6 +30,7 @@
 - `OLEDModularApp` теперь открывает перенесенное окно настроек вместо временной заглушки.
 - `OLEDModularApp` теперь открывает перенесенное окно ВАЯХ и вызывает workflow `oled_app.measurements.ivl.run_ivl_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно спектров и вызывает workflow `oled_app.measurements.spectrum.run_spectrum_measurement`.
+- `OLEDModularApp` теперь открывает перенесенное окно стабильности и вызывает workflow `oled_app.measurements.stability.run_stability_measurement`.
 - `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 

@@ -29,7 +29,7 @@ When changing user-visible behavior, update all version references in the same c
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular scaffold.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular scaffold.
 - Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
-- The modular GUI shell, start screen, series measurement menu, settings window, IVL window, and spectrum window now live in `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, and `oled_app/gui/spectrum_window.py`.
+- The modular GUI shell, start screen, series measurement menu, settings window, IVL window, spectrum window, and stability window now live in `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, and `oled_app/gui/stability_window.py`.
 
 During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`. Keep this modularization line on `v1.7.2`.
 
@@ -37,7 +37,7 @@ During modularization, do not edit `oled_measurement_app_v2_5.py` unless the use
 
 - IVL / ВАЯХ: modular workflow is in `oled_app/measurements/ivl.py` and the modular GUI window is in `oled_app/gui/ivl_window.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Stability: modular workflow is prepared in `oled_app/measurements/stability.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
+- Stability: modular workflow is in `oled_app/measurements/stability.py` and the modular GUI window is in `oled_app/gui/stability_window.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Report: report builder logic is in `oled_app/reports/origin_report.py`; the GUI can continue to run `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with selectable spectrum pixels and voltage grids.
 - Series journal: `series_journal.xlsx` inside each series folder.
 
