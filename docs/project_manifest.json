@@ -17,7 +17,8 @@
     "docs/versions/v1.7.3.md"
   ],
   "entry_points": {
-    "application": "oled_measurement_app_v2_5.py",
+    "application": "oled_modular_app.py",
+    "reference_application": "oled_measurement_app_v2_5.py",
     "package_entrypoint": "oled_app/main.py",
     "release_script": "scripts/create_github_release.py",
     "report_script": "scripts/build_report_origin_workbook.py",

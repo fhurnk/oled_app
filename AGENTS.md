@@ -32,6 +32,7 @@ Do not leave a code change without a matching version/changelog entry unless the
 ## Repository Hygiene
 
 - Keep generated measurement data out of git. `OLED_series/`, local settings, virtual environments, caches, backups, and IDE artifacts are not release content.
+- During modularization, keep `oled_measurement_app_v2_5.py` as the untouched reference app unless the user explicitly asks to change the reference. Put new modular entrypoint work in `oled_modular_app.py` and `oled_app/`.
 - Before committing, check the intended diff and stage only files related to the requested change.
 - Prefer direct local Git commands when available. This repo may use `.git-local` as the git directory; if normal `git` cannot find the repo, run with `GIT_DIR=.git-local` and `GIT_WORK_TREE` set to the workspace path.
 - If publishing requires credentials, use the configured Git Credential Manager or ask the user to authenticate rather than embedding tokens in files or commands.

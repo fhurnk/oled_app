@@ -52,51 +52,20 @@ from openpyxl.chart.axis import ChartLines
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from oled_app.constants import (
-    DEFAULT_ROOT,
-    HARDWARE_MODE_REAL,
-    HARDWARE_MODE_SIM,
-    JOURNAL_FILE,
-    MEASUREMENT_FOLDER_NAMES,
-    MEASUREMENTS_SHEET,
-    SCRIPT_DIR,
-    SIM_CONFIG_FILE,
-)
-from oled_app.settings import (
-    DEFAULT_APP_SETTINGS,
-    DEFAULT_SIMULATOR_CONFIG,
-    deep_update,
-    ensure_default_sim_config,
-    hardware_mode_label,
-    load_app_settings,
-    save_app_settings,
-)
-from oled_app.series import (
-    build_holder_layout,
-    ensure_measurement_folder,
-    ivl_status_marker,
-    pixel_status_color,
-    SeriesManager,
-    short_date_for_map,
-)
-from oled_app.utils import (
-    as_float_or_none,
-    autosize_columns,
-    build_report_voltage_grid,
-    current_density_mA_cm2,
-    format_voltage,
-    luminance_cd_m2,
-    now_str,
-    parse_float,
-    parse_int,
-    read_spectrum_metrics_from_workbook,
-    resolve_series_file,
-    safe_filename,
-    style_header_row,
-    timestamp_for_file,
-    today_iso,
-    voltage_grid_missing,
-)
+APP_VERSION = "1.7.1"
+SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_FILE = "series_config.json"
+JOURNAL_FILE = "series_journal.xlsx"
+DEFAULT_ROOT = "OLED_series"
+APP_SETTINGS_FILE = "oled_app_settings.json"
+SIM_CONFIG_FILE = "oled_simulator_config.json"
+HARDWARE_MODE_REAL = "real"
+HARDWARE_MODE_SIM = "simulator"
+MEASUREMENT_FOLDER_NAMES = {
+    "IVL": "01_IVL_VAH",
+    "SPECTRUM": "02_SPECTRA",
+    "STABILITY": "03_STABILITY",
+}
 
 
 def enable_windows_dpi_awareness() -> None:
@@ -121,6 +90,444 @@ def enable_windows_dpi_awareness() -> None:
 class MeasurementStopped(Exception):
     pass
 
+PIXELS_SHEET = "Pixels"
+MEASUREMENTS_SHEET = "Measurements"
+SERIES_SHEET = "Series"
+QUARTERS_SHEET = "Quarters"
+
+PIXEL_HEADERS = [
+    "Pixel ID",
+    "Quarter code",
+    "Quarter number",
+    "Substrate number",
+    "Pixel number",
+    "Last status",
+    "Opening voltage (V)",
+    "Last IVL date",
+    "Last IVL file",
+    "Last IVL max current (mA)",
+    "Last IVL max photodiode (uA)",
+    "Last spectrum date",
+    "Last spectrum file",
+    "Last spectrum peak count",
+    "Last spectrum peaks nm",
+    "Last spectrum max intensity (counts/s)",
+    "Last stability date",
+    "Last stability file",
+    "Last updated",
+]
+
+MEASUREMENT_HEADERS = [
+    "Date time",
+    "Measurement day",
+    "Type",
+    "Pixel ID",
+    "Status",
+    "File",
+    "Params JSON",
+    "Notes",
+]
+
+
+# -----------------------------------------------------------------------------
+# Общие утилиты
+# -----------------------------------------------------------------------------
+
+def now_str() -> str:
+    return datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+
+
+def timestamp_for_file() -> str:
+    return datetime.now().strftime("%d-%m-%Y_%Hh%Mm%Ss")
+
+
+def today_iso() -> str:
+    return date.today().isoformat()
+
+
+def safe_filename(text: str, fallback: str = "item") -> str:
+    text = (text or "").strip()
+    text = re.sub(r"[^0-9A-Za-zА-Яа-яЁё._\-]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_.-")
+    return text or fallback
+
+
+def as_float_or_none(value) -> Optional[float]:
+    if value in (None, "", "—"):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def current_density_mA_cm2(current_mA: Any, pixel_area_mm2: Any) -> Optional[float]:
+    current = as_float_or_none(current_mA)
+    area = as_float_or_none(pixel_area_mm2)
+    if current is None or area is None or area <= 0:
+        return None
+    return float(current) / (float(area) / 100.0)
+
+
+def luminance_cd_m2(photo_uA: Any, conversion_cd_m2_per_uA: Any) -> Optional[float]:
+    photo = as_float_or_none(photo_uA)
+    coeff = as_float_or_none(conversion_cd_m2_per_uA)
+    if photo is None or coeff is None:
+        return None
+    return float(photo) * float(coeff)
+
+
+def relative_to_or_abs(path: Path, base: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(base.resolve()))
+    except Exception:
+        return str(path.resolve())
+
+
+def resolve_series_file(series_folder: Path, file_value: Any) -> Optional[Path]:
+    if not file_value:
+        return None
+    path = Path(str(file_value))
+    if not path.is_absolute():
+        path = Path(series_folder) / path
+    return path if path.exists() else None
+
+
+def read_spectrum_metrics_from_workbook(path: Optional[Path]) -> Dict[str, Any]:
+    if not path or not path.exists():
+        return {}
+    try:
+        wb = load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+        header_row = 14
+        headers = {}
+        for candidate in range(1, min(ws.max_row, 40) + 1):
+            row_headers = {str(ws.cell(candidate, c).value or ""): c for c in range(1, ws.max_column + 1)}
+            if "Peaks detected" in row_headers or "Max intensity processed (counts)" in row_headers or "Max intensity processed (counts/s)" in row_headers or "Max intensity (counts)" in row_headers:
+                header_row = candidate
+                headers = row_headers
+                break
+        peaks_col = headers.get("Peaks detected")
+        peaks_nm_col = headers.get("Peaks nm")
+        max_int_col = headers.get("Max intensity processed (counts)") or headers.get("Max intensity processed (counts/s)") or headers.get("Max intensity (counts)")
+        best = {"peak_count": "", "peaks_nm": "", "max_intensity": ""}
+        best_intensity = -1.0
+        for row in range(header_row + 1, ws.max_row + 1):
+            intensity = as_float_or_none(ws.cell(row, max_int_col).value) if max_int_col else None
+            if intensity is None:
+                continue
+            if intensity >= best_intensity:
+                best_intensity = float(intensity)
+                best = {
+                    "peak_count": ws.cell(row, peaks_col).value if peaks_col else "",
+                    "peaks_nm": ws.cell(row, peaks_nm_col).value if peaks_nm_col else "",
+                    "max_intensity": round(float(intensity), 1),
+                }
+        wb.close()
+        return best
+    except Exception:
+        return {}
+
+
+def ensure_day_folder(series_folder: Path) -> Path:
+    day_folder = series_folder / "measurements" / today_iso()
+    day_folder.mkdir(parents=True, exist_ok=True)
+    return day_folder
+
+
+def ensure_measurement_folder(
+    series_folder: Path,
+    measurement_type: str,
+    pixel_id: str,
+    pixel_row: Optional[Dict[str, Any]] = None,
+) -> Path:
+    measurement_folder = MEASUREMENT_FOLDER_NAMES.get(
+        str(measurement_type).upper(),
+        safe_filename(str(measurement_type), fallback="measurement"),
+    )
+    pixel_row = pixel_row or {}
+
+    quarter_number = pixel_row.get("Quarter number") or "unknown"
+    quarter_code = pixel_row.get("Quarter code") or "Q"
+    substrate_number = pixel_row.get("Substrate number") or "unknown"
+
+    quarter_name = safe_filename(f"{quarter_code}{quarter_number}", fallback=f"Q{quarter_number}")
+    substrate_folder = safe_filename(f"{quarter_name}_{substrate_number}", fallback=f"{quarter_name}_unknown")
+    pixel_folder = safe_filename(pixel_id, fallback="pixel")
+
+    output_dir = (
+        series_folder
+        / "measurements"
+        / measurement_folder
+        / today_iso()
+        / quarter_name
+        / substrate_folder
+        / pixel_folder
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def pixel_status_color(status: str) -> str:
+    status = str(status or "").upper()
+    if status == "WORKING":
+        return "#8FD694"
+    if status == "NO_CONTACT":
+        return "#F2D96B"
+    if status == "NEEDS_REVIEW":
+        return "#F4A261"
+    if status in {"NONWORKING", "BURNED", "FAILED", "CURRENT_LIMIT_STOP", "CURRENT_LIMIT"}:
+        return "#F28B82"
+    return "#D9D9D9"
+
+
+def ivl_status_marker(status: str) -> str:
+    status = str(status or "").upper()
+    if status == "WORKING":
+        return "↑ WORKING"
+    if status == "NO_CONTACT":
+        return "→ NO_CONTACT"
+    if status == "NEEDS_REVIEW":
+        return "? NEEDS_REVIEW"
+    if status in {"NONWORKING", "FAILED"}:
+        return "↓ " + status
+    if status in {"BURNED", "CURRENT_LIMIT_STOP", "CURRENT_LIMIT"}:
+        return "↯ " + status
+    return "· " + (status or "")
+
+
+def build_holder_layout(width: int = 930, height: int = 620) -> Dict[int, Dict[str, Any]]:
+    """Геометрия подложкодержателя для карты и окна создания серии.
+
+    Тексты сведены к минимуму: остаются большие номера четвертей и короткие
+    подписи самих подложек. Даты и легенда разведены по вертикали, чтобы не
+    наезжали на подложки при увеличенном масштабе Windows.
+    """
+    box_w = 86
+    box_h = 52
+
+    # Подложки расположены внутри овала с большим запасом между соседями.
+    left_x1, left_x2, left_x3 = 170, 305, 238
+    right_x1, right_x2, right_x3 = width - 390, width - 255, width - 322
+    top_y1, top_y3 = 145, 235
+    bottom_y1, bottom_y3 = 320, 405
+
+    quarter_layout = {
+        2: {
+            "number_xy": (48, 92),
+            "name_xy": (92, 36),
+            "entry_xy": (78, 62),
+            "substrates": [(left_x1, top_y1), (left_x2, top_y1), (left_x3, top_y3)],
+        },
+        1: {
+            "number_xy": (width - 48, 92),
+            "name_xy": (width - 248, 36),
+            "entry_xy": (width - 230, 62),
+            "substrates": [(right_x1, top_y1), (right_x2, top_y1), (right_x3, top_y3)],
+        },
+        3: {
+            "number_xy": (48, height - 118),
+            "name_xy": (92, height - 155),
+            "entry_xy": (78, height - 130),
+            "substrates": [(left_x1, bottom_y1), (left_x2, bottom_y1), (left_x3, bottom_y3)],
+        },
+        4: {
+            "number_xy": (width - 48, height - 118),
+            "name_xy": (width - 248, height - 155),
+            "entry_xy": (width - 230, height - 130),
+            "substrates": [(right_x1, bottom_y1), (right_x2, bottom_y1), (right_x3, bottom_y3)],
+        },
+    }
+
+    for q, info in quarter_layout.items():
+        detailed = []
+        for substrate_number, (x, y) in enumerate(info["substrates"], start=1):
+            detailed.append({"substrate_number": substrate_number, "x": x, "y": y, "w": box_w, "h": box_h})
+        info["substrates"] = detailed
+    return quarter_layout
+
+
+def short_date_for_map(value: str) -> str:
+    """Короткая дата для карты подложкодержателя, чтобы подписи не слипались."""
+    text = str(value or "").strip()
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%d.%m.%y")
+    except Exception:
+        return text
+
+# -----------------------------------------------------------------------------
+# Настройки приложения, режим реального оборудования / эмулятора
+# -----------------------------------------------------------------------------
+
+DEFAULT_SIMULATOR_CONFIG: Dict[str, Any] = {
+    "active": True,
+    "global": {
+        "random_seed": 42,
+        "current_noise_relative": 0.01,
+        "photodiode_noise_uA": 0.01,
+        "voltage_noise_V": 0.002,
+        "spectrum_noise_relative": 0.008,
+    },
+    "default_pixel": {
+        "mode": "working",
+        "turn_on_voltage_V": 2.65,
+        "current_at_5V_mA": 6.0,
+        "iv_exponent": 2.0,
+        "leakage_mA": 0.0005,
+        "max_current_mA": 30.0,
+        "short_resistance_ohm": 120.0,
+        "burnout_voltage_V": None,
+        "burnout_after_s": None,
+        "photodiode_gain_uA_per_mA": 0.55,
+        "degradation_tau_s": None,
+        "voltage_drift_V_per_s": 0.0,
+        "spectrum": {
+            "dark_offset_counts": 120.0,
+            "dark_counts_per_s": 250.0,
+            "background_counts_per_s": 50.0,
+            "counts_per_mA_per_s": 1_200_000.0,
+            "saturation_counts": 65535.0,
+            "peaks": [
+                {"center_nm": 465.0, "fwhm_nm": 42.0, "amplitude": 0.75},
+                {"center_nm": 535.0, "fwhm_nm": 70.0, "amplitude": 1.00},
+                {"center_nm": 625.0, "fwhm_nm": 85.0, "amplitude": 0.62},
+            ],
+        },
+    },
+    "pixels": {
+        "Q1_1_1": {"mode": "working", "turn_on_voltage_V": 2.60, "current_at_5V_mA": 6.5, "photodiode_gain_uA_per_mA": 0.60},
+        "Q1_1_2": {"mode": "weak", "photodiode_gain_uA_per_mA": 0.05, "spectrum": {"counts_per_mA_per_s": 130_000.0}},
+        "Q1_1_3": {"mode": "nonworking", "photodiode_gain_uA_per_mA": 0.0},
+        "Q1_1_4": {"mode": "no_contact", "leakage_mA": 0.001},
+        "Q1_2_1": {"mode": "working", "burnout_voltage_V": 3.45, "short_resistance_ohm": 80.0},
+        "Q1_2_2": {"mode": "working", "degradation_tau_s": 35.0, "voltage_drift_V_per_s": 0.001},
+        "Q1_2_3": {
+            "mode": "working",
+            "turn_on_voltage_V": 2.75,
+            "current_at_5V_mA": 5.5,
+            "spectrum": {
+                "peaks": [
+                    {"center_nm": 455.0, "fwhm_nm": 38.0, "amplitude": 0.95},
+                    {"center_nm": 540.0, "fwhm_nm": 72.0, "amplitude": 0.90},
+                    {"center_nm": 610.0, "fwhm_nm": 92.0, "amplitude": 0.70},
+                ]
+            },
+        },
+    },
+}
+
+DEFAULT_APP_SETTINGS: Dict[str, Any] = {
+    "default_root": str(SCRIPT_DIR / DEFAULT_ROOT),
+    "hardware_mode": HARDWARE_MODE_SIM,
+    "com_port": "SIM",
+    "auto_com_port": False,
+    "simulator_config_path": str(SCRIPT_DIR / SIM_CONFIG_FILE),
+    "ivl_advanced": {
+        "photodiode_bias_V": -5.0,
+        "photodiode_range": 4,
+        "photodiode_threshold_uA": 0.5,
+        "burnout_current_threshold_mA": 10.0,
+        "mark_current_limit_as_burnout": False,
+        "no_contact_max_led_current_mA": 0.05,
+        "burned_confirmation_cycles": 1,
+    },
+    "spectrum_advanced": {
+        "photodiode_bias_V": -5.0,
+        "photodiode_range": 4,
+        "target_intensity": 40000.0,
+        "intensity_min": 20000.0,
+        "intensity_max": 55000.0,
+        "saturation_level": 60000.0,
+        "min_peak_width_nm": 15.0,
+        "max_peak_width_nm": 150.0,
+        "t_int_initial_s": 0.01,
+        "t_int_min_s": 0.001,
+        "t_int_max_s": 10.0,
+        "discard_first_scan_after_tint_change": True,
+        "kp": 0.3,
+        "ki": 0.05,
+        "max_iterations": 20,
+        "tolerance": 0.05,
+        "peak_search_mode_for_tint": "auto",
+        "settle_time_voltage_s": 0.1,
+        "settle_time_spectrum_s": 0.05,
+        "dark_spectrum_enabled": False,
+        "dark_spectrum_scans": 3,
+        "baseline_correction_enabled": True,
+        "peak_detection_enabled": False,
+    },
+    "measurement_units": {
+        "pixel_area_mm2": 1.0,
+        "luminance_cd_m2_per_uA": 1.0,
+    },
+    "stability_advanced": {
+        "voltage_step_max": 0.02,
+        "current_control_kp": 0.01,
+        "photodiode_bias_V": -5.0,
+        "photodiode_threshold_uA": 0.1,
+        "photodiode_range": 4,
+    },
+    "ui": {
+        "last_ivl_graph_mode": "raw",
+    },
+    "measurement_defaults": {
+        "ivl": {
+            "sweep_start_V": "0",
+            "sweep_end_V": "5",
+            "step_V": "0.02",
+            "time_per_point_s": "0.01",
+            "cycles": "1",
+            "delay_between_cycles_s": "1",
+            "current_limit_mA": "10",
+        },
+        "spectrum": {
+            "voltage_end_V": "5",
+            "voltage_step_V": "0.1",
+            "current_limit_mA": "6",
+            "led_type": "auto",
+            "use_opening_voltage": True,
+        },
+        "stability": {
+            "current_setpoint_mA": "3.5",
+            "voltage_limit_V": "5",
+            "current_limit_mA": "10",
+            "measurement_time_s": "86400",
+            "sample_interval_s": "1",
+            "autosave_interval_s": "600",
+        },
+    },
+}
+
+
+def deep_update(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    out = deepcopy(base)
+    for key, value in (update or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_update(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def app_settings_path() -> Path:
+    return SCRIPT_DIR / APP_SETTINGS_FILE
+
+
+def load_app_settings() -> Dict[str, Any]:
+    path = app_settings_path()
+    settings = deepcopy(DEFAULT_APP_SETTINGS)
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            settings = deep_update(settings, loaded)
+        except Exception:
+            pass
+    return settings
+
+
+def save_app_settings(settings: Dict[str, Any]) -> None:
+    app_settings_path().write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def fit_toplevel_to_content(win: tk.Toplevel, min_width: int, min_height: int, padding: int = 36) -> None:
     try:
@@ -137,6 +544,17 @@ def fit_toplevel_to_content(win: tk.Toplevel, min_width: int, min_height: int, p
         win.minsize(min(width, min_width), min(height, min_height))
     except Exception:
         win.geometry(f"{min_width}x{min_height}")
+
+
+def ensure_default_sim_config(config_path: Optional[Path] = None) -> Path:
+    path = Path(config_path) if config_path else SCRIPT_DIR / SIM_CONFIG_FILE
+    if not path.exists():
+        path.write_text(json.dumps(DEFAULT_SIMULATOR_CONFIG, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def hardware_mode_label(settings: Dict[str, Any]) -> str:
+    return "Эмулятор" if settings.get("hardware_mode") == HARDWARE_MODE_SIM else "Реальное оборудование"
 
 
 def list_serial_ports() -> List[Any]:
@@ -604,6 +1022,402 @@ def prepare_hardware_environment(pixel_id: str, app_settings: Optional[Dict[str,
     else:
         uninstall_simulator_modules()
         log("Режим оборудования: реальное оборудование. Будут использованы установленные xtralien/seabreeze.")
+
+def light_border() -> Border:
+    side = Side(style="thin", color="D9D9D9")
+    return Border(left=side, right=side, top=side, bottom=side)
+
+
+def style_header_row(ws, row: int, min_col: int, max_col: int):
+    fill = PatternFill("solid", fgColor="D9E1F2")
+    font = Font(bold=True)
+    border = light_border()
+    for col in range(min_col, max_col + 1):
+        cell = ws.cell(row=row, column=col)
+        cell.fill = fill
+        cell.font = font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+
+def autosize_columns(ws, min_width: int = 10, max_width: int = 42):
+    for col_cells in ws.columns:
+        max_len = 0
+        letter = get_column_letter(col_cells[0].column)
+        for cell in col_cells:
+            value = cell.value
+            if value is not None:
+                max_len = max(max_len, len(str(value)))
+        ws.column_dimensions[letter].width = max(min_width, min(max_width, max_len + 2))
+
+
+def parse_float(text: str, field_name: str) -> float:
+    try:
+        return float(str(text).replace(",", "."))
+    except Exception:
+        raise ValueError(f"Поле '{field_name}' должно быть числом")
+
+
+def parse_int(text: str, field_name: str) -> int:
+    try:
+        return int(float(str(text).replace(",", ".")))
+    except Exception:
+        raise ValueError(f"Поле '{field_name}' должно быть целым числом")
+
+
+def build_report_voltage_grid(start: float, stop: float, step: float) -> List[float]:
+    if step <= 0:
+        raise ValueError("Шаг напряжения должен быть положительным")
+    if stop < start:
+        raise ValueError("Конец диапазона должен быть не меньше начала")
+    values: List[float] = []
+    current = float(start)
+    while current <= stop + step / 2:
+        values.append(round(current, 6))
+        current += step
+        if len(values) > 10000:
+            raise ValueError("Слишком большая сетка напряжений для отчета")
+    return values
+
+
+def voltage_grid_missing(requested: Iterable[float], available: Iterable[float]) -> List[float]:
+    available_set = {round(float(value), 6) for value in available}
+    return [value for value in requested if round(float(value), 6) not in available_set]
+
+
+def format_voltage(value: float) -> str:
+    return f"{float(value):g}"
+
+
+# -----------------------------------------------------------------------------
+# Серия и журнал
+# -----------------------------------------------------------------------------
+
+@dataclass
+class PixelInfo:
+    pixel_id: str
+    quarter_code: str
+    quarter_number: int
+    substrate_number: int
+    pixel_number: int
+
+
+def generate_pixels(quarter_names: Dict[str, str]) -> List[PixelInfo]:
+    pixels: List[PixelInfo] = []
+    for q in range(1, 5):
+        code = safe_filename(quarter_names.get(str(q), f"Q{q}"), fallback=f"Q{q}")
+        for substrate in range(1, 4):
+            for pix in range(1, 5):
+                # Формат: CR1_2_3, где CR — название четверти,
+                # 1 — номер четверти, 2 — подложка, 3 — пиксель.
+                pixel_id = f"{code}{q}_{substrate}_{pix}"
+                pixels.append(PixelInfo(pixel_id, code, q, substrate, pix))
+    return pixels
+
+
+class SeriesJournal:
+    def __init__(self, series_folder: Path, config: Dict):
+        self.series_folder = Path(series_folder)
+        self.config = config
+        self.path = self.series_folder / JOURNAL_FILE
+
+    def initialize_or_update(self):
+        if self.path.exists():
+            wb = load_workbook(self.path)
+        else:
+            wb = Workbook()
+            wb.remove(wb.active)
+
+        self._ensure_series_sheet(wb)
+        self._ensure_quarters_sheet(wb)
+        self._ensure_pixels_sheet(wb)
+        self._ensure_measurements_sheet(wb)
+
+        wb.save(self.path)
+        wb.close()
+
+    def _ensure_series_sheet(self, wb: Workbook):
+        if SERIES_SHEET in wb.sheetnames:
+            ws = wb[SERIES_SHEET]
+            ws.delete_rows(1, ws.max_row)
+        else:
+            ws = wb.create_sheet(SERIES_SHEET, 0)
+
+        ws["A1"] = "OLED series journal"
+        ws["A1"].font = Font(bold=True, size=14)
+        rows = [
+            ("App version", APP_VERSION),
+            ("Created at", self.config.get("created_at", "")),
+            ("Deposition date", self.config.get("deposition_date", "")),
+            ("Keyword", self.config.get("keyword", "")),
+            ("Series folder", str(self.series_folder.resolve())),
+            ("Naming rule", "{quarter_code}{quarter_number}_{substrate_number}_{pixel_number}"),
+            ("Example", "CR1_2_3"),
+        ]
+        for idx, (k, v) in enumerate(rows, start=3):
+            ws.cell(row=idx, column=1, value=k).font = Font(bold=True)
+            ws.cell(row=idx, column=2, value=v)
+        autosize_columns(ws)
+
+    def _ensure_quarters_sheet(self, wb: Workbook):
+        if QUARTERS_SHEET in wb.sheetnames:
+            ws = wb[QUARTERS_SHEET]
+            ws.delete_rows(1, ws.max_row)
+        else:
+            ws = wb.create_sheet(QUARTERS_SHEET)
+
+        headers = ["Quarter number", "Quarter code/name", "Generated pixel prefix example"]
+        ws.append(headers)
+        style_header_row(ws, 1, 1, len(headers))
+        quarter_names = self.config.get("quarter_names", {})
+        for q in range(1, 5):
+            code = safe_filename(quarter_names.get(str(q), f"Q{q}"), fallback=f"Q{q}")
+            ws.append([q, code, f"{code}{q}_1_1"])
+        autosize_columns(ws)
+
+    def _ensure_pixels_sheet(self, wb: Workbook):
+        if PIXELS_SHEET in wb.sheetnames:
+            ws = wb[PIXELS_SHEET]
+            existing = self._read_sheet_as_dicts(ws)
+            existing_by_id = {row.get("Pixel ID"): row for row in existing if row.get("Pixel ID")}
+            ws.delete_rows(1, ws.max_row)
+        else:
+            ws = wb.create_sheet(PIXELS_SHEET)
+            existing_by_id = {}
+
+        ws.append(PIXEL_HEADERS)
+        style_header_row(ws, 1, 1, len(PIXEL_HEADERS))
+
+        pixels = generate_pixels(self.config.get("quarter_names", {}))
+        for p in pixels:
+            old = existing_by_id.get(p.pixel_id, {})
+            ws.append([
+                p.pixel_id,
+                p.quarter_code,
+                p.quarter_number,
+                p.substrate_number,
+                p.pixel_number,
+                old.get("Last status", "UNKNOWN"),
+                old.get("Opening voltage (V)", ""),
+                old.get("Last IVL date", ""),
+                old.get("Last IVL file", ""),
+                old.get("Last IVL max current (mA)", ""),
+                old.get("Last IVL max photodiode (uA)", ""),
+                old.get("Last spectrum date", ""),
+                old.get("Last spectrum file", ""),
+                old.get("Last spectrum peak count", ""),
+                old.get("Last spectrum peaks nm", ""),
+                old.get("Last spectrum max intensity (counts/s)", ""),
+                old.get("Last stability date", ""),
+                old.get("Last stability file", ""),
+                old.get("Last updated", ""),
+            ])
+        ws.freeze_panes = "A2"
+        autosize_columns(ws, max_width=38)
+
+    def _ensure_measurements_sheet(self, wb: Workbook):
+        if MEASUREMENTS_SHEET not in wb.sheetnames:
+            ws = wb.create_sheet(MEASUREMENTS_SHEET)
+            ws.append(MEASUREMENT_HEADERS)
+            style_header_row(ws, 1, 1, len(MEASUREMENT_HEADERS))
+            ws.freeze_panes = "A2"
+            autosize_columns(ws, max_width=55)
+        else:
+            ws = wb[MEASUREMENTS_SHEET]
+            if ws.max_row == 0 or ws.cell(row=1, column=1).value != MEASUREMENT_HEADERS[0]:
+                ws.delete_rows(1, ws.max_row)
+                ws.append(MEASUREMENT_HEADERS)
+                style_header_row(ws, 1, 1, len(MEASUREMENT_HEADERS))
+
+    @staticmethod
+    def _read_sheet_as_dicts(ws) -> List[Dict]:
+        headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        rows = []
+        for r in range(2, ws.max_row + 1):
+            row = {}
+            has_value = False
+            for c, header in enumerate(headers, start=1):
+                val = ws.cell(row=r, column=c).value
+                if val not in (None, ""):
+                    has_value = True
+                row[header] = val
+            if has_value:
+                rows.append(row)
+        return rows
+
+    def list_pixels(self) -> List[Dict]:
+        wb = load_workbook(self.path, data_only=True)
+        ws = wb[PIXELS_SHEET]
+        rows = self._read_sheet_as_dicts(ws)
+        wb.close()
+        return rows
+
+    def list_measurements(self) -> List[Dict]:
+        if not self.path.exists():
+            return []
+        wb = load_workbook(self.path, data_only=True)
+        if MEASUREMENTS_SHEET not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb[MEASUREMENTS_SHEET]
+        rows = self._read_sheet_as_dicts(ws)
+        wb.close()
+        return rows
+
+    def get_pixel(self, pixel_id: str) -> Optional[Dict]:
+        for row in self.list_pixels():
+            if row.get("Pixel ID") == pixel_id:
+                return row
+        return None
+
+    def has_any_ivl(self) -> bool:
+        if not self.path.exists():
+            return False
+        wb = load_workbook(self.path, data_only=True)
+        if MEASUREMENTS_SHEET not in wb.sheetnames:
+            wb.close()
+            return False
+        ws = wb[MEASUREMENTS_SHEET]
+        headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        try:
+            type_col = headers.index("Type") + 1
+        except ValueError:
+            wb.close()
+            return False
+        for r in range(2, ws.max_row + 1):
+            if ws.cell(row=r, column=type_col).value == "IVL":
+                wb.close()
+                return True
+        wb.close()
+        return False
+
+    def update_after_measurement(
+        self,
+        measurement_type: str,
+        pixel_id: str,
+        status: str,
+        file_path: Optional[Path],
+        params: Dict,
+        notes: str = "",
+        opening_voltage: Optional[float] = None,
+        max_current_mA: Optional[float] = None,
+        max_photo_uA: Optional[float] = None,
+        spectrum_peak_count: Optional[int] = None,
+        spectrum_peaks_nm: str = "",
+        spectrum_max_intensity: Optional[float] = None,
+    ):
+        wb = load_workbook(self.path)
+        ws_pixels = wb[PIXELS_SHEET]
+        ws_meas = wb[MEASUREMENTS_SHEET]
+
+        rel_file = relative_to_or_abs(file_path, self.series_folder) if file_path else ""
+        date_text = now_str()
+        day_text = today_iso()
+
+        # Measurements log
+        ws_meas.append([
+            date_text,
+            day_text,
+            measurement_type,
+            pixel_id,
+            status,
+            rel_file,
+            json.dumps(params, ensure_ascii=False),
+            notes,
+        ])
+
+        # Pixel table update
+        headers = [ws_pixels.cell(row=1, column=c).value for c in range(1, ws_pixels.max_column + 1)]
+        col = {h: i + 1 for i, h in enumerate(headers)}
+        row_idx = None
+        for r in range(2, ws_pixels.max_row + 1):
+            if ws_pixels.cell(row=r, column=col["Pixel ID"]).value == pixel_id:
+                row_idx = r
+                break
+
+        if row_idx:
+            if measurement_type in {"IVL", "STABILITY"}:
+                ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
+            elif measurement_type == "SPECTRUM" and str(status).upper() == "NEEDS_REVIEW":
+                ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
+            ws_pixels.cell(row=row_idx, column=col["Last updated"], value=date_text)
+            if opening_voltage is not None:
+                ws_pixels.cell(row=row_idx, column=col["Opening voltage (V)"], value=float(opening_voltage))
+
+            if measurement_type == "IVL":
+                ws_pixels.cell(row=row_idx, column=col["Last IVL date"], value=date_text)
+                ws_pixels.cell(row=row_idx, column=col["Last IVL file"], value=rel_file)
+                if max_current_mA is not None:
+                    ws_pixels.cell(row=row_idx, column=col["Last IVL max current (mA)"], value=float(max_current_mA))
+                if max_photo_uA is not None:
+                    ws_pixels.cell(row=row_idx, column=col["Last IVL max photodiode (uA)"], value=float(max_photo_uA))
+            elif measurement_type == "SPECTRUM":
+                ws_pixels.cell(row=row_idx, column=col["Last spectrum date"], value=date_text)
+                ws_pixels.cell(row=row_idx, column=col["Last spectrum file"], value=rel_file)
+                if spectrum_peak_count is not None and "Last spectrum peak count" in col:
+                    ws_pixels.cell(row=row_idx, column=col["Last spectrum peak count"], value=int(spectrum_peak_count))
+                if spectrum_peaks_nm and "Last spectrum peaks nm" in col:
+                    ws_pixels.cell(row=row_idx, column=col["Last spectrum peaks nm"], value=str(spectrum_peaks_nm))
+                if spectrum_max_intensity is not None and "Last spectrum max intensity (counts/s)" in col:
+                    ws_pixels.cell(row=row_idx, column=col["Last spectrum max intensity (counts/s)"], value=float(spectrum_max_intensity))
+            elif measurement_type == "STABILITY":
+                ws_pixels.cell(row=row_idx, column=col["Last stability date"], value=date_text)
+                ws_pixels.cell(row=row_idx, column=col["Last stability file"], value=rel_file)
+
+        for ws in [ws_pixels, ws_meas]:
+            autosize_columns(ws, max_width=55)
+        wb.save(self.path)
+        wb.close()
+
+
+class SeriesManager:
+    def __init__(self, series_folder: Path):
+        self.series_folder = Path(series_folder)
+        self.config_path = self.series_folder / CONFIG_FILE
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"В папке нет {CONFIG_FILE}: {self.config_path}")
+        self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.journal = SeriesJournal(self.series_folder, self.config)
+        self.journal.initialize_or_update()
+
+    @classmethod
+    def create_new(
+        cls,
+        root_folder: Path,
+        deposition_date: str,
+        keyword: str,
+        quarter_names: Dict[str, str],
+    ) -> "SeriesManager":
+        keyword_safe = safe_filename(keyword, fallback="")
+        folder_name = f"{deposition_date}"
+        if keyword_safe:
+            folder_name += f"_{keyword_safe}"
+        folder_name = safe_filename(folder_name, fallback="series")
+
+        series_folder = Path(root_folder) / folder_name
+        base_folder = series_folder
+        suffix = 2
+        while series_folder.exists():
+            series_folder = Path(f"{base_folder}_{suffix}")
+            suffix += 1
+
+        series_folder.mkdir(parents=True, exist_ok=False)
+        (series_folder / "measurements").mkdir(exist_ok=True)
+
+        config = {
+            "app_version": APP_VERSION,
+            "created_at": now_str(),
+            "deposition_date": deposition_date,
+            "keyword": keyword,
+            "quarter_names": {
+                str(q): safe_filename(quarter_names.get(str(q), f"Q{q}"), fallback=f"Q{q}")
+                for q in range(1, 5)
+            },
+        }
+        (series_folder / CONFIG_FILE).write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+        manager = cls(series_folder)
+        return manager
+
 
 # -----------------------------------------------------------------------------
 # Измерение ВАЯХ
