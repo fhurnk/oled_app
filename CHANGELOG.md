@@ -14,6 +14,7 @@
 - Добавлен `oled_app/measurements/stability.py` с workflow стабильности, чтением IVL для стартового напряжения и сохранением Excel-книги.
 - Добавлены `oled_app/gui/widgets.py` и `oled_app/gui/progress.py` с первыми общими GUI helpers и progress windows для нового каркаса.
 - Добавлены `oled_app/gui/app.py` и `oled_app/gui/start_screen.py` с базовым классом нового GUI и стартовым экраном.
+- Добавлен `oled_app/gui/measurement_menu.py` с меню открытой серии, картой статусов, историей ВАЯХ, таблицей последних метрик и панелью проверки оборудования.
 
 ### Изменено
 
@@ -21,6 +22,7 @@
 - `oled_measurement_app_v2_5.py` сохраняет прежний запуск и остается нетронутым референсом; новый каркас развивается через `oled_modular_app.py`.
 - `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
 - `oled_app/main.py` показывает, что первые части GUI-слоя уже подготовлены.
+- `OLEDModularApp` теперь делегирует меню открытой серии отдельному GUI-модулю; окна измерений и отчета пока остаются следующими подэтапами.
 - `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 

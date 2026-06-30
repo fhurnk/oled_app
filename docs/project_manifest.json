@@ -30,6 +30,7 @@
     "gui_progress_module": "oled_app/gui/progress.py",
     "gui_app_module": "oled_app/gui/app.py",
     "gui_start_screen_module": "oled_app/gui/start_screen.py",
+    "gui_measurement_menu_module": "oled_app/gui/measurement_menu.py",
     "requirements": "requirements.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },

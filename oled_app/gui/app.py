@@ -16,11 +16,11 @@ from oled_app.settings import (
     DEFAULT_APP_SETTINGS,
     deep_update,
     ensure_default_sim_config,
-    hardware_mode_label,
     load_app_settings,
     save_app_settings,
 )
 
+from .measurement_menu import pixel_ids, refresh_pixel_table, show_measurement_menu
 from .start_screen import show_new_series_screen, show_start_screen
 
 
@@ -38,6 +38,10 @@ class OLEDModularApp(tk.Tk):
         self.minsize(640, 440)
         self.series: Optional[SeriesManager] = None
         self.log_widget: Optional[ScrolledText] = None
+        self._hardware_probe_running = False
+        self._hardware_status_canvas = None
+        self._hardware_status_title = None
+        self._hardware_status_detail = None
         self._ui_scale = 1.0
         self._base_tk_scaling = 1.0
         self._scale_after_id = None
@@ -138,23 +142,25 @@ class OLEDModularApp(tk.Tk):
         show_new_series_screen(self)
 
     def show_measurement_menu(self) -> None:
-        self.clear()
-        frame = ttk.Frame(self, padding=22)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Измерения OLED", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        series_text = str(self.series.series_folder) if self.series is not None else "серия не открыта"
-        ttk.Label(frame, text=f"Серия: {series_text}").pack(anchor="w", pady=(8, 2))
-        ttk.Label(frame, text=f"Режим оборудования: {hardware_mode_label(self.app_settings)}").pack(anchor="w", pady=(0, 12))
-        ttk.Label(
-            frame,
-            text="Окна измерений будут подключены следующими подэтапами GUI-переноса.",
-            foreground="#555555",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 14))
-        buttons = ttk.Frame(frame)
-        buttons.pack(fill="x")
-        ttk.Button(buttons, text="Открыть другую серию", command=self.show_start_screen).pack(side="left")
-        ttk.Button(buttons, text="Настройки", command=self.open_settings_window).pack(side="left", padx=(10, 0))
+        show_measurement_menu(self)
+
+    def refresh_pixel_table(self) -> None:
+        refresh_pixel_table(self)
+
+    def pixel_ids(self, require_ivl: bool = False, require_opening: bool = False):
+        return pixel_ids(self, require_ivl=require_ivl, require_opening=require_opening)
+
+    def open_ivl_window(self) -> None:
+        messagebox.showinfo("ВАЯХ", "Окно ВАЯХ будет подключено следующим GUI-подэтапом.")
+
+    def open_spectrum_window(self) -> None:
+        messagebox.showinfo("Спектры", "Окно спектров будет подключено следующим GUI-подэтапом.")
+
+    def open_stability_window(self) -> None:
+        messagebox.showinfo("Стабильность", "Окно стабильности будет подключено следующим GUI-подэтапом.")
+
+    def open_report_window(self) -> None:
+        messagebox.showinfo("Составить отчет", "Окно отчета будет подключено следующим GUI-подэтапом.")
 
     def open_settings_window(self) -> None:
         messagebox.showinfo("Настройки", "Окно настроек будет перенесено следующим GUI-подэтапом.")
