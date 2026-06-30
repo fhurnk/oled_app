@@ -14,7 +14,7 @@ def scaffold_status_lines() -> list[str]:
     return [
         f"OLED modular application scaffold v{APP_VERSION}",
         f"Reference application: {REFERENCE_APP}",
-        "Migrated package layers: constants, settings, utils, series, hardware, reports, measurements.ivl, measurements.spectrum, measurements.stability, gui.widgets, gui.progress, gui.app, gui.start_screen, gui.measurement_menu, gui.settings_window",
+        "Migrated package layers: constants, settings, utils, series, hardware, reports, measurements.ivl, measurements.spectrum, measurements.stability, gui.widgets, gui.progress, gui.app, gui.start_screen, gui.measurement_menu, gui.settings_window, gui.ivl_window",
     ]
 
 

@@ -20,6 +20,14 @@ from oled_app.settings import (
     save_app_settings,
 )
 
+from .ivl_window import (
+    ask_pixel,
+    measure_one_ivl,
+    measure_series_ivl,
+    open_ivl_window,
+    pixel_info_from_journal,
+    remove_same_substrate_from_queue,
+)
 from .measurement_menu import pixel_ids, refresh_pixel_table, show_measurement_menu
 from .settings_window import open_settings_window
 from .start_screen import show_new_series_screen, show_start_screen
@@ -152,7 +160,22 @@ class OLEDModularApp(tk.Tk):
         return pixel_ids(self, require_ivl=require_ivl, require_opening=require_opening)
 
     def open_ivl_window(self) -> None:
-        messagebox.showinfo("ВАЯХ", "Окно ВАЯХ будет подключено следующим GUI-подэтапом.")
+        open_ivl_window(self)
+
+    def measure_one_ivl(self, pixel_id: str, params, return_to_menu: bool = True):
+        return measure_one_ivl(self, pixel_id, params, return_to_menu=return_to_menu)
+
+    def measure_series_ivl(self, params, start_pixel=None) -> None:
+        measure_series_ivl(self, params, start_pixel=start_pixel)
+
+    def pixel_info_from_journal(self, pixel_id: str):
+        return pixel_info_from_journal(self, pixel_id)
+
+    def remove_same_substrate_from_queue(self, remaining, pixel_id: str):
+        return remove_same_substrate_from_queue(self, remaining, pixel_id)
+
+    def ask_pixel(self, title: str, values):
+        return ask_pixel(self, title, values)
 
     def open_spectrum_window(self) -> None:
         messagebox.showinfo("Спектры", "Окно спектров будет подключено следующим GUI-подэтапом.")
