@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.1`
+Версия: `v1.7.2`
 
 ## Назначение
 
@@ -8,19 +8,31 @@
 
 ## Как Устроено Приложение
 
-Проект сейчас собран вокруг одного основного Python-файла:
+Проект начал переход от одного основного Python-файла к пакету `oled_app/`:
 
 - `tkinter/ttk` отвечает за графический интерфейс;
 - `openpyxl` создаёт журналы и Excel-файлы измерений;
 - `xtralien` подключается только при реальном измерении через SMU;
 - `seabreeze` подключается только при съёмке спектров;
 - симуляторный режим позволяет проверять интерфейс без оборудования.
+- общие константы, настройки и утилиты уже вынесены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 
 ## Структура Проекта
 
 ```text
 oled_app_v2_5_package/
   oled_measurement_app_v2_5.py
+  oled_app/
+    __init__.py
+    main.py
+    constants.py
+    settings.py
+    utils.py
+    gui/
+    series/
+    hardware/
+    measurements/
+    reports/
   requirements.txt
   oled_simulator_config.json
   README.md
@@ -45,6 +57,7 @@ oled_app_v2_5_package/
       v1.6.0.md
       v1.7.0.md
       v1.7.1.md
+      v1.7.2.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

@@ -4,8 +4,8 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.1`
-- Python source of truth: `APP_VERSION` in `oled_measurement_app_v2_5.py`
+- Current app version: `v1.7.2`
+- Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
@@ -15,10 +15,12 @@ When changing user-visible behavior, update all version references in the same c
 ## Main Entry Points
 
 - Application: `oled_measurement_app_v2_5.py`
+- Modular package scaffold: `oled_app/`
 - GUI framework: `tkinter` / `ttk`
 - Excel output and journals: `openpyxl`
 - Real hardware modules are imported lazily: `xtralien`, `seabreeze`
 - Built-in simulator is in the same Python file and can run without hardware.
+- Shared constants, settings defaults, settings I/O, and common utility helpers now live in `oled_app/constants.py`, `oled_app/settings.py`, and `oled_app/utils.py`.
 
 ## Measurement Workflows
 

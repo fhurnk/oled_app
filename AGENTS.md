@@ -13,7 +13,7 @@ When a new Codex chat starts in this repository, read these files before changin
 
 For every user-visible behavior change, bug fix, documentation change, or release preparation:
 
-1. Update `APP_VERSION` in `oled_measurement_app_v2_5.py`.
+1. Update `APP_VERSION` in `oled_app/constants.py`.
 2. Use semantic project versions in the existing format `vMAJOR.MIDDLE.MINOR`.
    - Increment `MINOR` for fixes and small improvements.
    - Increment `MIDDLE` for feature additions or workflow changes.
@@ -38,7 +38,7 @@ Do not leave a code change without a matching version/changelog entry unless the
 
 ## Release Checklist
 
-- `APP_VERSION` matches the release version.
+- `APP_VERSION` in `oled_app/constants.py` matches the release version.
 - `CHANGELOG.md` has a top entry for the release.
 - `docs/versions/vX.Y.Z.md` exists.
 - `README.md` and `PROJECT_OVERVIEW.md` show the current version.
