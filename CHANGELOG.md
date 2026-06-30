@@ -1,5 +1,19 @@
 # История Обновлений
 
+## v1.7.5 - 2026-06-30
+
+### Добавлено
+
+- Добавлен модуль `oled_app/reports/origin_report.py` с логикой подготовки Origin-отчета.
+- `oled_app/reports/__init__.py` экспортирует основные функции report-слоя для нового каркаса.
+
+### Изменено
+
+- `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
+- `oled_app/main.py` показывает, что report-слой уже подготовлен в модульном каркасе.
+- `docs/modularization_plan.md` отмечает этап 5 `reports/` как выполненный.
+- Документация и manifest обновлены под версию `v1.7.5`.
+
 ## v1.7.4 - 2026-06-30
 
 ### Добавлено
