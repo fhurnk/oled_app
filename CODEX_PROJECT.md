@@ -4,7 +4,7 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.2`
+- Current app version: `v1.7.3`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
@@ -21,6 +21,7 @@ When changing user-visible behavior, update all version references in the same c
 - Real hardware modules are imported lazily: `xtralien`, `seabreeze`
 - Built-in simulator is in the same Python file and can run without hardware.
 - Shared constants, settings defaults, settings I/O, and common utility helpers now live in `oled_app/constants.py`, `oled_app/settings.py`, and `oled_app/utils.py`.
+- Series creation, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
 
 ## Measurement Workflows
 

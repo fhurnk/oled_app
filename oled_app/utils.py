@@ -11,8 +11,6 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from .constants import MEASUREMENT_FOLDER_NAMES
-
 
 def now_str() -> str:
     return datetime.now().strftime("%d-%m-%Y %H:%M:%S")
@@ -108,126 +106,6 @@ def read_spectrum_metrics_from_workbook(path: Optional[Path]) -> Dict[str, Any]:
         return best
     except Exception:
         return {}
-
-
-def ensure_day_folder(series_folder: Path) -> Path:
-    day_folder = series_folder / "measurements" / today_iso()
-    day_folder.mkdir(parents=True, exist_ok=True)
-    return day_folder
-
-
-def ensure_measurement_folder(
-    series_folder: Path,
-    measurement_type: str,
-    pixel_id: str,
-    pixel_row: Optional[Dict[str, Any]] = None,
-) -> Path:
-    measurement_folder = MEASUREMENT_FOLDER_NAMES.get(
-        str(measurement_type).upper(),
-        safe_filename(str(measurement_type), fallback="measurement"),
-    )
-    pixel_row = pixel_row or {}
-
-    quarter_number = pixel_row.get("Quarter number") or "unknown"
-    quarter_code = pixel_row.get("Quarter code") or "Q"
-    substrate_number = pixel_row.get("Substrate number") or "unknown"
-
-    quarter_name = safe_filename(f"{quarter_code}{quarter_number}", fallback=f"Q{quarter_number}")
-    substrate_folder = safe_filename(f"{quarter_name}_{substrate_number}", fallback=f"{quarter_name}_unknown")
-    pixel_folder = safe_filename(pixel_id, fallback="pixel")
-
-    output_dir = (
-        series_folder
-        / "measurements"
-        / measurement_folder
-        / today_iso()
-        / quarter_name
-        / substrate_folder
-        / pixel_folder
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
-
-
-def pixel_status_color(status: str) -> str:
-    status = str(status or "").upper()
-    if status == "WORKING":
-        return "#8FD694"
-    if status == "NO_CONTACT":
-        return "#F2D96B"
-    if status == "NEEDS_REVIEW":
-        return "#F4A261"
-    if status in {"NONWORKING", "BURNED", "FAILED", "CURRENT_LIMIT_STOP", "CURRENT_LIMIT"}:
-        return "#F28B82"
-    return "#D9D9D9"
-
-
-def ivl_status_marker(status: str) -> str:
-    status = str(status or "").upper()
-    if status == "WORKING":
-        return "↑ WORKING"
-    if status == "NO_CONTACT":
-        return "→ NO_CONTACT"
-    if status == "NEEDS_REVIEW":
-        return "? NEEDS_REVIEW"
-    if status in {"NONWORKING", "FAILED"}:
-        return "↓ " + status
-    if status in {"BURNED", "CURRENT_LIMIT_STOP", "CURRENT_LIMIT"}:
-        return "↯ " + status
-    return "· " + (status or "")
-
-
-def build_holder_layout(width: int = 930, height: int = 620) -> Dict[int, Dict[str, Any]]:
-    """Geometry for substrate holder maps in the legacy GUI."""
-    box_w = 86
-    box_h = 52
-
-    left_x1, left_x2, left_x3 = 170, 305, 238
-    right_x1, right_x2, right_x3 = width - 390, width - 255, width - 322
-    top_y1, top_y3 = 145, 235
-    bottom_y1, bottom_y3 = 320, 405
-
-    quarter_layout = {
-        2: {
-            "number_xy": (48, 92),
-            "name_xy": (92, 36),
-            "entry_xy": (78, 62),
-            "substrates": [(left_x1, top_y1), (left_x2, top_y1), (left_x3, top_y3)],
-        },
-        1: {
-            "number_xy": (width - 48, 92),
-            "name_xy": (width - 248, 36),
-            "entry_xy": (width - 230, 62),
-            "substrates": [(right_x1, top_y1), (right_x2, top_y1), (right_x3, top_y3)],
-        },
-        3: {
-            "number_xy": (48, height - 118),
-            "name_xy": (92, height - 155),
-            "entry_xy": (78, height - 130),
-            "substrates": [(left_x1, bottom_y1), (left_x2, bottom_y1), (left_x3, bottom_y3)],
-        },
-        4: {
-            "number_xy": (width - 48, height - 118),
-            "name_xy": (width - 248, height - 155),
-            "entry_xy": (width - 230, height - 130),
-            "substrates": [(right_x1, bottom_y1), (right_x2, bottom_y1), (right_x3, bottom_y3)],
-        },
-    }
-
-    for info in quarter_layout.values():
-        detailed = []
-        for substrate_number, (x, y) in enumerate(info["substrates"], start=1):
-            detailed.append({"substrate_number": substrate_number, "x": x, "y": y, "w": box_w, "h": box_h})
-        info["substrates"] = detailed
-    return quarter_layout
-
-
-def short_date_for_map(value: str) -> str:
-    text = str(value or "").strip()
-    try:
-        return datetime.strptime(text, "%Y-%m-%d").strftime("%d.%m.%y")
-    except Exception:
-        return text
 
 
 def light_border() -> Border:

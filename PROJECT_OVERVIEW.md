@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.2`
+Версия: `v1.7.3`
 
 ## Назначение
 
@@ -16,6 +16,7 @@
 - `seabreeze` подключается только при съёмке спектров;
 - симуляторный режим позволяет проверять интерфейс без оборудования.
 - общие константы, настройки и утилиты уже вынесены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
+- создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты вынесены в `oled_app/series/`.
 
 ## Структура Проекта
 
@@ -30,6 +31,11 @@ oled_app_v2_5_package/
     utils.py
     gui/
     series/
+      manager.py
+      journal.py
+      paths.py
+      statuses.py
+      layout.py
     hardware/
     measurements/
     reports/
@@ -58,6 +64,7 @@ oled_app_v2_5_package/
       v1.7.0.md
       v1.7.1.md
       v1.7.2.md
+      v1.7.3.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

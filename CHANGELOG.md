@@ -1,5 +1,18 @@
 # История Обновлений
 
+## v1.7.3 - 2026-06-30
+
+### Добавлено
+
+- Добавлены модули `oled_app/series/manager.py`, `journal.py`, `paths.py`, `statuses.py` и `layout.py`.
+- В `docs/modularization_plan.md` добавлен чеклист статуса миграции с отмеченными выполненными этапами.
+
+### Изменено
+
+- `SeriesManager`, `SeriesJournal`, `PixelInfo`, генерация пикселей, пути папок измерений, цвета статусов и геометрия карты подложкодержателя вынесены из монолита в `oled_app/series/`.
+- `oled_measurement_app_v2_5.py` теперь использует `series.manager.SeriesManager` и связанные helpers из нового пакета.
+- Документация и manifest обновлены под этап `series/`.
+
 ## v1.7.2 - 2026-06-30
 
 ### Добавлено
