@@ -49,6 +49,7 @@ py -3 -m venv env
 - `oled_app/reports/origin_report.py` - модульная логика подготовки Origin-отчета.
 - `oled_app/measurements/ivl.py` - модульная логика ВАЯХ/IVL для нового каркаса.
 - `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового каркаса.
+- `oled_app/measurements/stability.py` - модульная логика измерения стабильности для нового каркаса.
 - `docs/versions/` - архив описаний версий.
 - `docs/GITHUB_RELEASE_WORKFLOW.md` - порядок публикации версий и GitHub Releases.
 

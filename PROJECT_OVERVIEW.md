@@ -23,6 +23,7 @@
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` для будущего подключения нового GUI.
 - workflow спектров подготовлен в `oled_app/measurements/spectrum.py` для будущего подключения нового GUI.
+- workflow стабильности подготовлен в `oled_app/measurements/stability.py` для будущего подключения нового GUI.
 
 ## Структура Проекта
 
@@ -52,6 +53,7 @@ oled_app_v2_5_package/
     measurements/
       ivl.py
       spectrum.py
+      stability.py
     reports/
       origin_report.py
   requirements.txt

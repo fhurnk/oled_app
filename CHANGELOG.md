@@ -11,6 +11,7 @@
 - Подготовлены модули hardware-слоя: `oled_app/hardware/probe.py`, `auto_com.py`, `simulator.py`, `ossila.py`, `spectrometer.py`.
 - Добавлен `oled_app/reports/origin_report.py` с логикой подготовки Origin-отчета.
 - Добавлены `oled_app/measurements/ivl.py` и `oled_app/measurements/spectrum.py` с workflow ВАЯХ/IVL и спектров.
+- Добавлен `oled_app/measurements/stability.py` с workflow стабильности, чтением IVL для стартового напряжения и сохранением Excel-книги.
 
 ### Изменено
 

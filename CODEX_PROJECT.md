@@ -27,6 +27,7 @@ When changing user-visible behavior, update all version references in the same c
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular scaffold.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular scaffold.
+- Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular scaffold.
 
 During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`. Keep this modularization line on `v1.7.2`.
 
@@ -34,7 +35,7 @@ During modularization, do not edit `oled_measurement_app_v2_5.py` unless the use
 
 - IVL / ВАЯХ: modular workflow is prepared in `oled_app/measurements/ivl.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Spectrum: modular workflow is prepared in `oled_app/measurements/spectrum.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Stability: runs constant-current stability measurements after IVL.
+- Stability: modular workflow is prepared in `oled_app/measurements/stability.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Report: report builder logic is in `oled_app/reports/origin_report.py`; the GUI can continue to run `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with selectable spectrum pixels and voltage grids.
 - Series journal: `series_journal.xlsx` inside each series folder.
 
