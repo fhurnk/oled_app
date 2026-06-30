@@ -26,6 +26,8 @@
     "measurement_ivl_module": "oled_app/measurements/ivl.py",
     "measurement_spectrum_module": "oled_app/measurements/spectrum.py",
     "measurement_stability_module": "oled_app/measurements/stability.py",
+    "gui_widgets_module": "oled_app/gui/widgets.py",
+    "gui_progress_module": "oled_app/gui/progress.py",
     "requirements": "requirements.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },

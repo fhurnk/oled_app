@@ -12,12 +12,14 @@
 - Добавлен `oled_app/reports/origin_report.py` с логикой подготовки Origin-отчета.
 - Добавлены `oled_app/measurements/ivl.py` и `oled_app/measurements/spectrum.py` с workflow ВАЯХ/IVL и спектров.
 - Добавлен `oled_app/measurements/stability.py` с workflow стабильности, чтением IVL для стартового напряжения и сохранением Excel-книги.
+- Добавлены `oled_app/gui/widgets.py` и `oled_app/gui/progress.py` с первыми общими GUI helpers и progress windows для нового каркаса.
 
 ### Изменено
 
 - Общие константы, `APP_VERSION`, настройки приложения, настройки симулятора и безопасные утилиты вынесены из монолита в `oled_app/`.
 - `oled_measurement_app_v2_5.py` сохраняет прежний запуск и остается нетронутым референсом; новый каркас развивается через `oled_modular_app.py`.
 - `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
+- `oled_app/main.py` показывает, что первые части GUI-слоя уже подготовлены.
 - `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 

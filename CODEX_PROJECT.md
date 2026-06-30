@@ -28,6 +28,7 @@ When changing user-visible behavior, update all version references in the same c
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular scaffold.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular scaffold.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular scaffold.
+- Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
 
 During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`. Keep this modularization line on `v1.7.2`.
 

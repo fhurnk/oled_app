@@ -24,6 +24,7 @@
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` для будущего подключения нового GUI.
 - workflow спектров подготовлен в `oled_app/measurements/spectrum.py` для будущего подключения нового GUI.
 - workflow стабильности подготовлен в `oled_app/measurements/stability.py` для будущего подключения нового GUI.
+- первые общие GUI helpers и progress windows подготовлены в `oled_app/gui/widgets.py` и `oled_app/gui/progress.py`.
 
 ## Структура Проекта
 
@@ -38,6 +39,8 @@ oled_app_v2_5_package/
     settings.py
     utils.py
     gui/
+      widgets.py
+      progress.py
     series/
       manager.py
       journal.py
