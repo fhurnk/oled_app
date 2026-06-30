@@ -14,7 +14,7 @@ def scaffold_status_lines() -> list[str]:
     return [
         f"OLED modular application scaffold v{APP_VERSION}",
         f"Reference application: {REFERENCE_APP}",
-        "Migrated package layers: constants, settings, utils, series",
+        "Migrated package layers: constants, settings, utils, series, hardware",
     ]
 
 

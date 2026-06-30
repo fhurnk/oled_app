@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.3`
+Версия: `v1.7.4`
 
 ## Назначение
 
@@ -19,6 +19,7 @@
 - новый вход модульного каркаса находится в `oled_modular_app.py`.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
+- проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
 
 ## Структура Проекта
 
@@ -40,6 +41,11 @@ oled_app_v2_5_package/
       statuses.py
       layout.py
     hardware/
+      probe.py
+      auto_com.py
+      simulator.py
+      ossila.py
+      spectrometer.py
     measurements/
     reports/
   requirements.txt
@@ -68,6 +74,7 @@ oled_app_v2_5_package/
       v1.7.1.md
       v1.7.2.md
       v1.7.3.md
+      v1.7.4.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 
