@@ -163,7 +163,6 @@ def open_settings_window(app) -> None:
                 ensure_default_sim_config(Path(settings["simulator_config_path"]))
             messagebox.showinfo("Настройки", "Настройки сохранены.", parent=win)
             win.destroy()
-            app.show_start_screen()
         except Exception as exc:
             messagebox.showerror("Ошибка настроек", str(exc), parent=win)
 

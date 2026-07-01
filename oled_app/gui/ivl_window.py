@@ -39,7 +39,6 @@ def open_ivl_window(app) -> None:
 
     saved_ivl = app.measurement_defaults("ivl")
     fields = [
-        ("COM port", str(app.app_settings.get("com_port", "COM3"))),
         ("Sweep start, V", str(saved_ivl.get("sweep_start_V", "0"))),
         ("Sweep end, V", str(saved_ivl.get("sweep_end_V", "5"))),
         ("Step, V", str(saved_ivl.get("step_V", "0.02"))),
@@ -90,7 +89,7 @@ def build_ivl_params(app, vars_: Dict[str, tk.StringVar]) -> IVLParams:
     adv = app.app_settings.get("ivl_advanced", DEFAULT_APP_SETTINGS["ivl_advanced"])
     units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
     return IVLParams(
-        com_port=effective_com_port({**app.app_settings, "com_port": vars_["COM port"].get().strip()}, app.log),
+        com_port=effective_com_port(app.app_settings, app.log),
         sweep_start=parse_float(vars_["Sweep start, V"].get(), "Sweep start"),
         sweep_end=parse_float(vars_["Sweep end, V"].get(), "Sweep end"),
         sweep_increment=parse_float(vars_["Step, V"].get(), "Step"),

@@ -79,6 +79,7 @@
     <Content Include="docs\versions\v1.7.1.md" />
     <Content Include="docs\versions\v1.7.2.md" />
     <Content Include="docs\versions\v1.7.3.md" />
+    <Content Include="docs\versions\v1.7.4.md" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">

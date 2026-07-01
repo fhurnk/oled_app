@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.3`
+- Current app version: `v1.7.4`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. The current modularization follow-up release is `v1.7.3`.
+When changing user-visible behavior, update all version references in the same commit. The current modularization follow-up release is `v1.7.4`.
 
 ## Main Entry Points
 

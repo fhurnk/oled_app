@@ -17,7 +17,6 @@ from oled_app.utils import (
     build_report_voltage_grid,
     format_voltage,
     parse_float,
-    today_iso,
     voltage_grid_missing,
 )
 
@@ -117,6 +116,14 @@ def common_report_voltages(selected: Dict[str, Dict[str, Any]]) -> List[float]:
     return sorted(common or [])
 
 
+def report_output_name(ivl_date: str, spectrum_date: str, suffix: str = ".opju") -> str:
+    if ivl_date == spectrum_date:
+        stem = ivl_date
+    else:
+        stem = f"IVL_{ivl_date}_Spctr_{spectrum_date}"
+    return f"report_{stem}{suffix}"
+
+
 def open_report_window(app) -> None:
     if app.series is None:
         return
@@ -177,11 +184,21 @@ def open_report_window(app) -> None:
             note = "несколько спектральных пикселей" if len(pixels) > 1 else "выбран автоматически"
             ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
 
-    output_var = tk.StringVar(value=str(app.series.series_folder / f"report_{today_iso()}.opju"))
+    output_manual = {"value": False}
+    output_var = tk.StringVar(value=str(app.series.series_folder / report_output_name(ivl_date_var.get(), spectrum_date_var.get())))
+
+    def refresh_output_name(force: bool = False) -> None:
+        if output_manual["value"] and not force:
+            return
+        current = Path(output_var.get().strip() or "report.opju")
+        suffix = current.suffix if current.suffix.lower() in {".opju", ".xlsx"} else ".opju"
+        output_var.set(str(app.series.series_folder / report_output_name(ivl_date_var.get(), spectrum_date_var.get(), suffix)))
     out_frame = ttk.Frame(main)
     out_frame.pack(fill="x", pady=(0, 10))
     ttk.Label(out_frame, text="Файл отчета:").pack(side="left")
-    ttk.Entry(out_frame, textvariable=output_var, width=68).pack(side="left", padx=8, fill="x", expand=True)
+    output_entry = ttk.Entry(out_frame, textvariable=output_var, width=68)
+    output_entry.pack(side="left", padx=8, fill="x", expand=True)
+    output_entry.bind("<KeyRelease>", lambda _event: output_manual.__setitem__("value", True))
 
     def browse_output() -> None:
         filename = filedialog.asksaveasfilename(
@@ -193,6 +210,7 @@ def open_report_window(app) -> None:
             filetypes=[("Origin project", "*.opju"), ("Debug Excel", "*.xlsx"), ("All files", "*.*")],
         )
         if filename:
+            output_manual["value"] = True
             output_var.set(filename)
 
     ttk.Button(out_frame, text="Выбрать", command=browse_output).pack(side="left")
@@ -263,9 +281,11 @@ def open_report_window(app) -> None:
     def change_spectrum_date(*_args) -> None:
         nonlocal candidates
         candidates = collect_report_spectrum_candidates(app, spectrum_date_var.get())
+        refresh_output_name()
         rebuild_selection()
         refresh_defaults()
 
+    ivl_date_var.trace_add("write", lambda *_args: refresh_output_name())
     spectrum_date_var.trace_add("write", change_spectrum_date)
     rebuild_selection()
     update_per_pixel_visibility()

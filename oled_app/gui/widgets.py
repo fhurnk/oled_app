@@ -7,6 +7,37 @@ from tkinter import ttk
 from typing import Iterable, Tuple
 
 
+def mousewheel_units(event) -> int:
+    if getattr(event, "num", None) == 4:
+        return -1
+    if getattr(event, "num", None) == 5:
+        return 1
+    delta = getattr(event, "delta", 0)
+    return -1 * int(delta / 120) if delta else 0
+
+
+def bind_mousewheel_to_yview(widget, target, bind_all_on_enter: bool = False) -> None:
+    def on_mousewheel(event):
+        units = mousewheel_units(event)
+        if units:
+            target.yview_scroll(units, "units")
+            return "break"
+        return None
+
+    if bind_all_on_enter:
+        widget.bind("<Enter>", lambda _event: widget.bind_all("<MouseWheel>", on_mousewheel))
+        widget.bind("<Leave>", lambda _event: widget.unbind_all("<MouseWheel>"))
+        widget.bind("<Enter>", lambda _event: widget.bind_all("<Button-4>", on_mousewheel), add="+")
+        widget.bind("<Leave>", lambda _event: widget.unbind_all("<Button-4>"), add="+")
+        widget.bind("<Enter>", lambda _event: widget.bind_all("<Button-5>", on_mousewheel), add="+")
+        widget.bind("<Leave>", lambda _event: widget.unbind_all("<Button-5>"), add="+")
+        return
+
+    widget.bind("<MouseWheel>", on_mousewheel)
+    widget.bind("<Button-4>", on_mousewheel)
+    widget.bind("<Button-5>", on_mousewheel)
+
+
 def fit_toplevel_to_content(win: tk.Toplevel, min_width: int, min_height: int, padding: int = 36) -> None:
     try:
         win.update_idletasks()
@@ -40,6 +71,7 @@ def create_tree_with_scrollbars(
     xscroll.grid(row=1, column=0, sticky="ew")
     container.rowconfigure(0, weight=1)
     container.columnconfigure(0, weight=1)
+    bind_mousewheel_to_yview(tree, tree)
     return container, tree
 
 
@@ -63,13 +95,7 @@ def create_scrollable_frame(parent, padding: int = 16) -> Tuple[ttk.Frame, ttk.F
     def configure_canvas(event) -> None:
         canvas.itemconfigure(window_id, width=max(event.width, frame.winfo_reqwidth()))
 
-    def on_mousewheel(event) -> None:
-        delta = -1 * int(event.delta / 120) if event.delta else 0
-        if delta:
-            canvas.yview_scroll(delta, "units")
-
     frame.bind("<Configure>", configure_frame)
     canvas.bind("<Configure>", configure_canvas)
-    canvas.bind("<Enter>", lambda _event: canvas.bind_all("<MouseWheel>", on_mousewheel))
-    canvas.bind("<Leave>", lambda _event: canvas.unbind_all("<MouseWheel>"))
+    bind_mousewheel_to_yview(canvas, canvas, bind_all_on_enter=True)
     return outer, frame
