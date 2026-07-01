@@ -17,20 +17,40 @@ def mousewheel_units(event) -> int:
 
 
 def bind_mousewheel_to_yview(widget, target, bind_all_on_enter: bool = False) -> None:
+    def unbind_global_mousewheel() -> None:
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            try:
+                widget.unbind_all(sequence)
+            except tk.TclError:
+                pass
+
+    def target_exists() -> bool:
+        try:
+            return bool(target.winfo_exists())
+        except tk.TclError:
+            return False
+
     def on_mousewheel(event):
+        if not target_exists():
+            if bind_all_on_enter:
+                unbind_global_mousewheel()
+            return "break"
         units = mousewheel_units(event)
         if units:
-            target.yview_scroll(units, "units")
+            try:
+                target.yview_scroll(units, "units")
+            except tk.TclError:
+                if bind_all_on_enter:
+                    unbind_global_mousewheel()
             return "break"
         return None
 
     if bind_all_on_enter:
         widget.bind("<Enter>", lambda _event: widget.bind_all("<MouseWheel>", on_mousewheel))
-        widget.bind("<Leave>", lambda _event: widget.unbind_all("<MouseWheel>"))
+        widget.bind("<Leave>", lambda _event: unbind_global_mousewheel())
         widget.bind("<Enter>", lambda _event: widget.bind_all("<Button-4>", on_mousewheel), add="+")
-        widget.bind("<Leave>", lambda _event: widget.unbind_all("<Button-4>"), add="+")
         widget.bind("<Enter>", lambda _event: widget.bind_all("<Button-5>", on_mousewheel), add="+")
-        widget.bind("<Leave>", lambda _event: widget.unbind_all("<Button-5>"), add="+")
+        widget.bind("<Destroy>", lambda _event: unbind_global_mousewheel(), add="+")
         return
 
     widget.bind("<MouseWheel>", on_mousewheel)
