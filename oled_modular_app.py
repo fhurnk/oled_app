@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Standalone launcher for the new modular OLED application scaffold."""
+"""Standalone launcher for the modular OLED application."""
 
 from __future__ import annotations
 

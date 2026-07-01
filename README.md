@@ -6,14 +6,22 @@
 
 ## Быстрый Запуск
 
+Новый модульный GUI:
+
+```powershell
+.\env\Scripts\python.exe .\oled_modular_app.py
+```
+
+Референсное приложение остается доступным для сравнения поведения:
+
 ```powershell
 .\env\Scripts\python.exe .\oled_measurement_app_v2_5.py
 ```
 
-Новый модульный каркас запускается отдельно и не изменяет референсное приложение:
+Проверка нового входа без открытия GUI:
 
 ```powershell
-.\env\Scripts\python.exe .\oled_modular_app.py
+.\env\Scripts\python.exe .\oled_modular_app.py --status
 ```
 
 Если окружение нужно создать заново:
@@ -34,8 +42,8 @@ py -3 -m venv env
 ## Основные Файлы
 
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
-- `oled_modular_app.py` - новый вход модульного приложения-каркаса.
-- `oled_app/` - новый пакет для постепенного переноса констант, настроек, утилит, серии, hardware-слоя, отчетов, измерений и последующих модулей без правки референса.
+- `oled_modular_app.py` - новый основной вход модульного приложения.
+- `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
 - `requirements.txt` - зависимости Python.
 - `README.md` - краткое описание проекта.
 - `PROJECT_OVERVIEW.md` - структура и логика работы.
@@ -47,10 +55,10 @@ py -3 -m venv env
 - `scripts/create_github_release.py` - создание GitHub Release из файла версии.
 - `scripts/build_report_origin_workbook.py` - совместимый CLI-вход подготовки Origin-отчета по серии измерений.
 - `oled_app/reports/origin_report.py` - модульная логика подготовки Origin-отчета.
-- `oled_app/measurements/ivl.py` - модульная логика ВАЯХ/IVL для нового каркаса.
-- `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового каркаса.
-- `oled_app/measurements/stability.py` - модульная логика измерения стабильности для нового каркаса.
-- `oled_app/gui/widgets.py`, `oled_app/gui/progress.py` - первые общие GUI helpers и progress windows для нового каркаса.
+- `oled_app/measurements/ivl.py` - модульная логика ВАЯХ/IVL для нового приложения.
+- `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового приложения.
+- `oled_app/measurements/stability.py` - модульная логика измерения стабильности для нового приложения.
+- `oled_app/gui/widgets.py`, `oled_app/gui/progress.py` - общие GUI helpers и progress windows для нового приложения.
 - `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, `oled_app/gui/report_window.py` - базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ, окно спектров, окно стабильности и окно отчета.
 - `docs/versions/` - архив описаний версий.
 - `docs/GITHUB_RELEASE_WORKFLOW.md` - порядок публикации версий и GitHub Releases.

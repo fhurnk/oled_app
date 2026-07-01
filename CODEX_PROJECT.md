@@ -14,9 +14,10 @@ When changing user-visible behavior, update all version references in the same c
 
 ## Main Entry Points
 
-- Modular application scaffold: `oled_modular_app.py`
+- Modular application launcher: `oled_modular_app.py`
 - Reference application: `oled_measurement_app_v2_5.py`
 - Modular package: `oled_app/`
+- Status-only smoke check: `python oled_modular_app.py --status`
 - GUI framework: `tkinter` / `ttk`
 - Excel output and journals: `openpyxl`
 - Real hardware modules are imported lazily: `xtralien`, `seabreeze`
@@ -25,9 +26,9 @@ When changing user-visible behavior, update all version references in the same c
 - Series creation, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
-- IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular scaffold.
-- Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular scaffold.
-- Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular scaffold.
+- IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.
+- Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular application.
+- Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular application.
 - Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
 - The modular GUI shell, start screen, series measurement menu, settings window, IVL window, spectrum window, stability window, and report window now live in `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, and `oled_app/gui/report_window.py`.
 

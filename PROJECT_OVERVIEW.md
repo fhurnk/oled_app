@@ -8,7 +8,7 @@
 
 ## Как Устроено Приложение
 
-Проект начал переход от одного основного Python-файла к отдельному модульному каркасу:
+Проект перешел от одного основного Python-файла к отдельному модульному приложению:
 
 - `tkinter/ttk` отвечает за графический интерфейс;
 - `openpyxl` создаёт журналы и Excel-файлы измерений;
@@ -16,14 +16,14 @@
 - `seabreeze` подключается только при съёмке спектров;
 - симуляторный режим позволяет проверять интерфейс без оборудования.
 - `oled_measurement_app_v2_5.py` оставлен нетронутым референсом рабочего приложения.
-- новый вход модульного каркаса находится в `oled_modular_app.py`.
+- новый основной вход модульного GUI находится в `oled_modular_app.py`.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
-- workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` для будущего подключения нового GUI.
-- workflow спектров подготовлен в `oled_app/measurements/spectrum.py` для будущего подключения нового GUI.
-- workflow стабильности подготовлен в `oled_app/measurements/stability.py` для будущего подключения нового GUI.
+- workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` и подключен к новому GUI.
+- workflow спектров подготовлен в `oled_app/measurements/spectrum.py` и подключен к новому GUI.
+- workflow стабильности подготовлен в `oled_app/measurements/stability.py` и подключен к новому GUI.
 - первые общие GUI helpers и progress windows подготовлены в `oled_app/gui/widgets.py` и `oled_app/gui/progress.py`.
 - базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ, окно спектров, окно стабильности и окно отчета подготовлены в `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py` и `oled_app/gui/report_window.py`.
 

@@ -5,14 +5,14 @@
 ### Добавлено
 
 - Создан пакет `oled_app/` с каркасом целевой модульной структуры: `gui`, `series`, `hardware`, `measurements`, `reports`.
-- Добавлен отдельный запуск нового модульного каркаса `oled_modular_app.py`.
+- Добавлен отдельный запуск нового модульного приложения `oled_modular_app.py`.
 - Добавлены модули `oled_app/constants.py`, `oled_app/settings.py`, `oled_app/utils.py` и package-entrypoint `oled_app/main.py`.
 - Подготовлены модули `oled_app/series/manager.py`, `journal.py`, `paths.py`, `statuses.py` и `layout.py`.
 - Подготовлены модули hardware-слоя: `oled_app/hardware/probe.py`, `auto_com.py`, `simulator.py`, `ossila.py`, `spectrometer.py`.
 - Добавлен `oled_app/reports/origin_report.py` с логикой подготовки Origin-отчета.
 - Добавлены `oled_app/measurements/ivl.py` и `oled_app/measurements/spectrum.py` с workflow ВАЯХ/IVL и спектров.
 - Добавлен `oled_app/measurements/stability.py` с workflow стабильности, чтением IVL для стартового напряжения и сохранением Excel-книги.
-- Добавлены `oled_app/gui/widgets.py` и `oled_app/gui/progress.py` с первыми общими GUI helpers и progress windows для нового каркаса.
+- Добавлены `oled_app/gui/widgets.py` и `oled_app/gui/progress.py` с общими GUI helpers и progress windows для нового приложения.
 - Добавлены `oled_app/gui/app.py` и `oled_app/gui/start_screen.py` с базовым классом нового GUI и стартовым экраном.
 - Добавлен `oled_app/gui/measurement_menu.py` с меню открытой серии, картой статусов, историей ВАЯХ, таблицей последних метрик и панелью проверки оборудования.
 - Добавлен `oled_app/gui/settings_window.py` с окном настроек нового GUI, сохранением `oled_app_settings.json` и созданием JSON-примера эмулятора.
@@ -20,20 +20,21 @@
 - Добавлен `oled_app/gui/spectrum_window.py` с окном спектров для нового GUI: старт от напряжения открытия, ручной старт, progress window и обновление журнала.
 - Добавлен `oled_app/gui/stability_window.py` с окном стабильности для нового GUI: расчет стартового напряжения по ВАЯХ, запуск workflow стабильности и обновление журнала.
 - Добавлен `oled_app/gui/report_window.py` с окном подготовки Origin-отчета для нового GUI: выбор дат ВАЯХ/спектров, спектральных пикселей и сетки напряжений.
+- Добавлен режим `oled_modular_app.py --status` для быстрой проверки нового входа без открытия GUI.
 
 ### Изменено
 
 - Общие константы, `APP_VERSION`, настройки приложения, настройки симулятора и безопасные утилиты вынесены из монолита в `oled_app/`.
-- `oled_measurement_app_v2_5.py` сохраняет прежний запуск и остается нетронутым референсом; новый каркас развивается через `oled_modular_app.py`.
+- `oled_measurement_app_v2_5.py` сохраняет прежний запуск и остается нетронутым референсом; новый модульный GUI запускается через `oled_modular_app.py`.
 - `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
-- `oled_app/main.py` показывает, что первые части GUI-слоя уже подготовлены.
+- `oled_app/main.py` запускает `OLEDModularApp` по умолчанию вместо статусного scaffold-вывода.
 - `OLEDModularApp` теперь делегирует меню открытой серии, настройки, окна измерений и окно отчета отдельным GUI-модулям.
 - `OLEDModularApp` теперь открывает перенесенное окно настроек вместо временной заглушки.
 - `OLEDModularApp` теперь открывает перенесенное окно ВАЯХ и вызывает workflow `oled_app.measurements.ivl.run_ivl_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно спектров и вызывает workflow `oled_app.measurements.spectrum.run_spectrum_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно стабильности и вызывает workflow `oled_app.measurements.stability.run_stability_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно отчета и запускает совместимую CLI-оболочку `scripts/build_report_origin_workbook.py`.
-- `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
+- `docs/modularization_plan.md` отмечает выполненные подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 
 ## v1.7.1 - 2026-06-29
