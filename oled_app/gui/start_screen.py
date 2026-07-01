@@ -16,6 +16,7 @@ from oled_app.series import SeriesManager
 from oled_app.settings import hardware_mode_label, load_app_settings, save_app_settings
 from oled_app.utils import today_iso
 
+from .measurement_menu import build_hardware_status_bar, check_hardware_status
 from .widgets import create_scrollable_frame, create_tree_with_scrollbars
 
 
@@ -33,7 +34,10 @@ def show_start_screen(app) -> None:
     mode_text = f"Режим: {hardware_mode_label(app.app_settings)}"
     if app.app_settings.get("hardware_mode") == "simulator":
         mode_text += "  |  измерения идут на эмуляторе"
-    ttk.Label(frame, text=mode_text, font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(4, 14))
+    ttk.Label(frame, text=mode_text, font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(4, 2))
+    build_hardware_status_bar(app, frame)
+    app.after(250, lambda: check_hardware_status(app))
+    ttk.Label(frame, text="Выберите существующую серию или создайте новую.", font=("Segoe UI", 11)).pack(anchor="w", pady=(0, 14))
 
     root_bar = ttk.Frame(frame)
     root_bar.pack(fill="x", pady=(0, 10))

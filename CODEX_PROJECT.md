@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.2`
+- Current app version: `v1.7.3`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. During the current prerelease modularization, keep migration progress on the existing `v1.7.2` release/tag and do not create later modularization releases unless the user explicitly asks.
+When changing user-visible behavior, update all version references in the same commit. The current modularization follow-up release is `v1.7.3`.
 
 ## Main Entry Points
 
@@ -32,7 +32,7 @@ When changing user-visible behavior, update all version references in the same c
 - Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
 - The modular GUI shell, start screen, series measurement menu, settings window, IVL window, spectrum window, stability window, and report window now live in `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, and `oled_app/gui/report_window.py`.
 
-During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`. Keep this modularization line on `v1.7.2`.
+During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`.
 
 ## Measurement Workflows
 

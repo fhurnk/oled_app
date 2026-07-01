@@ -63,6 +63,13 @@ def create_scrollable_frame(parent, padding: int = 16) -> Tuple[ttk.Frame, ttk.F
     def configure_canvas(event) -> None:
         canvas.itemconfigure(window_id, width=max(event.width, frame.winfo_reqwidth()))
 
+    def on_mousewheel(event) -> None:
+        delta = -1 * int(event.delta / 120) if event.delta else 0
+        if delta:
+            canvas.yview_scroll(delta, "units")
+
     frame.bind("<Configure>", configure_frame)
     canvas.bind("<Configure>", configure_canvas)
+    canvas.bind("<Enter>", lambda _event: canvas.bind_all("<MouseWheel>", on_mousewheel))
+    canvas.bind("<Leave>", lambda _event: canvas.unbind_all("<MouseWheel>"))
     return outer, frame

@@ -191,6 +191,27 @@ def parse_status(cell_value: object) -> str:
     return text.rsplit("|", 1)[-1].strip().upper()
 
 
+def natural_key(value: object) -> tuple:
+    text = str(value or "")
+    parts = re.split(r"(\d+)", text)
+    return tuple(int(part) if part.isdigit() else part.lower() for part in parts)
+
+
+def pixel_position_key(pixel: str) -> tuple:
+    parts = str(pixel or "").split("_")
+    series = parts[0] if parts else ""
+    quarter_match = re.search(r"(\d+)$", series)
+    quarter = int(quarter_match.group(1)) if quarter_match else 9999
+    substrate = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 9999
+    pixel_number = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 9999
+    prefix = series[: quarter_match.start(1)] if quarter_match else series
+    return (quarter, substrate, pixel_number, natural_key(prefix), natural_key(pixel))
+
+
+def measurement_sort_key(record) -> tuple:
+    return (*pixel_position_key(record.pixel), natural_key(record.series), natural_key(record.subseries))
+
+
 def read_iv_record(meta: MeasurementPath, warnings: list[str]) -> IvRecord | None:
     try:
         wb = load_workbook(meta.path, read_only=False, data_only=True)
@@ -261,7 +282,7 @@ def collect_iv_records(iv_root: Path, warnings: list[str], date_filter: str | No
         if record.status != "WORKING":
             continue
         records.append(record)
-    return sorted(records, key=lambda item: (item.series, item.subseries, item.pixel))
+    return sorted(records, key=measurement_sort_key)
 
 
 def read_metadata_value(ws, key: str) -> object | None:
@@ -384,7 +405,7 @@ def collect_spectrum_records(
         record = read_spectrum_record(meta, sheet_name, warnings)
         if record is not None:
             records.append(record)
-    return sorted(records, key=lambda item: (item.series, item.subseries, item.pixel))
+    return sorted(records, key=measurement_sort_key)
 
 
 def validate_voltage_grids(
@@ -693,7 +714,7 @@ def add_iv_charts(wb: Workbook, blocks: list[IvBlock]) -> None:
     )
 
     row_anchor = 18
-    for series_name in sorted({block.record.series for block in blocks}):
+    for series_name in sorted({block.record.series for block in blocks}, key=pixel_position_key):
         add_chart(
             f"Focus {series_name}: V-I",
             f"A{row_anchor}",
@@ -856,7 +877,7 @@ def write_origin_plot_specs(
             ]
         )
 
-    for focus_series in sorted({block.record.series for block in iv_blocks}):
+    for focus_series in sorted({block.record.series for block in iv_blocks}, key=pixel_position_key):
         for block in iv_blocks:
             is_focus = block.record.series == focus_series
             curve = f"{block.record.series}/{block.record.subseries}/{block.record.pixel}"
@@ -1284,6 +1305,18 @@ def origin_rescale(layer) -> None:
             pass
 
 
+def origin_refresh_legend(layer, warnings: list[str]) -> None:
+    for command in ("legend -r", "legend -u"):
+        try:
+            layer.lt_exec(command)
+            return
+        except Exception:
+            pass
+    prefix = "Origin legend refresh not applied"
+    if not any(message.startswith(prefix) for message in warnings):
+        warnings.append(f"{prefix}: update the graph legend in Origin if labels are incomplete")
+
+
 def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
     origin_set_folder(op, "/")
     wks = origin_new_sheet(op, "README")
@@ -1309,12 +1342,12 @@ def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
 
 
 def series_names(records: list[IvRecord]) -> list[str]:
-    return sorted({record.series for record in records})
+    return sorted({record.series for record in records}, key=pixel_position_key)
 
 
 def origin_series_values(records: list[IvRecord], series: str, field: str) -> list[float | None]:
     values: list[float | None] = []
-    for record in sorted([item for item in records if item.series == series], key=lambda item: (item.subseries, item.pixel)):
+    for record in sorted([item for item in records if item.series == series], key=measurement_sort_key):
         values.extend(row[field] for row in record.rows)
         values.extend([None, None, None])
     while values and values[-1] is None:
@@ -1470,6 +1503,7 @@ def create_origin_iv_graphs(op, records: list[IvRecord], iv_book: dict[str, obje
             for idx, plot in enumerate(layer.plot_list()):
                 origin_set_plot_style(plot, 2.0, origin_color(idx), 0, warnings)
         origin_rescale(layer)
+        origin_refresh_legend(layer, warnings)
 
     if not records:
         return
@@ -1503,6 +1537,7 @@ def create_origin_spectrum_graphs(
         for idx, plot in enumerate(layer.plot_list()):
             origin_set_plot_style(plot, 2.0, origin_color(idx), 0, warnings)
         origin_rescale(layer)
+        origin_refresh_legend(layer, warnings)
 
     if common_voltage is None or common_wks is None or norm_wks is None:
         return
@@ -1521,6 +1556,7 @@ def create_origin_spectrum_graphs(
         for idx, plot in enumerate(layer.plot_list()):
             origin_set_plot_style(plot, 2.0, origin_color(idx), 0, warnings)
         origin_rescale(layer)
+        origin_refresh_legend(layer, warnings)
 
 
 def write_origin_warnings(op, warnings: list[str]) -> None:
