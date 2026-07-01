@@ -21,6 +21,7 @@
 - Добавлен `oled_app/gui/stability_window.py` с окном стабильности для нового GUI: расчет стартового напряжения по ВАЯХ, запуск workflow стабильности и обновление журнала.
 - Добавлен `oled_app/gui/report_window.py` с окном подготовки Origin-отчета для нового GUI: выбор дат ВАЯХ/спектров, спектральных пикселей и сетки напряжений.
 - Добавлен режим `oled_modular_app.py --status` для быстрой проверки нового входа без открытия GUI.
+- В проект Visual Studio `oled_app_v2_5_package.pyproj` добавлены новый модульный вход, пакет `oled_app/`, scripts и документация.
 
 ### Изменено
 
@@ -34,6 +35,7 @@
 - `OLEDModularApp` теперь открывает перенесенное окно спектров и вызывает workflow `oled_app.measurements.spectrum.run_spectrum_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно стабильности и вызывает workflow `oled_app.measurements.stability.run_stability_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно отчета и запускает совместимую CLI-оболочку `scripts/build_report_origin_workbook.py`.
+- Startup-файл Visual Studio переключен на `oled_modular_app.py`; `oled_measurement_app_v2_5.py` остается в проекте как референс.
 - `docs/modularization_plan.md` отмечает выполненные подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 

@@ -20,6 +20,7 @@
     "application": "oled_modular_app.py",
     "application_status_command": ".\\env\\Scripts\\python.exe .\\oled_modular_app.py --status",
     "reference_application": "oled_measurement_app_v2_5.py",
+    "visual_studio_project": "oled_app_v2_5_package.pyproj",
     "package_entrypoint": "oled_app/main.py",
     "release_script": "scripts/create_github_release.py",
     "report_script": "scripts/build_report_origin_workbook.py",

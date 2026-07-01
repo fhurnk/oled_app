@@ -5,7 +5,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{2d595670-256a-4a68-98a4-242e52a61f02}</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>oled_measurement_app_v2_5.py</StartupFile>
+    <StartupFile>oled_modular_app.py</StartupFile>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
     <Name>oled_app_v2_5_package</Name>
@@ -17,12 +17,67 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="oled_modular_app.py" />
     <Compile Include="oled_measurement_app_v2_5.py" />
+    <Compile Include="oled_app\__init__.py" />
+    <Compile Include="oled_app\constants.py" />
+    <Compile Include="oled_app\main.py" />
+    <Compile Include="oled_app\settings.py" />
+    <Compile Include="oled_app\utils.py" />
+    <Compile Include="oled_app\gui\__init__.py" />
+    <Compile Include="oled_app\gui\app.py" />
+    <Compile Include="oled_app\gui\ivl_window.py" />
+    <Compile Include="oled_app\gui\measurement_menu.py" />
+    <Compile Include="oled_app\gui\progress.py" />
+    <Compile Include="oled_app\gui\report_window.py" />
+    <Compile Include="oled_app\gui\settings_window.py" />
+    <Compile Include="oled_app\gui\spectrum_window.py" />
+    <Compile Include="oled_app\gui\stability_window.py" />
+    <Compile Include="oled_app\gui\start_screen.py" />
+    <Compile Include="oled_app\gui\widgets.py" />
+    <Compile Include="oled_app\hardware\__init__.py" />
+    <Compile Include="oled_app\hardware\auto_com.py" />
+    <Compile Include="oled_app\hardware\ossila.py" />
+    <Compile Include="oled_app\hardware\probe.py" />
+    <Compile Include="oled_app\hardware\simulator.py" />
+    <Compile Include="oled_app\hardware\spectrometer.py" />
+    <Compile Include="oled_app\measurements\__init__.py" />
+    <Compile Include="oled_app\measurements\ivl.py" />
+    <Compile Include="oled_app\measurements\spectrum.py" />
+    <Compile Include="oled_app\measurements\stability.py" />
+    <Compile Include="oled_app\reports\__init__.py" />
+    <Compile Include="oled_app\reports\origin_report.py" />
+    <Compile Include="oled_app\series\__init__.py" />
+    <Compile Include="oled_app\series\journal.py" />
+    <Compile Include="oled_app\series\layout.py" />
+    <Compile Include="oled_app\series\manager.py" />
+    <Compile Include="oled_app\series\paths.py" />
+    <Compile Include="oled_app\series\statuses.py" />
+    <Compile Include="scripts\build_report_origin_workbook.py" />
+    <Compile Include="scripts\create_github_release.py" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="AGENTS.md" />
+    <Content Include="CHANGELOG.md" />
+    <Content Include="CODEX_PROJECT.md" />
+    <Content Include="PROJECT_OVERVIEW.md" />
+    <Content Include="README.md" />
     <Content Include="oled_simulator_config.json" />
     <Content Include="README_OLED_APP_V2_5.md" />
     <Content Include="requirements.txt" />
+    <Content Include="docs\GITHUB_RELEASE_WORKFLOW.md" />
+    <Content Include="docs\modularization_plan.md" />
+    <Content Include="docs\project_manifest.json" />
+    <Content Include="docs\report_origin_pipeline.md" />
+    <Content Include="docs\versions\v1.5.2.md" />
+    <Content Include="docs\versions\v1.5.3.md" />
+    <Content Include="docs\versions\v1.5.4.md" />
+    <Content Include="docs\versions\v1.5.5.md" />
+    <Content Include="docs\versions\v1.5.6.md" />
+    <Content Include="docs\versions\v1.6.0.md" />
+    <Content Include="docs\versions\v1.7.0.md" />
+    <Content Include="docs\versions\v1.7.1.md" />
+    <Content Include="docs\versions\v1.7.2.md" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">
