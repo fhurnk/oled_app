@@ -19,6 +19,7 @@
 - Добавлен `oled_app/gui/ivl_window.py` с окном ВАЯХ для нового GUI: одиночный пиксель, последовательная съемка серии, progress window и обновление журнала.
 - Добавлен `oled_app/gui/spectrum_window.py` с окном спектров для нового GUI: старт от напряжения открытия, ручной старт, progress window и обновление журнала.
 - Добавлен `oled_app/gui/stability_window.py` с окном стабильности для нового GUI: расчет стартового напряжения по ВАЯХ, запуск workflow стабильности и обновление журнала.
+- Добавлен `oled_app/gui/report_window.py` с окном подготовки Origin-отчета для нового GUI: выбор дат ВАЯХ/спектров, спектральных пикселей и сетки напряжений.
 
 ### Изменено
 
@@ -26,11 +27,12 @@
 - `oled_measurement_app_v2_5.py` сохраняет прежний запуск и остается нетронутым референсом; новый каркас развивается через `oled_modular_app.py`.
 - `scripts/build_report_origin_workbook.py` оставлен совместимым CLI-входом и теперь вызывает `oled_app.reports.origin_report.main`.
 - `oled_app/main.py` показывает, что первые части GUI-слоя уже подготовлены.
-- `OLEDModularApp` теперь делегирует меню открытой серии отдельному GUI-модулю; окна измерений и отчета пока остаются следующими подэтапами.
+- `OLEDModularApp` теперь делегирует меню открытой серии, настройки, окна измерений и окно отчета отдельным GUI-модулям.
 - `OLEDModularApp` теперь открывает перенесенное окно настроек вместо временной заглушки.
 - `OLEDModularApp` теперь открывает перенесенное окно ВАЯХ и вызывает workflow `oled_app.measurements.ivl.run_ivl_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно спектров и вызывает workflow `oled_app.measurements.spectrum.run_spectrum_measurement`.
 - `OLEDModularApp` теперь открывает перенесенное окно стабильности и вызывает workflow `oled_app.measurements.stability.run_stability_measurement`.
+- `OLEDModularApp` теперь открывает перенесенное окно отчета и запускает совместимую CLI-оболочку `scripts/build_report_origin_workbook.py`.
 - `docs/modularization_plan.md` отмечает выполненные и оставшиеся подэтапы перехода в рамках единой версии `v1.7.2`.
 - Документация и manifest обновлены под единый переходный релиз `v1.7.2`.
 

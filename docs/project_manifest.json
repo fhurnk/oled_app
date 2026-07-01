@@ -35,6 +35,7 @@
     "gui_ivl_window_module": "oled_app/gui/ivl_window.py",
     "gui_spectrum_window_module": "oled_app/gui/spectrum_window.py",
     "gui_stability_window_module": "oled_app/gui/stability_window.py",
+    "gui_report_window_module": "oled_app/gui/report_window.py",
     "requirements": "requirements.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },

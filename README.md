@@ -51,7 +51,7 @@ py -3 -m venv env
 - `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового каркаса.
 - `oled_app/measurements/stability.py` - модульная логика измерения стабильности для нового каркаса.
 - `oled_app/gui/widgets.py`, `oled_app/gui/progress.py` - первые общие GUI helpers и progress windows для нового каркаса.
-- `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py` - базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ, окно спектров и окно стабильности.
+- `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, `oled_app/gui/report_window.py` - базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ, окно спектров, окно стабильности и окно отчета.
 - `docs/versions/` - архив описаний версий.
 - `docs/GITHUB_RELEASE_WORKFLOW.md` - порядок публикации версий и GitHub Releases.
 

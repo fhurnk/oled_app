@@ -5,7 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from copy import deepcopy
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from tkinter import font as tkfont
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Dict, Optional
@@ -29,6 +29,7 @@ from .ivl_window import (
     remove_same_substrate_from_queue,
 )
 from .measurement_menu import pixel_ids, refresh_pixel_table, show_measurement_menu
+from .report_window import open_report_window
 from .settings_window import open_settings_window
 from .spectrum_window import open_spectrum_window
 from .stability_window import open_stability_window
@@ -186,7 +187,7 @@ class OLEDModularApp(tk.Tk):
         open_stability_window(self)
 
     def open_report_window(self) -> None:
-        messagebox.showinfo("Составить отчет", "Окно отчета будет подключено следующим GUI-подэтапом.")
+        open_report_window(self)
 
     def open_settings_window(self) -> None:
         open_settings_window(self)
