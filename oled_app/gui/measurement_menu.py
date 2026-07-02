@@ -263,14 +263,19 @@ def render_status_holder_canvas(app) -> None:
         code = quarter_code(app.series.config, quarter_number)
         description = quarter_description(app.series.config, quarter_number)
         info = layout[quarter_number]
-        canvas.create_text(*info["number_xy"], text=str(quarter_number), font=("Segoe UI", 24, "bold"), fill="#17345F")
+        number_x, number_y = info["number_xy"]
+        canvas.create_text(number_x, number_y, text=str(quarter_number), font=("Segoe UI", 24, "bold"), fill="#17345F")
         if description:
+            desc_x = min(max(number_x, 100), width - 100)
+            desc_y = number_y - 44 if quarter_number in {1, 2} else number_y + 44
             canvas.create_text(
-                *info["name_xy"],
+                desc_x,
+                desc_y,
                 text=description,
                 font=("Segoe UI", 9, "bold"),
                 fill="#17345F",
-                anchor="w",
+                anchor="center",
+                width=180,
             )
         for substrate in info["substrates"]:
             x, y, w, h = substrate["x"], substrate["y"], substrate["w"], substrate["h"]
