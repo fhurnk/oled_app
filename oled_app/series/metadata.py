@@ -139,6 +139,7 @@ def normalize_quarter_payload(
 
 def luminance_coefficient_for_color(app_settings: Dict[str, Any], color: Any) -> float:
     units = app_settings.get("measurement_units", {}) if isinstance(app_settings, dict) else {}
+    # Legacy settings from v1.7.5/v1.7.6 may still contain the old shared coefficient.
     fallback = float(units.get("luminance_cd_m2_per_uA", 1.0) or 1.0)
     key = LED_COLOR_COEFFICIENT_KEYS[normalize_led_color(color)]
     try:

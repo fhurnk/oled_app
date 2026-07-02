@@ -116,7 +116,6 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     },
     "measurement_units": {
         "pixel_area_mm2": 1.0,
-        "luminance_cd_m2_per_uA": 1.0,
         "luminance_red_cd_m2_per_uA": 1.0,
         "luminance_green_cd_m2_per_uA": 1.0,
         "luminance_blue_cd_m2_per_uA": 1.0,

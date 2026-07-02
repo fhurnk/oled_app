@@ -9,7 +9,14 @@ from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Tuple
 
 from oled_app.hardware.probe import probe_hardware
-from oled_app.series import build_holder_layout, ivl_status_marker, pixel_status_color, quarter_code, short_date_for_map
+from oled_app.series import (
+    build_holder_layout,
+    ivl_status_marker,
+    pixel_status_color,
+    quarter_code,
+    quarter_description,
+    short_date_for_map,
+)
 from oled_app.settings import hardware_mode_label, load_app_settings, save_app_settings
 from oled_app.utils import as_float_or_none, read_spectrum_metrics_from_workbook, resolve_series_file
 
@@ -254,8 +261,17 @@ def render_status_holder_canvas(app) -> None:
 
     for quarter_number in [2, 1, 3, 4]:
         code = quarter_code(app.series.config, quarter_number)
+        description = quarter_description(app.series.config, quarter_number)
         info = layout[quarter_number]
         canvas.create_text(*info["number_xy"], text=str(quarter_number), font=("Segoe UI", 24, "bold"), fill="#17345F")
+        if description:
+            canvas.create_text(
+                *info["name_xy"],
+                text=description,
+                font=("Segoe UI", 9, "bold"),
+                fill="#17345F",
+                anchor="w",
+            )
         for substrate in info["substrates"]:
             x, y, w, h = substrate["x"], substrate["y"], substrate["w"], substrate["h"]
             substrate_id = f"{code}{quarter_number}_{substrate['substrate_number']}"

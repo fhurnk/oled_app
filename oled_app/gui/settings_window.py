@@ -47,7 +47,6 @@ def open_settings_window(app) -> None:
     auto_com_var = tk.BooleanVar(value=bool(app.app_settings.get("auto_com_port", False)))
     units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
     pixel_area_var = tk.StringVar(value=str(units.get("pixel_area_mm2", 1.0)))
-    luminance_coeff_var = tk.StringVar(value=str(units.get("luminance_cd_m2_per_uA", 1.0)))
     luminance_red_var = tk.StringVar(value=str(units.get("luminance_red_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     luminance_green_var = tk.StringVar(value=str(units.get("luminance_green_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     luminance_blue_var = tk.StringVar(value=str(units.get("luminance_blue_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
@@ -78,25 +77,24 @@ def open_settings_window(app) -> None:
     add_settings_entry(general, 2, "COM port по умолчанию", com_var)
     ttk.Checkbutton(general, text="Автонастройка COM порта Ossila", variable=auto_com_var).grid(row=3, column=1, sticky="w", pady=3)
     add_settings_entry(general, 4, "Площадь пикселя, мм^2", pixel_area_var)
-    add_settings_entry(general, 5, "Коэфф. общий мкА -> кд/м^2", luminance_coeff_var)
-    add_settings_entry(general, 6, "Коэфф. красный R", luminance_red_var)
-    add_settings_entry(general, 7, "Коэфф. зеленый G", luminance_green_var)
-    add_settings_entry(general, 8, "Коэфф. синий B", luminance_blue_var)
-    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=9, column=0, sticky="e", pady=4, padx=(0, 8))
+    add_settings_entry(general, 5, "Коэфф. красный R", luminance_red_var)
+    add_settings_entry(general, 6, "Коэфф. зеленый G", luminance_green_var)
+    add_settings_entry(general, 7, "Коэфф. синий B", luminance_blue_var)
+    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=8, column=0, sticky="e", pady=4, padx=(0, 8))
     ttk.Combobox(
         general,
         textvariable=raw_policy_var,
         values=list(raw_policy_values.keys()),
         state="readonly",
         width=30,
-    ).grid(row=9, column=1, sticky="w", pady=4)
+    ).grid(row=8, column=1, sticky="w", pady=4)
     ttk.Label(
         general,
         text="simulator = встроенная эмуляция пикселя; real = настоящие xtralien/seabreeze из Python-среды.",
         foreground="#555555",
         wraplength=610,
         justify="left",
-    ).grid(row=10, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(12, 0))
     general.columnconfigure(1, weight=1)
 
     sim_cfg_var = tk.StringVar(value=str(app.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
@@ -186,7 +184,6 @@ def open_settings_window(app) -> None:
             settings["auto_com_port"] = bool(auto_com_var.get())
             settings["measurement_units"] = {
                 "pixel_area_mm2": parse_float(pixel_area_var.get(), "Площадь пикселя"),
-                "luminance_cd_m2_per_uA": parse_float(luminance_coeff_var.get(), "Коэффициент яркости"),
                 "luminance_red_cd_m2_per_uA": parse_float(luminance_red_var.get(), "Коэффициент яркости R"),
                 "luminance_green_cd_m2_per_uA": parse_float(luminance_green_var.get(), "Коэффициент яркости G"),
                 "luminance_blue_cd_m2_per_uA": parse_float(luminance_blue_var.get(), "Коэффициент яркости B"),
