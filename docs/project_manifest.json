@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.7.5",
+    "current_version": "v1.7.6",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.7.5.md"
+    "docs/versions/v1.7.6.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -32,6 +32,7 @@
     "processing_spectrum_results_module": "oled_app/processing/spectrum_results.py",
     "measurement_spectrum_module": "oled_app/measurements/spectrum.py",
     "measurement_stability_module": "oled_app/measurements/stability.py",
+    "series_metadata_module": "oled_app/series/metadata.py",
     "gui_widgets_module": "oled_app/gui/widgets.py",
     "gui_progress_module": "oled_app/gui/progress.py",
     "gui_app_module": "oled_app/gui/app.py",
@@ -58,7 +59,7 @@
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR",
-    "modularization_single_version": "v1.7.5",
+    "modularization_single_version": "v1.7.6",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

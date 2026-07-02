@@ -9,9 +9,9 @@ from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Tuple
 
 from oled_app.hardware.probe import probe_hardware
-from oled_app.series import build_holder_layout, ivl_status_marker, pixel_status_color, short_date_for_map
+from oled_app.series import build_holder_layout, ivl_status_marker, pixel_status_color, quarter_code, short_date_for_map
 from oled_app.settings import hardware_mode_label, load_app_settings, save_app_settings
-from oled_app.utils import as_float_or_none, read_spectrum_metrics_from_workbook, resolve_series_file, safe_filename
+from oled_app.utils import as_float_or_none, read_spectrum_metrics_from_workbook, resolve_series_file
 
 from .widgets import create_scrollable_frame, create_tree_with_scrollbars
 
@@ -27,6 +27,7 @@ def show_measurement_menu(app) -> None:
     ttk.Label(header, text="Измерения OLED", font=("Segoe UI", 18, "bold")).pack(side="left")
     ttk.Button(header, text="Открыть другую серию", command=app.show_start_screen).pack(side="right")
     ttk.Button(header, text="Настройки", command=app.open_settings_window).pack(side="right", padx=(0, 10))
+    ttk.Button(header, text="Настройки серии", command=app.show_edit_series_screen).pack(side="right", padx=(0, 10))
 
     ttk.Label(main, text=f"Серия: {app.series.series_folder}").pack(anchor="w", pady=(4, 2))
     ttk.Label(main, text=f"Режим оборудования: {hardware_mode_label(app.app_settings)}", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
@@ -248,12 +249,11 @@ def render_status_holder_canvas(app) -> None:
     height = int(canvas.cget("height"))
     draw_holder_base(canvas, width, height)
     rows = {row.get("Pixel ID"): row for row in app.series.journal.list_pixels()}
-    quarter_names = app.series.config.get("quarter_names", {})
     deposition_date = short_date_for_map(str(app.series.config.get("deposition_date", "") or ""))
     layout = getattr(app, "status_canvas_layout", build_holder_layout(width, height))
 
     for quarter_number in [2, 1, 3, 4]:
-        code = safe_filename(quarter_names.get(str(quarter_number), f"Q{quarter_number}"), fallback=f"Q{quarter_number}")
+        code = quarter_code(app.series.config, quarter_number)
         info = layout[quarter_number]
         canvas.create_text(*info["number_xy"], text=str(quarter_number), font=("Segoe UI", 24, "bold"), fill="#17345F")
         for substrate in info["substrates"]:

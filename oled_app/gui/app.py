@@ -33,7 +33,7 @@ from .report_window import open_report_window
 from .settings_window import open_settings_window
 from .spectrum_window import open_spectrum_window
 from .stability_window import open_stability_window
-from .start_screen import show_new_series_screen, show_start_screen
+from .start_screen import show_edit_series_screen, show_new_series_screen, show_start_screen
 
 
 class OLEDModularApp(tk.Tk):
@@ -83,13 +83,13 @@ class OLEDModularApp(tk.Tk):
         try:
             screen_w = max(int(self.winfo_screenwidth()), 1120)
             screen_h = max(int(self.winfo_screenheight()), 760)
-            width = int(min(max(screen_w * 0.68, 900), 1500))
-            height = int(min(max(screen_h * 0.68, 620), 920))
+            width = int(min(max(screen_w * 0.82, 1180), screen_w - 60, 1600))
+            height = int(min(max(screen_h * 0.78, 680), screen_h - 80, 980))
             x = max(0, (screen_w - width) // 2)
             y = max(0, (screen_h - height) // 2)
             self.geometry(f"{width}x{height}+{x}+{y}")
         except Exception:
-            self.geometry("980x680")
+            self.geometry("1180x760")
 
     def _setup_gui_style(self) -> None:
         try:
@@ -152,6 +152,9 @@ class OLEDModularApp(tk.Tk):
 
     def show_new_series_screen(self) -> None:
         show_new_series_screen(self)
+
+    def show_edit_series_screen(self) -> None:
+        show_edit_series_screen(self)
 
     def show_measurement_menu(self) -> None:
         show_measurement_menu(self)

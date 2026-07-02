@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.5`
+- Current app version: `v1.7.6`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. The current raw CSV pipeline release is `v1.7.5`.
+When changing user-visible behavior, update all version references in the same commit. The current series metadata and scaling release is `v1.7.6`.
 
 ## Main Entry Points
 
@@ -23,7 +23,7 @@ When changing user-visible behavior, update all version references in the same c
 - Real hardware modules are imported lazily: `xtralien`, `seabreeze`
 - Built-in simulator is in the same Python file and can run without hardware.
 - Shared constants, settings defaults, settings I/O, and common utility helpers now live in `oled_app/constants.py`, `oled_app/settings.py`, and `oled_app/utils.py`.
-- Series creation, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
+- Series creation, quarter metadata/naming, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.

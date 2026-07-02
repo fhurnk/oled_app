@@ -65,12 +65,14 @@ def fit_toplevel_to_content(win: tk.Toplevel, min_width: int, min_height: int, p
         screen_h = int(win.winfo_screenheight())
         req_w = int(win.winfo_reqwidth()) + padding
         req_h = int(win.winfo_reqheight()) + padding
-        width = min(max(min_width, req_w), max(320, screen_w - 80))
-        height = min(max(min_height, req_h), max(260, screen_h - 100))
+        max_w = max(420, screen_w - 80)
+        max_h = max(320, screen_h - 100)
+        width = min(max(min_width, req_w), max_w)
+        height = min(max(min_height, req_h), max_h)
         x = max(0, (screen_w - width) // 2)
         y = max(0, (screen_h - height) // 3)
         win.geometry(f"{width}x{height}+{x}+{y}")
-        win.minsize(min(width, min_width), min(height, min_height))
+        win.minsize(min(width, max(min_width, min(req_w, max_w))), min(height, max(min_height, min(req_h, max_h))))
     except Exception:
         pass
 

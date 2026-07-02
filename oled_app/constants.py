@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-APP_VERSION = "1.7.5"
+APP_VERSION = "1.7.6"
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 
 CONFIG_FILE = "series_config.json"
@@ -34,6 +34,8 @@ PIXEL_HEADERS = [
     "Pixel ID",
     "Quarter code",
     "Quarter number",
+    "Quarter description",
+    "LED color",
     "Substrate number",
     "Pixel number",
     "Last status",

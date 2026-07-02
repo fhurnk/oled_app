@@ -20,7 +20,8 @@ from oled_app.constants import (
     QUARTERS_SHEET,
     SERIES_SHEET,
 )
-from oled_app.utils import autosize_columns, now_str, relative_to_or_abs, safe_filename, style_header_row, today_iso
+from oled_app.series.metadata import led_color_label, quarter_code, quarter_description, quarter_led_color
+from oled_app.utils import autosize_columns, now_str, relative_to_or_abs, style_header_row, today_iso
 
 
 @dataclass
@@ -28,18 +29,26 @@ class PixelInfo:
     pixel_id: str
     quarter_code: str
     quarter_number: int
+    quarter_description: str
+    led_color: str
     substrate_number: int
     pixel_number: int
 
 
-def generate_pixels(quarter_names: Dict[str, str]) -> List[PixelInfo]:
+def generate_pixels(config_or_quarter_names: Dict[str, str]) -> List[PixelInfo]:
     pixels: List[PixelInfo] = []
+    if any(key in config_or_quarter_names for key in ("quarter_names", "quarter_bases", "quarter_led_colors")):
+        config = config_or_quarter_names
+    else:
+        config = {"quarter_names": config_or_quarter_names}
     for q in range(1, 5):
-        code = safe_filename(quarter_names.get(str(q), f"Q{q}"), fallback=f"Q{q}")
+        code = quarter_code(config, q)
+        description = quarter_description(config, q)
+        led_color = quarter_led_color(config, q)
         for substrate in range(1, 4):
             for pix in range(1, 5):
                 pixel_id = f"{code}{q}_{substrate}_{pix}"
-                pixels.append(PixelInfo(pixel_id, code, q, substrate, pix))
+                pixels.append(PixelInfo(pixel_id, code, q, description, led_color, substrate, pix))
     return pixels
 
 
@@ -94,13 +103,13 @@ class SeriesJournal:
         else:
             ws = wb.create_sheet(QUARTERS_SHEET)
 
-        headers = ["Quarter number", "Quarter code/name", "Generated pixel prefix example"]
+        headers = ["Quarter number", "Quarter code/name", "LED color", "Short description", "Generated pixel prefix example"]
         ws.append(headers)
         style_header_row(ws, 1, 1, len(headers))
-        quarter_names = self.config.get("quarter_names", {})
         for q in range(1, 5):
-            code = safe_filename(quarter_names.get(str(q), f"Q{q}"), fallback=f"Q{q}")
-            ws.append([q, code, f"{code}{q}_1_1"])
+            code = quarter_code(self.config, q)
+            color = quarter_led_color(self.config, q)
+            ws.append([q, code, led_color_label(color), quarter_description(self.config, q), f"{code}{q}_1_1"])
         autosize_columns(ws)
 
     def _ensure_pixels_sheet(self, wb: Workbook):
@@ -116,13 +125,15 @@ class SeriesJournal:
         ws.append(PIXEL_HEADERS)
         style_header_row(ws, 1, 1, len(PIXEL_HEADERS))
 
-        pixels = generate_pixels(self.config.get("quarter_names", {}))
+        pixels = generate_pixels(self.config)
         for p in pixels:
             old = existing_by_id.get(p.pixel_id, {})
             ws.append([
                 p.pixel_id,
                 p.quarter_code,
                 p.quarter_number,
+                p.quarter_description,
+                led_color_label(p.led_color),
                 p.substrate_number,
                 p.pixel_number,
                 old.get("Last status", "UNKNOWN"),

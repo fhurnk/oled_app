@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import tkinter as tk
 import traceback
+from dataclasses import replace
 from tkinter import messagebox, ttk
 from typing import Dict
 
 from oled_app.hardware import effective_com_port
 from oled_app.measurements.spectrum import SpectrumParams, run_spectrum_measurement
-from oled_app.series import ensure_measurement_folder
+from oled_app.series import ensure_measurement_folder, quarter_led_color
 from oled_app.settings import DEFAULT_APP_SETTINGS
 from oled_app.utils import as_float_or_none, parse_float
 
@@ -91,6 +92,7 @@ def open_spectrum_window(app) -> None:
             if opening is None:
                 raise ValueError("Для выбранного пикселя нет напряжения открытия")
             params = build_spectrum_params(app, vars_, opening, bool(use_opening_var.get()))
+            params = params_for_pixel(app, pid, params)
             app.save_measurement_defaults("spectrum", {
                 "voltage_end_V": vars_["Voltage end, V"].get(),
                 "voltage_step_V": vars_["Voltage step, V"].get(),
@@ -194,3 +196,15 @@ def build_spectrum_params(app, vars_: Dict[str, tk.StringVar], opening: float, u
         pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
         luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
     )
+
+
+def params_for_pixel(app, pixel_id: str, params: SpectrumParams) -> SpectrumParams:
+    if app.series is None:
+        return params
+    coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
+    led_type = params.led_type
+    if not led_type or str(led_type).strip().lower() == "auto":
+        row = app.series.journal.get_pixel(pixel_id) or {}
+        quarter_number = int(row.get("Quarter number") or 1)
+        led_type = quarter_led_color(app.series.config, quarter_number)
+    return replace(params, luminance_cd_m2_per_uA=coeff, led_type=led_type)

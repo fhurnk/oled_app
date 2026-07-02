@@ -12,7 +12,17 @@ from typing import Any, Dict, List
 from openpyxl import load_workbook
 
 from oled_app.constants import CONFIG_FILE, DEFAULT_ROOT, JOURNAL_FILE, MEASUREMENTS_SHEET, SCRIPT_DIR
-from oled_app.series import SeriesManager
+from oled_app.series import (
+    LED_COLOR_LABELS,
+    SeriesManager,
+    build_holder_layout,
+    led_color_from_label,
+    led_color_label,
+    quarter_base,
+    quarter_code,
+    quarter_description,
+    quarter_led_color,
+)
 from oled_app.settings import hardware_mode_label, load_app_settings, save_app_settings
 from oled_app.utils import today_iso
 
@@ -172,41 +182,98 @@ def open_series_folder(app, folder: Path) -> None:
 
 
 def show_new_series_screen(app) -> None:
+    show_series_settings_screen(app, edit_mode=False)
+
+
+def show_edit_series_screen(app) -> None:
+    if app.series is None:
+        return
+    show_series_settings_screen(app, edit_mode=True)
+
+
+def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     app.clear()
     outer, main = create_scrollable_frame(app, padding=22)
     outer.pack(fill="both", expand=True)
-    ttk.Label(main, text="Новая серия напыления", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+    title = "Настройки серии" if edit_mode else "Новая серия напыления"
+    ttk.Label(main, text=title, font=("Segoe UI", 18, "bold")).pack(anchor="w")
 
     top = ttk.Frame(main)
     top.pack(fill="x", pady=(14, 10))
-    ttk.Label(top, text="Корневая папка:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
-    root_var = tk.StringVar(value=str(app.app_settings.get("default_root") or SCRIPT_DIR / DEFAULT_ROOT))
-    ttk.Entry(top, textvariable=root_var, width=75).grid(row=0, column=1, sticky="we", pady=4)
+    row_offset = 0
+    if edit_mode and app.series is not None:
+        ttk.Label(top, text="Папка серии:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
+        ttk.Label(top, text=str(app.series.series_folder), foreground="#555555").grid(row=0, column=1, sticky="w", pady=4)
+        root_var = tk.StringVar(value=str(app.series.series_folder.parent))
+        row_offset = 1
+    else:
+        ttk.Label(top, text="Корневая папка:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
+        root_var = tk.StringVar(value=str(app.app_settings.get("default_root") or SCRIPT_DIR / DEFAULT_ROOT))
+        ttk.Entry(top, textvariable=root_var, width=75).grid(row=0, column=1, sticky="we", pady=4)
+        ttk.Button(top, text="Обзор", command=lambda: browse_root(root_var)).grid(row=0, column=2, padx=(6, 0), pady=4)
     top.columnconfigure(1, weight=1)
-    ttk.Button(top, text="Обзор", command=lambda: browse_root(root_var)).grid(row=0, column=2, padx=(6, 0), pady=4)
 
-    ttk.Label(top, text="Дата напыления:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
-    dep_date_var = tk.StringVar(value=today_iso())
-    ttk.Entry(top, textvariable=dep_date_var, width=20).grid(row=1, column=1, sticky="w", pady=4)
+    config = app.series.config if edit_mode and app.series is not None else {}
+    ttk.Label(top, text="Дата напыления:").grid(row=row_offset + 1, column=0, sticky="w", padx=(0, 6), pady=4)
+    dep_date_var = tk.StringVar(value=str(config.get("deposition_date") or today_iso()))
+    ttk.Entry(top, textvariable=dep_date_var, width=20).grid(row=row_offset + 1, column=1, sticky="w", pady=4)
 
-    ttk.Label(top, text="Кодовое слово:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=4)
-    keyword_var = tk.StringVar()
-    ttk.Entry(top, textvariable=keyword_var, width=30).grid(row=2, column=1, sticky="w", pady=4)
+    ttk.Label(top, text="Кодовое слово:").grid(row=row_offset + 2, column=0, sticky="w", padx=(0, 6), pady=4)
+    keyword_var = tk.StringVar(value=str(config.get("keyword") or ""))
+    ttk.Entry(top, textvariable=keyword_var, width=30).grid(row=row_offset + 2, column=1, sticky="w", pady=4)
 
-    quarter_frame = ttk.LabelFrame(main, text="Названия четвертей")
-    quarter_frame.pack(fill="x", pady=(4, 10))
-    quarter_vars = {str(q): tk.StringVar(value="Q") for q in range(1, 5)}
-    for q in range(1, 5):
-        ttk.Label(quarter_frame, text=f"Четверть {q}:").grid(row=q - 1, column=0, sticky="e", padx=(8, 6), pady=4)
-        ttk.Entry(quarter_frame, textvariable=quarter_vars[str(q)], width=16).grid(row=q - 1, column=1, sticky="w", pady=4)
+    setup_frame = ttk.LabelFrame(main, text="Журнал серии: четверти, цвет и короткое описание")
+    setup_frame.pack(fill="x", pady=(4, 10))
+    setup_frame.columnconfigure(0, weight=1)
+    series_color_var = tk.StringVar(value=led_color_label(quarter_led_color(config, 1)))
+    color_bar = ttk.Frame(setup_frame)
+    color_bar.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 0))
+    ttk.Label(color_bar, text="Цвет светодиодов серии:").pack(side="left", padx=(0, 8))
+    ttk.Combobox(
+        color_bar,
+        textvariable=series_color_var,
+        values=list(LED_COLOR_LABELS.values()),
+        state="readonly",
+        width=16,
+    ).pack(side="left")
+    holder_canvas = tk.Canvas(setup_frame, width=930, height=560, background="white", highlightthickness=1, highlightbackground="#D0D7DE")
+    holder_canvas.grid(row=1, column=0, sticky="ew", padx=10, pady=(8, 8))
+
+    quarter_vars = build_quarter_input_vars(config)
+    layout = build_holder_layout(930, 560)
+    for q in [2, 1, 3, 4]:
+        info = layout[q]
+        x, y = info["entry_xy"]
+        entry = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["base"], width=9)
+        holder_canvas.create_window(x, y, window=entry, anchor="w", tags=("controls",))
+        desc = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["description"], width=18)
+        holder_canvas.create_window(x, y + 28 if q in {1, 2} else y - 28, window=desc, anchor="w", tags=("controls",))
+
+    def refresh_holder(*_args) -> None:
+        render_series_setup_holder(holder_canvas, quarter_vars, series_color_var)
+
+    for q_vars in quarter_vars.values():
+        q_vars["base"].trace_add("write", refresh_holder)
+        q_vars["description"].trace_add("write", refresh_holder)
+    series_color_var.trace_add("write", refresh_holder)
+    refresh_holder()
+
+    ttk.Label(
+        setup_frame,
+        text="В поле четверти задается короткая база, например C. Цвет добавляет последнюю букву: C + красный = CR.",
+        foreground="#555555",
+        wraplength=880,
+    ).grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
 
     bottom = ttk.Frame(main)
     bottom.pack(fill="x", pady=(12, 0))
-    ttk.Button(bottom, text="Назад", command=app.show_start_screen).pack(side="left")
+    back_command = app.show_measurement_menu if edit_mode else app.show_start_screen
+    ttk.Button(bottom, text="Назад", command=back_command).pack(side="left")
+    button_text = "Сохранить настройки серии" if edit_mode else "Создать серию"
     ttk.Button(
         bottom,
-        text="Создать серию",
-        command=lambda: create_series(app, root_var, dep_date_var, keyword_var, quarter_vars),
+        text=button_text,
+        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars, series_color_var),
     ).pack(side="right")
 
 
@@ -216,24 +283,101 @@ def browse_root(root_var: tk.StringVar) -> None:
         root_var.set(folder)
 
 
-def create_series(
+def build_quarter_input_vars(config: Dict[str, Any]) -> Dict[str, Dict[str, tk.StringVar]]:
+    result: Dict[str, Dict[str, tk.StringVar]] = {}
+    for q in range(1, 5):
+        result[str(q)] = {
+            "base": tk.StringVar(value=quarter_base(config, q) if config else "Q"),
+            "description": tk.StringVar(value=quarter_description(config, q)),
+        }
+    return result
+
+
+def collect_quarter_payload(quarter_vars: Dict[str, Dict[str, tk.StringVar]], series_color_var: tk.StringVar):
+    quarter_bases = {str(q): quarter_vars[str(q)]["base"].get().strip() or "Q" for q in range(1, 5)}
+    quarter_descriptions = {str(q): quarter_vars[str(q)]["description"].get().strip() for q in range(1, 5)}
+    series_color = led_color_from_label(series_color_var.get())
+    quarter_led_colors = {str(q): series_color for q in range(1, 5)}
+    return quarter_bases, quarter_descriptions, quarter_led_colors
+
+
+def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[str, tk.StringVar]], series_color_var: tk.StringVar) -> None:
+    canvas.delete("drawing")
+    width = int(canvas.cget("width"))
+    height = int(canvas.cget("height"))
+    layout = build_holder_layout(width, height)
+    canvas.create_text(width / 2, 22, text="Предпросмотр имен пикселей в журнале серии", fill="#17345F", font=("Segoe UI", 10, "bold"), tags=("drawing",))
+
+    config = {
+        "quarter_bases": {str(q): quarter_vars[str(q)]["base"].get().strip() or "Q" for q in range(1, 5)},
+        "series_led_color": led_color_from_label(series_color_var.get()),
+        "quarter_led_colors": {str(q): led_color_from_label(series_color_var.get()) for q in range(1, 5)},
+        "quarter_descriptions": {str(q): quarter_vars[str(q)]["description"].get().strip() for q in range(1, 5)},
+    }
+    for q in [2, 1, 3, 4]:
+        info = layout[q]
+        code = quarter_code(config, q)
+        desc = quarter_description(config, q)
+        canvas.create_text(*info["number_xy"], text=str(q), font=("Segoe UI", 24, "bold"), fill="#17345F", tags=("drawing",))
+        ex, ey = info["entry_xy"]
+        canvas.create_text(ex + 138, ey, text=f"-> {code}", anchor="w", font=("Segoe UI", 8, "bold"), fill="#0B61A4", tags=("drawing",))
+        if desc:
+            canvas.create_text(ex + 138, ey + 18, text=desc, anchor="w", font=("Segoe UI", 8), fill="#555555", tags=("drawing",))
+        for substrate in info["substrates"]:
+            x, y, w, h = substrate["x"], substrate["y"], substrate["w"], substrate["h"]
+            substrate_id = f"{code}{q}_{substrate['substrate_number']}"
+            canvas.create_text(x + w / 2, y - 10, text=substrate_id, font=("Segoe UI", 8, "bold"), fill="#17345F", tags=("drawing",))
+            canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", outline="#17345F", width=2, tags=("drawing",))
+            for pix in range(1, 5):
+                px, py, pw, ph = setup_pixel_rect(x, y, w, h, pix)
+                canvas.create_rectangle(px, py, px + pw, py + ph, fill="#FFFFFF", outline="#808080", tags=("drawing",))
+                canvas.create_text(px + pw / 2, py + ph / 2, text=str(pix), font=("Segoe UI", 7), tags=("drawing",))
+            canvas.create_text(x + w / 2, y + h + 12, text=f"{substrate_id}_1 ... _4", font=("Segoe UI", 7), fill="#555555", tags=("drawing",))
+
+
+def setup_pixel_rect(x: float, y: float, w: float, h: float, pixel_number: int):
+    pad_x = 10
+    pad_top = 13
+    pad_bottom = 8
+    gap = 5
+    inner_w = (w - 2 * pad_x - gap) / 2
+    inner_h = (h - pad_top - pad_bottom - gap) / 2
+    row = 0 if pixel_number in {1, 2} else 1
+    col = 0 if pixel_number in {1, 3} else 1
+    return x + pad_x + col * (inner_w + gap), y + pad_top + row * (inner_h + gap), inner_w, inner_h
+
+
+def save_series_settings(
     app,
+    edit_mode: bool,
     root_var: tk.StringVar,
     dep_date_var: tk.StringVar,
     keyword_var: tk.StringVar,
-    quarter_vars: Dict[str, tk.StringVar],
+    quarter_vars: Dict[str, Dict[str, tk.StringVar]],
+    series_color_var: tk.StringVar,
 ) -> None:
     try:
-        quarter_names = {str(q): quarter_vars[str(q)].get().strip() or f"Q{q}" for q in range(1, 5)}
-        app.app_settings["default_root"] = root_var.get()
-        save_app_settings(app.app_settings)
-        app.series = SeriesManager.create_new(
-            Path(root_var.get()),
-            dep_date_var.get().strip() or today_iso(),
-            keyword_var.get().strip(),
-            quarter_names,
-        )
-        app.log(f"Создана серия: {app.series.series_folder}")
+        quarter_bases, quarter_descriptions, quarter_led_colors = collect_quarter_payload(quarter_vars, series_color_var)
+        deposition_date = dep_date_var.get().strip() or today_iso()
+        keyword = keyword_var.get().strip()
+        if edit_mode:
+            if app.series is None:
+                raise ValueError("Серия не открыта")
+            app.series.update_config(deposition_date, keyword, quarter_bases, quarter_descriptions, quarter_led_colors)
+            app.log(f"Обновлены настройки серии: {app.series.series_folder}")
+        else:
+            app.app_settings["default_root"] = root_var.get()
+            save_app_settings(app.app_settings)
+            app.series = SeriesManager.create_new(
+                Path(root_var.get()),
+                deposition_date,
+                keyword,
+                quarter_bases,
+                quarter_descriptions,
+                quarter_led_colors,
+            )
+            app.log(f"Создана серия: {app.series.series_folder}")
         app.show_measurement_menu()
     except Exception as exc:
-        messagebox.showerror("Не удалось создать серию", str(exc))
+        title = "Не удалось сохранить серию" if edit_mode else "Не удалось создать серию"
+        messagebox.showerror(title, str(exc))

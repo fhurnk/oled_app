@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import traceback
+from dataclasses import replace
 from tkinter import messagebox, simpledialog, ttk
 from typing import Any, Dict, List, Optional
 
@@ -115,19 +116,20 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
         messagebox.showwarning("Пиксель", "Пиксель не выбран", parent=app)
         return None
 
+    pixel_params = params_for_pixel_luminance(app, pixel_id, params)
     output_dir = ensure_measurement_folder(
         app.series.series_folder,
         "IVL",
         pixel_id,
         app.series.journal.get_pixel(pixel_id),
     )
-    progress = IVLProgressWindow(app, pixel_id, params)
+    progress = IVLProgressWindow(app, pixel_id, pixel_params)
     try:
         progress.set_status(f"Пиксель {pixel_id}: идет съемка ВАЯХ")
         result = run_ivl_measurement(
             pixel_id,
             output_dir,
-            params,
+            pixel_params,
             app.log,
             app.app_settings,
             progress_callback=progress.add_point,
@@ -146,7 +148,7 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
             pixel_id,
             result["status"],
             result["file"],
-            params.as_dict(),
+            pixel_params.as_dict(),
             notes=result.get("ivl_diagnosis", ""),
             opening_voltage=opening,
             max_current_mA=result.get("max_current_mA"),
@@ -189,6 +191,13 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
         progress.close()
         messagebox.showerror("Ошибка ВАЯХ", str(exc), parent=app)
         return None
+
+
+def params_for_pixel_luminance(app, pixel_id: str, params: IVLParams) -> IVLParams:
+    if app.series is None:
+        return params
+    coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
+    return replace(params, luminance_cd_m2_per_uA=coeff)
 
 
 def pixel_info_from_journal(app, pixel_id: str) -> Optional[Dict[str, Any]]:

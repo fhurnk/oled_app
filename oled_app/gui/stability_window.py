@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import traceback
+from dataclasses import replace
 from tkinter import messagebox, simpledialog, ttk
 from typing import Dict, Optional
 
@@ -71,6 +72,7 @@ def open_stability_window(app) -> None:
             if voltage_start is None:
                 return
             params = build_stability_params(app, vars_, target_current, voltage_start)
+            params = params_for_pixel_luminance(app, pid, params)
             app.save_measurement_defaults("stability", {
                 "current_setpoint_mA": vars_["Current setpoint, mA"].get(),
                 "voltage_limit_V": vars_["Voltage limit, V"].get(),
@@ -151,3 +153,10 @@ def build_stability_params(
         pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
         luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
     )
+
+
+def params_for_pixel_luminance(app, pixel_id: str, params: StabilityParams) -> StabilityParams:
+    if app.series is None:
+        return params
+    coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
+    return replace(params, luminance_cd_m2_per_uA=coeff)
