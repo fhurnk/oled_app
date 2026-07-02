@@ -244,10 +244,11 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     for q in [2, 1, 3, 4]:
         info = layout[q]
         x, y = info["entry_xy"]
+        control_y = y if q in {1, 2} else y + 54
         entry = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["base"], width=9)
-        holder_canvas.create_window(x, y, window=entry, anchor="w", tags=("controls",))
+        holder_canvas.create_window(x, control_y, window=entry, anchor="w", tags=("controls",))
         desc = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["description"], width=18)
-        holder_canvas.create_window(x, y + 28 if q in {1, 2} else y - 28, window=desc, anchor="w", tags=("controls",))
+        holder_canvas.create_window(x, control_y + 28, window=desc, anchor="w", tags=("controls",))
 
     def refresh_holder(*_args) -> None:
         render_series_setup_holder(holder_canvas, quarter_vars, series_color_var)
@@ -320,9 +321,10 @@ def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[s
         desc = quarter_description(config, q)
         canvas.create_text(*info["number_xy"], text=str(q), font=("Segoe UI", 24, "bold"), fill="#17345F", tags=("drawing",))
         ex, ey = info["entry_xy"]
-        canvas.create_text(ex + 138, ey, text=f"-> {code}", anchor="w", font=("Segoe UI", 8, "bold"), fill="#0B61A4", tags=("drawing",))
+        label_y = ey if q in {1, 2} else ey + 54
+        canvas.create_text(ex + 138, label_y, text=f"-> {code}", anchor="w", font=("Segoe UI", 8, "bold"), fill="#0B61A4", tags=("drawing",))
         if desc:
-            canvas.create_text(ex + 138, ey + 18, text=desc, anchor="w", font=("Segoe UI", 8), fill="#555555", tags=("drawing",))
+            canvas.create_text(ex + 138, label_y + 18, text=desc, anchor="w", font=("Segoe UI", 8), fill="#555555", tags=("drawing",))
         for substrate in info["substrates"]:
             x, y, w, h = substrate["x"], substrate["y"], substrate["w"], substrate["h"]
             substrate_id = f"{code}{q}_{substrate['substrate_number']}"
@@ -332,7 +334,6 @@ def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[s
                 px, py, pw, ph = setup_pixel_rect(x, y, w, h, pix)
                 canvas.create_rectangle(px, py, px + pw, py + ph, fill="#FFFFFF", outline="#808080", tags=("drawing",))
                 canvas.create_text(px + pw / 2, py + ph / 2, text=str(pix), font=("Segoe UI", 7), tags=("drawing",))
-            canvas.create_text(x + w / 2, y + h + 12, text=f"{substrate_id}_1 ... _4", font=("Segoe UI", 7), fill="#555555", tags=("drawing",))
 
 
 def setup_pixel_rect(x: float, y: float, w: float, h: float, pixel_number: int):
