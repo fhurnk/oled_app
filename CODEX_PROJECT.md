@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.4`
+- Current app version: `v1.7.5`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. The current modularization follow-up release is `v1.7.4`.
+When changing user-visible behavior, update all version references in the same commit. The current raw CSV pipeline release is `v1.7.5`.
 
 ## Main Entry Points
 
@@ -27,6 +27,7 @@ When changing user-visible behavior, update all version references in the same c
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.
+- Raw CSV measurement helpers now live in `oled_app/measurements/raw_io.py`; IVL, Spectrum, and Stability post-processing live in `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, and `oled_app/processing/stability_results.py`.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular application.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular application.
 - Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
@@ -36,9 +37,9 @@ During modularization, do not edit `oled_measurement_app_v2_5.py` unless the use
 
 ## Measurement Workflows
 
-- IVL / ВАЯХ: modular workflow is in `oled_app/measurements/ivl.py` and the modular GUI window is in `oled_app/gui/ivl_window.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Stability: modular workflow is in `oled_app/measurements/stability.py` and the modular GUI window is in `oled_app/gui/stability_window.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
+- IVL / ВАЯХ: modular workflow is in `oled_app/measurements/ivl.py` and the modular GUI window is in `oled_app/gui/ivl_window.py`; it writes raw CSV during measurement and builds the compatible final XLSX through `oled_app/processing/ivl_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
+- Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; it writes raw summary/spectra CSV during measurement and builds the compatible final XLSX through `oled_app/processing/spectrum_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
+- Stability: modular workflow is in `oled_app/measurements/stability.py` and the modular GUI window is in `oled_app/gui/stability_window.py`; it writes raw CSV during measurement and builds the compatible final XLSX through `oled_app/processing/stability_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Report: report builder logic is in `oled_app/reports/origin_report.py`, and the modular GUI window is in `oled_app/gui/report_window.py`; it continues to run `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with selectable spectrum pixels and voltage grids.
 - Series journal: `series_journal.xlsx` inside each series folder.
 

@@ -1,6 +1,6 @@
 # OLED Measurement App
 
-Версия: `v1.7.4`
+Версия: `v1.7.5`
 
 Приложение для ведения серий измерений OLED-пикселей: ВАЯХ/IVL, спектры, стабильность, журнал серии и экспорт данных в Excel.
 
@@ -50,12 +50,15 @@ py -3 -m venv env
 - `CODEX_PROJECT.md` - краткая карта проекта для будущих чатов Codex.
 - `docs/project_manifest.json` - структурированные сведения о версии, файлах и release-workflow.
 - `docs/modularization_plan.md` - предрелизный план разбиения монолита на модули.
+- `docs/raw_csv_measurement_pipeline_plan.md` - план перехода измерений на raw CSV во время съемки и XLSX после обработки.
 - `CHANGELOG.md` - история обновлений.
 - `AGENTS.md` - инструкции для будущих чатов Codex по версиям, журналу и релизам.
 - `scripts/create_github_release.py` - создание GitHub Release из файла версии.
 - `scripts/build_report_origin_workbook.py` - совместимый CLI-вход подготовки Origin-отчета по серии измерений.
 - `oled_app/reports/origin_report.py` - модульная логика подготовки Origin-отчета.
 - `oled_app/measurements/ivl.py` - модульная логика ВАЯХ/IVL для нового приложения.
+- `oled_app/measurements/raw_io.py` - общая запись raw CSV и политика хранения промежуточных файлов.
+- `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, `oled_app/processing/stability_results.py` - сборка итоговых IVL, Spectrum и Stability `.xlsx` из raw CSV.
 - `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового приложения.
 - `oled_app/measurements/stability.py` - модульная логика измерения стабильности для нового приложения.
 - `oled_app/gui/widgets.py`, `oled_app/gui/progress.py` - общие GUI helpers и progress windows для нового приложения.
@@ -71,4 +74,4 @@ py -3 -m venv env
 - `MIDDLE` - функциональное обновление среднего масштаба.
 - `MINOR` - небольшая правка или точечное добавление.
 
-Текущая версия: `v1.7.4`.
+Текущая версия: `v1.7.5`.

@@ -2,27 +2,26 @@
 
 from __future__ import annotations
 
-import gc
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
-from openpyxl import Workbook
-from openpyxl.chart import Reference, ScatterChart, Series
-from openpyxl.chart.axis import ChartLines
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils import get_column_letter
 
 from oled_app.hardware import prepare_hardware_environment, safe_shutdown_smu
+from oled_app.measurements.raw_io import RawCsvWriter, cleanup_raw_files, raw_csv_path
+from oled_app.processing.spectrum_results import (
+    SPECTRUM_SPECTRA_RAW_HEADERS,
+    SPECTRUM_SUMMARY_RAW_HEADERS,
+    build_spectrum_workbook_from_raw_csv,
+    create_spectrum_workbook as write_spectrum_workbook,
+)
 from oled_app.utils import (
-    autosize_columns,
     current_density_mA_cm2,
     luminance_cd_m2,
     now_str,
     safe_filename,
-    style_header_row,
     timestamp_for_file,
 )
 
@@ -366,148 +365,8 @@ class SpectrumHelper:
         return t, wl, inten, dark
 
 
-def create_spectrum_workbook(filename: Path, pixel_id: str, params: SpectrumParams, voltage_array: Iterable[float]) -> Workbook:
-    filename.parent.mkdir(parents=True, exist_ok=True)
-    wb = Workbook()
-    ws_sum = wb.active
-    ws_sum.title = "Сводка"
-    ws_spec = wb.create_sheet("Спектры")
-    ws_norm = wb.create_sheet("Processed counts per s")
-    ws_raw = wb.create_sheet("Raw spectra")
-    ws_dark = wb.create_sheet("Dark corrected")
-    ws_baseline = wb.create_sheet("Baseline")
-    ws_desc = wb.create_sheet("Описание полей")
-
-    ws_sum["A1"] = "Спектро-электронное сканирование OLED"
-    ws_sum["A1"].font = Font(bold=True, size=14)
-    meta = [
-        ("Pixel", pixel_id),
-        ("Created", now_str()),
-        ("Voltage range", f"{params.voltage_start}-{params.voltage_end} В, step {params.voltage_step} В"),
-        ("Opening voltage stored (V)", params.opening_voltage if params.opening_voltage is not None else ""),
-        ("Voltage start source", params.voltage_start_source),
-        ("Current limit", f"{params.current_limit_mA} мА"),
-        ("Pixel area (mm^2)", params.pixel_area_mm2),
-        ("Luminance conversion (cd/m^2 per uA)", params.luminance_cd_m2_per_uA),
-        ("LED_TYPE final", params.led_type),
-        ("Peak search for T_int", params.peak_search_mode_for_tint),
-        ("Derivative peak detection", "YES" if params.peak_detection_enabled else "NO"),
-        ("T_int range", f"{params.t_int_min_s*1000:.2f}-{params.t_int_max_s*1000:.2f} мс"),
-        ("Discard first scan after T_int change", "YES" if params.discard_first_scan_after_tint_change else "NO"),
-        ("Baseline correction", "YES" if params.baseline_correction_enabled else "NO"),
-        ("Saved intensity units", "Спектры: raw counts минус фон; Processed counts per s: то же деленное на T_int"),
-    ]
-    for idx, (key, value) in enumerate(meta, start=3):
-        ws_sum.cell(row=idx, column=1, value=key).font = Font(bold=True)
-        ws_sum.cell(row=idx, column=2, value=value)
-
-    headers = [
-        "Point",
-        "V set (V)",
-        "V LED measured (V)",
-        "I LED (mA)",
-        "J LED (mA/cm^2)",
-        "V photodiode measured (V)",
-        "I photodiode (uA)",
-        "Luminance (cd/m^2)",
-        "T_int saved spectrum (ms)",
-        "Peak (nm)",
-        "Max intensity processed (counts)",
-        "FWHM (nm)",
-        "Status",
-        "Spectra column",
-        "Peaks detected",
-        "Peaks nm",
-        "Background mean raw counts",
-        "Background region nm",
-    ]
-    header_row = 21
-    for column, header in enumerate(headers, start=1):
-        ws_sum.cell(row=header_row, column=column, value=header)
-    style_header_row(ws_sum, header_row, 1, len(headers))
-    ws_sum.freeze_panes = f"A{header_row + 1}"
-
-    meta_labels = [
-        "Название столбца",
-        "Point",
-        "V set (V)",
-        "V LED measured (V)",
-        "I LED (mA)",
-        "J LED (mA/cm^2)",
-        "V photodiode measured (V)",
-        "I photodiode (uA)",
-        "Luminance (cd/m^2)",
-        "T_int saved spectrum (ms)",
-        "Peak (nm)",
-        "Max intensity processed (counts/s)",
-        "FWHM (nm)",
-        "Status",
-        "Comment",
-        "Peaks detected",
-        "Peaks nm",
-        "Background mean raw counts",
-        "Background region nm",
-    ]
-    for row, label in enumerate(meta_labels, start=1):
-        ws_spec.cell(row=row, column=1, value=label).font = Font(bold=True)
-        ws_spec.cell(row=row, column=1).fill = PatternFill("solid", fgColor="E2F0D9")
-
-    data_header_row = 20
-    ws_spec.cell(row=data_header_row, column=1, value="Wavelength (nm)").font = Font(bold=True)
-    ws_spec.cell(row=data_header_row, column=1).fill = PatternFill("solid", fgColor="D9E1F2")
-    for idx, voltage in enumerate(voltage_array, start=1):
-        col = idx + 1
-        ws_spec.cell(row=1, column=col, value=f"Point {idx}: {float(voltage):.3f} V")
-        ws_spec.cell(row=2, column=col, value=idx)
-        ws_spec.cell(row=3, column=col, value=float(voltage))
-        ws_spec.cell(row=data_header_row, column=col, value=f"Intensity point {idx}, counts corrected")
-        ws_spec.cell(row=data_header_row, column=col).font = Font(bold=True)
-        ws_spec.cell(row=data_header_row, column=col).fill = PatternFill("solid", fgColor="D9E1F2")
-
-    ws_spec.freeze_panes = f"B{data_header_row + 1}"
-    extra_sheets = [
-        (ws_norm, "Processed counts per s"),
-        (ws_raw, "Raw counts"),
-        (ws_dark, "Dark-corrected counts"),
-        (ws_baseline, "Background mean counts"),
-    ]
-    for extra_ws, data_label in extra_sheets:
-        for row, label in enumerate(meta_labels, start=1):
-            extra_ws.cell(row=row, column=1, value=label).font = Font(bold=True)
-            extra_ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="E2F0D9")
-        extra_ws.cell(row=data_header_row, column=1, value="Wavelength (nm)").font = Font(bold=True)
-        extra_ws.cell(row=data_header_row, column=1).fill = PatternFill("solid", fgColor="D9E1F2")
-        for idx, voltage in enumerate(voltage_array, start=1):
-            col = idx + 1
-            extra_ws.cell(row=1, column=col, value=f"Point {idx}: {float(voltage):.3f} V")
-            extra_ws.cell(row=2, column=col, value=idx)
-            extra_ws.cell(row=3, column=col, value=float(voltage))
-            extra_ws.cell(row=data_header_row, column=col, value=f"{data_label} point {idx}")
-            extra_ws.cell(row=data_header_row, column=col).font = Font(bold=True)
-            extra_ws.cell(row=data_header_row, column=col).fill = PatternFill("solid", fgColor="D9E1F2")
-        extra_ws.freeze_panes = f"B{data_header_row + 1}"
-
-    ws_desc.append(["Лист", "Поле", "Что означает"])
-    style_header_row(ws_desc, 1, 1, 3)
-    desc_rows = [
-        ("Сводка", "T_int saved spectrum", "Время интегрирования именно того спектра, который записан в столбец."),
-        ("Сводка", "Peaks detected / Peaks nm", "Заполняется только если включен флажок поиска пиков производными."),
-        ("Спектры", "Intensity", "Raw counts минус среднее значение фона из найденного плоского участка raw-спектра, counts."),
-        ("Processed counts per s", "Processed counts/s", "Копия обработанного спектра, деленная на время интегрирования."),
-        ("Raw spectra", "Raw counts", "Сырые counts напрямую со спектрометра."),
-        ("Dark corrected", "Dark-corrected counts", "Диагностический лист: Raw минус dark spectrum, если dark включен; основная обработка его не использует."),
-        ("Baseline", "Background mean counts", "Константный уровень фона: среднее значение найденного плоского участка raw-спектра."),
-        ("Спектры", "Строки 1-15", "Метаданные каждого спектра."),
-        ("Спектры", "Строка 21+", "Длины волн и интенсивности."),
-        ("Важно", "Первый спектр после смены T_int", "Сбрасывается, чтобы не записать старый буфер спектрометра."),
-    ]
-    for row in desc_rows:
-        ws_desc.append(row)
-
-    for ws in wb.worksheets:
-        autosize_columns(ws, max_width=45)
-    wb.save(filename)
-    return wb
+def create_spectrum_workbook(filename: Path, pixel_id: str, params: SpectrumParams, voltage_array: Iterable[float]) -> Any:
+    return write_spectrum_workbook(filename, pixel_id, params, voltage_array)
 
 
 def run_spectrum_measurement(
@@ -529,16 +388,12 @@ def run_spectrum_measurement(
     output_dir.mkdir(parents=True, exist_ok=True)
     voltage_array = np.arange(params.voltage_start, params.voltage_end + params.voltage_step / 2, params.voltage_step)
     voltage_array = np.round(voltage_array, 6)
-    filename = output_dir / f"SPECTRUM_{safe_filename(pixel_id)}_{timestamp_for_file()}.xlsx"
-    wb = create_spectrum_workbook(filename, pixel_id, params, voltage_array)
-    ws_sum = wb["Сводка"]
-    ws_spec = wb["Спектры"]
-    ws_norm = wb["Processed counts per s"]
-    ws_raw = wb["Raw spectra"]
-    ws_dark = wb["Dark corrected"]
-    ws_baseline = wb["Baseline"]
-    summary_header_row = 21
-    spectra_data_start = 21
+    measurement_timestamp = timestamp_for_file()
+    file_stem = f"SPECTRUM_{safe_filename(pixel_id)}_{measurement_timestamp}"
+    filename = output_dir / f"{file_stem}.xlsx"
+    summary_raw_file = raw_csv_path(output_dir, f"{file_stem}_summary_raw.csv", app_settings)
+    spectra_raw_file = raw_csv_path(output_dir, f"{file_stem}_spectra_raw.csv", app_settings)
+    log(f"Raw CSV спектров: {summary_raw_file.name}, {spectra_raw_file.name}")
 
     final_status = "FAILED"
     best_spectrum_metrics = {
@@ -547,224 +402,176 @@ def run_spectrum_measurement(
         "spectrum_max_intensity": None,
     }
 
-    with xtralien.Device(params.com_port) as smu:
-        try:
-            smu.smu1.set.enabled(True, response=0)
-            smu.smu2.set.enabled(True, response=0)
-            try:
-                smu.smu2.set.range(params.photodiode_range, response=0)
-            except Exception:
-                pass
-            smu.smu1.set.voltage(0, response=0)
-            smu.smu2.set.voltage(params.photodiode_bias_V, response=0)
-            time.sleep(0.3)
+    with RawCsvWriter(summary_raw_file, SPECTRUM_SUMMARY_RAW_HEADERS) as summary_writer:
+        with RawCsvWriter(spectra_raw_file, SPECTRUM_SPECTRA_RAW_HEADERS) as spectra_writer:
+            with xtralien.Device(params.com_port) as smu:
+                try:
+                    smu.smu1.set.enabled(True, response=0)
+                    smu.smu2.set.enabled(True, response=0)
+                    try:
+                        smu.smu2.set.range(params.photodiode_range, response=0)
+                    except Exception:
+                        pass
+                    smu.smu1.set.voltage(0, response=0)
+                    smu.smu2.set.voltage(params.photodiode_bias_V, response=0)
+                    time.sleep(0.3)
 
-            for idx, voltage in enumerate(voltage_array, start=1):
-                log(f"\nСпектр {pixel_id}: точка {idx}/{len(voltage_array)}, V={voltage:.3f} В")
-                smu.smu1.set.voltage(float(voltage), response=0)
-                smu.smu2.set.voltage(params.photodiode_bias_V, response=0)
-                time.sleep(params.settle_time_voltage_s)
+                    for idx, voltage in enumerate(voltage_array, start=1):
+                        log(f"\nСпектр {pixel_id}: точка {idx}/{len(voltage_array)}, V={voltage:.3f} В")
+                        smu.smu1.set.voltage(float(voltage), response=0)
+                        smu.smu2.set.voltage(params.photodiode_bias_V, response=0)
+                        time.sleep(params.settle_time_voltage_s)
 
-                v_led, i_led = smu.smu1.measure()[0]
-                v_pd, i_pd = smu.smu2.measure()[0]
-                i_led_mA = i_led * 1000.0
-                i_pd_uA = -i_pd * 1_000_000.0
-                j_led = current_density_mA_cm2(i_led_mA, params.pixel_area_mm2)
-                lum = luminance_cd_m2(i_pd_uA, params.luminance_cd_m2_per_uA)
+                        v_led, i_led = smu.smu1.measure()[0]
+                        v_pd, i_pd = smu.smu2.measure()[0]
+                        i_led_mA = i_led * 1000.0
+                        i_pd_uA = -i_pd * 1_000_000.0
+                        j_led = current_density_mA_cm2(i_led_mA, params.pixel_area_mm2)
+                        lum = luminance_cd_m2(i_pd_uA, params.luminance_cd_m2_per_uA)
 
-                row = summary_header_row + idx
-                spectra_col = idx + 1
-                if i_led_mA >= params.current_limit_mA:
-                    status = "NEEDS_REVIEW"
-                    log(f"  Стоп: ток {i_led_mA:.3f} мА >= {params.current_limit_mA:.3f} мА")
-                    summary_values = [
-                        idx,
-                        float(voltage),
-                        v_led,
-                        i_led_mA,
-                        j_led,
-                        v_pd,
-                        i_pd_uA,
-                        lum,
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        status,
-                        get_column_letter(spectra_col),
-                        0,
-                        "",
-                        "",
-                        "",
-                    ]
-                    for column, value in enumerate(summary_values, start=1):
-                        ws_sum.cell(row=row, column=column, value=value)
-                    ws_spec.cell(row=12, column=spectra_col, value=status)
-                    final_status = status
-                    wb.save(filename)
-                    break
+                        if i_led_mA >= params.current_limit_mA:
+                            status = "NEEDS_REVIEW"
+                            log(f"  Стоп: ток {i_led_mA:.3f} мА >= {params.current_limit_mA:.3f} мА")
+                            summary_writer.writerow(
+                                {
+                                    "point": idx,
+                                    "date_time": now_str(),
+                                    "voltage_set_V": float(voltage),
+                                    "voltage_led_measured_V": float(v_led),
+                                    "current_led_A": float(i_led),
+                                    "current_led_mA": float(i_led_mA),
+                                    "current_density_mA_cm2": j_led,
+                                    "voltage_photodiode_measured_V": float(v_pd),
+                                    "current_photodiode_A": float(i_pd),
+                                    "current_photodiode_uA": float(i_pd_uA),
+                                    "luminance_cd_m2": lum,
+                                    "status": status,
+                                    "peaks_detected": 0,
+                                }
+                            )
+                            final_status = status
+                            break
 
-                opt = helper.optimize_integration_time(spec)
-                if opt is None:
-                    status = "FAILED"
-                    t_int = params.t_int_initial_s
-                    summary_values = [
-                        idx,
-                        float(voltage),
-                        v_led,
-                        i_led_mA,
-                        j_led,
-                        v_pd,
-                        i_pd_uA,
-                        lum,
-                        t_int * 1000,
-                        "-",
-                        "-",
-                        "-",
-                        status,
-                        get_column_letter(spectra_col),
-                        0,
-                        "",
-                        "",
-                        "",
-                    ]
-                    for column, value in enumerate(summary_values, start=1):
-                        ws_sum.cell(row=row, column=column, value=value)
-                    final_status = status
-                    wb.save(filename)
-                    continue
+                        opt = helper.optimize_integration_time(spec)
+                        if opt is None:
+                            status = "FAILED"
+                            summary_writer.writerow(
+                                {
+                                    "point": idx,
+                                    "date_time": now_str(),
+                                    "voltage_set_V": float(voltage),
+                                    "voltage_led_measured_V": float(v_led),
+                                    "current_led_A": float(i_led),
+                                    "current_led_mA": float(i_led_mA),
+                                    "current_density_mA_cm2": j_led,
+                                    "voltage_photodiode_measured_V": float(v_pd),
+                                    "current_photodiode_A": float(i_pd),
+                                    "current_photodiode_uA": float(i_pd_uA),
+                                    "luminance_cd_m2": lum,
+                                    "integration_time_s": params.t_int_initial_s,
+                                    "status": status,
+                                    "peaks_detected": 0,
+                                }
+                            )
+                            final_status = status
+                            continue
 
-                t_int, wavelengths, spectrum, dark = opt
-                processed = helper.process_spectrum(wavelengths, spectrum, dark, t_int)
-                spectrum_to_save = processed["baseline_corrected"]
-                normalized_to_save = processed["normalized"]
-                raw_to_save = processed["raw"]
-                dark_to_save = processed["dark_corrected"]
-                baseline_to_save = processed["baseline"]
-                baseline_value = float(processed.get("baseline_value", 0.0))
-                baseline_region = processed.get("baseline_region", (float("nan"), float("nan")))
-                baseline_region_text = (
-                    f"{float(baseline_region[0]):.2f}-{float(baseline_region[1]):.2f}"
-                    if np.all(np.isfinite(np.asarray(baseline_region, dtype=np.float64)))
-                    else ""
-                )
-                peaks = processed["peaks"]
-
-                peak_int, peak_wl, fwhm, _, _, _, _, status = helper.analyze_quality(
-                    wavelengths,
-                    processed["baseline_corrected"],
-                    params.led_type,
-                )
-                if peaks:
-                    peak_int = peaks[0]["intensity"]
-                    peak_wl = peaks[0]["wavelength_nm"]
-                    fwhm = peaks[0]["fwhm_nm"]
-                if status not in {"SATURATED", "FAILED", "NO_PEAK"} and (
-                    helper.adaptive_initial_time_enabled or helper.last_optimization_started_saturated_at_10ms
-                ):
-                    previous_t = float(params.t_int_initial_s)
-                    params.t_int_initial_s = float(t_int)
-                    helper.adaptive_initial_time_enabled = True
-                    if helper.last_optimization_started_saturated_at_10ms:
-                        log(
-                            f"  Первая проба на 10 мс была saturated; следующее начальное T_int: "
-                            f"{params.t_int_initial_s*1000:.2f} мс вместо {previous_t*1000:.2f} мс"
+                        t_int, wavelengths, spectrum, dark = opt
+                        processed = helper.process_spectrum(wavelengths, spectrum, dark, t_int)
+                        spectrum_to_save = processed["baseline_corrected"]
+                        baseline_value = float(processed.get("baseline_value", 0.0))
+                        baseline_region = processed.get("baseline_region", (float("nan"), float("nan")))
+                        baseline_region_text = (
+                            f"{float(baseline_region[0]):.2f}-{float(baseline_region[1]):.2f}"
+                            if np.all(np.isfinite(np.asarray(baseline_region, dtype=np.float64)))
+                            else ""
                         )
-                peaks_nm = ", ".join(f"{peak['wavelength_nm']:.1f}" for peak in peaks)
-                if peak_int and (
-                    best_spectrum_metrics["spectrum_max_intensity"] is None
-                    or float(peak_int) > float(best_spectrum_metrics["spectrum_max_intensity"])
-                ):
-                    best_spectrum_metrics = {
-                        "spectrum_peak_count": len(peaks),
-                        "spectrum_peaks_nm": peaks_nm,
-                        "spectrum_max_intensity": float(peak_int),
-                    }
-                summary_values = [
-                    idx,
-                    float(voltage),
-                    round(float(v_led), 6),
-                    round(float(i_led_mA), 6),
-                    round(float(j_led), 6) if j_led is not None else "-",
-                    round(float(v_pd), 6),
-                    round(float(i_pd_uA), 6),
-                    round(float(lum), 6) if lum is not None else "-",
-                    round(float(t_int) * 1000, 3),
-                    round(float(peak_wl), 3) if peak_wl else "-",
-                    round(float(peak_int), 1) if peak_int else "-",
-                    round(float(fwhm), 3) if fwhm else "-",
-                    status,
-                    get_column_letter(spectra_col),
-                    len(peaks),
-                    peaks_nm,
-                    round(baseline_value, 3),
-                    baseline_region_text,
-                ]
-                for column, value in enumerate(summary_values, start=1):
-                    ws_sum.cell(row=row, column=column, value=value)
+                        peaks = processed["peaks"]
 
-                meta_values = [
-                    f"Point {idx}: {float(voltage):.3f} V",
-                    idx,
-                    float(voltage),
-                    round(float(v_led), 6),
-                    round(float(i_led_mA), 6),
-                    round(float(j_led), 6) if j_led is not None else "-",
-                    round(float(v_pd), 6),
-                    round(float(i_pd_uA), 6),
-                    round(float(lum), 6) if lum is not None else "-",
-                    round(float(t_int) * 1000, 3),
-                    round(float(peak_wl), 3) if peak_wl else "-",
-                    round(float(peak_int), 1) if peak_int else "-",
-                    round(float(fwhm), 3) if fwhm else "-",
-                    status,
-                    "OK: spectrum saved",
-                    len(peaks),
-                    peaks_nm,
-                    round(baseline_value, 3),
-                    baseline_region_text,
-                ]
-                for meta_row, value in enumerate(meta_values, start=1):
-                    ws_spec.cell(row=meta_row, column=spectra_col, value=value)
-                    ws_norm.cell(row=meta_row, column=spectra_col, value=value)
-                    ws_raw.cell(row=meta_row, column=spectra_col, value=value)
-                    ws_dark.cell(row=meta_row, column=spectra_col, value=value)
-                    ws_baseline.cell(row=meta_row, column=spectra_col, value=value)
+                        peak_int, peak_wl, fwhm, _, _, _, _, status = helper.analyze_quality(
+                            wavelengths,
+                            processed["baseline_corrected"],
+                            params.led_type,
+                        )
+                        if peaks:
+                            peak_int = peaks[0]["intensity"]
+                            peak_wl = peaks[0]["wavelength_nm"]
+                            fwhm = peaks[0]["fwhm_nm"]
+                        if status not in {"SATURATED", "FAILED", "NO_PEAK"} and (
+                            helper.adaptive_initial_time_enabled or helper.last_optimization_started_saturated_at_10ms
+                        ):
+                            previous_t = float(params.t_int_initial_s)
+                            params.t_int_initial_s = float(t_int)
+                            helper.adaptive_initial_time_enabled = True
+                            if helper.last_optimization_started_saturated_at_10ms:
+                                log(
+                                    f"  Первая проба на 10 мс была saturated; следующее начальное T_int: "
+                                    f"{params.t_int_initial_s*1000:.2f} мс вместо {previous_t*1000:.2f} мс"
+                                )
+                        peaks_nm = ", ".join(f"{peak['wavelength_nm']:.1f}" for peak in peaks)
+                        if peak_int and (
+                            best_spectrum_metrics["spectrum_max_intensity"] is None
+                            or float(peak_int) > float(best_spectrum_metrics["spectrum_max_intensity"])
+                        ):
+                            best_spectrum_metrics = {
+                                "spectrum_peak_count": len(peaks),
+                                "spectrum_peaks_nm": peaks_nm,
+                                "spectrum_max_intensity": float(peak_int),
+                            }
+                        summary_writer.writerow(
+                            {
+                                "point": idx,
+                                "date_time": now_str(),
+                                "voltage_set_V": float(voltage),
+                                "voltage_led_measured_V": float(v_led),
+                                "current_led_A": float(i_led),
+                                "current_led_mA": float(i_led_mA),
+                                "current_density_mA_cm2": j_led,
+                                "voltage_photodiode_measured_V": float(v_pd),
+                                "current_photodiode_A": float(i_pd),
+                                "current_photodiode_uA": float(i_pd_uA),
+                                "luminance_cd_m2": lum,
+                                "integration_time_s": float(t_int),
+                                "status": status,
+                                "peak_nm": float(peak_wl) if peak_wl else "",
+                                "peak_intensity_processed_counts": float(peak_int) if peak_int else "",
+                                "fwhm_nm": float(fwhm) if fwhm else "",
+                                "peaks_detected": len(peaks),
+                                "peaks_nm": peaks_nm,
+                                "baseline_value_raw_counts": baseline_value,
+                                "baseline_region_nm": baseline_region_text,
+                            }
+                        )
 
-                for data_row, wavelength in enumerate(wavelengths, start=spectra_data_start):
-                    if ws_spec.cell(row=data_row, column=1).value is None:
-                        ws_spec.cell(row=data_row, column=1, value=round(float(wavelength), 2))
-                    if ws_norm.cell(row=data_row, column=1).value is None:
-                        ws_norm.cell(row=data_row, column=1, value=round(float(wavelength), 2))
-                    if ws_raw.cell(row=data_row, column=1).value is None:
-                        ws_raw.cell(row=data_row, column=1, value=round(float(wavelength), 2))
-                    if ws_dark.cell(row=data_row, column=1).value is None:
-                        ws_dark.cell(row=data_row, column=1, value=round(float(wavelength), 2))
-                    if ws_baseline.cell(row=data_row, column=1).value is None:
-                        ws_baseline.cell(row=data_row, column=1, value=round(float(wavelength), 2))
-                for data_row, intensity in enumerate(spectrum_to_save, start=spectra_data_start):
-                    ws_spec.cell(row=data_row, column=spectra_col, value=round(float(intensity), 3))
-                for data_row, intensity in enumerate(normalized_to_save, start=spectra_data_start):
-                    ws_norm.cell(row=data_row, column=spectra_col, value=round(float(intensity), 3))
-                for data_row, intensity in enumerate(raw_to_save, start=spectra_data_start):
-                    ws_raw.cell(row=data_row, column=spectra_col, value=round(float(intensity), 3))
-                for data_row, intensity in enumerate(dark_to_save, start=spectra_data_start):
-                    ws_dark.cell(row=data_row, column=spectra_col, value=round(float(intensity), 3))
-                for data_row, intensity in enumerate(baseline_to_save, start=spectra_data_start):
-                    ws_baseline.cell(row=data_row, column=spectra_col, value=round(float(intensity), 3))
+                        dark_array = np.asarray(dark, dtype=np.float64) if dark is not None else None
+                        for wavelength, raw_value, dark_value in zip(
+                            wavelengths,
+                            processed["raw"],
+                            dark_array if dark_array is not None else np.full_like(processed["raw"], np.nan),
+                        ):
+                            spectra_writer.writerow(
+                                {
+                                    "point": idx,
+                                    "voltage_set_V": float(voltage),
+                                    "integration_time_s": float(t_int),
+                                    "wavelength_nm": float(wavelength),
+                                    "raw_counts": float(raw_value),
+                                    "dark_counts": "" if not np.isfinite(dark_value) else float(dark_value),
+                                }
+                            )
 
-                final_status = status
-                if progress_callback is not None:
-                    progress_callback(idx, float(voltage), float(t_int), wavelengths, processed["raw"], spectrum_to_save, peaks, status)
-                log(f"  Сохранено: T_int={t_int*1000:.2f} мс, peak={peak_int:.0f} @ {peak_wl:.1f} нм, {status}")
-                if idx % 3 == 0 or idx == len(voltage_array):
-                    wb.save(filename)
-                    gc.collect()
-        finally:
-            safe_shutdown_smu(smu)
+                        final_status = status
+                        if progress_callback is not None:
+                            progress_callback(idx, float(voltage), float(t_int), wavelengths, processed["raw"], spectrum_to_save, peaks, status)
+                        log(f"  Raw CSV: T_int={t_int*1000:.2f} мс, peak={peak_int:.0f} @ {peak_wl:.1f} нм, {status}")
+                finally:
+                    safe_shutdown_smu(smu)
 
-    for ws in wb.worksheets:
-        autosize_columns(ws, max_width=45)
-    wb.save(filename)
-    wb.close()
-    return {"file": filename, "status": final_status, **best_spectrum_metrics}
+    filename = build_spectrum_workbook_from_raw_csv(summary_raw_file, spectra_raw_file, filename, pixel_id, params)
+    kept_raw_files = cleanup_raw_files([summary_raw_file, spectra_raw_file], app_settings, log)
+    return {
+        "file": filename,
+        "raw_files": kept_raw_files,
+        "status": final_status,
+        **best_spectrum_metrics,
+    }

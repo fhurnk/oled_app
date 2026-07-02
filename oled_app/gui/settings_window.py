@@ -7,7 +7,16 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict
 
-from oled_app.constants import DEFAULT_ROOT, HARDWARE_MODE_REAL, HARDWARE_MODE_SIM, SCRIPT_DIR, SIM_CONFIG_FILE
+from oled_app.constants import (
+    DEFAULT_ROOT,
+    HARDWARE_MODE_REAL,
+    HARDWARE_MODE_SIM,
+    RAW_DATA_FOLDER,
+    RAW_DATA_POLICY_DELETE_AFTER_XLSX,
+    RAW_DATA_POLICY_KEEP_SEPARATE,
+    SCRIPT_DIR,
+    SIM_CONFIG_FILE,
+)
 from oled_app.settings import DEFAULT_APP_SETTINGS, ensure_default_sim_config, load_app_settings, save_app_settings
 from oled_app.utils import parse_float, parse_int
 
@@ -39,6 +48,18 @@ def open_settings_window(app) -> None:
     units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
     pixel_area_var = tk.StringVar(value=str(units.get("pixel_area_mm2", 1.0)))
     luminance_coeff_var = tk.StringVar(value=str(units.get("luminance_cd_m2_per_uA", 1.0)))
+    raw_settings = app.app_settings.get("raw_data", DEFAULT_APP_SETTINGS["raw_data"])
+    raw_policy_labels = {
+        RAW_DATA_POLICY_KEEP_SEPARATE: f"Сохранять в папке {RAW_DATA_FOLDER}",
+        RAW_DATA_POLICY_DELETE_AFTER_XLSX: "Удалять после сборки XLSX",
+    }
+    raw_policy_values = {label: policy for policy, label in raw_policy_labels.items()}
+    raw_policy_var = tk.StringVar(
+        value=raw_policy_labels.get(
+            str(raw_settings.get("policy", RAW_DATA_POLICY_KEEP_SEPARATE)),
+            raw_policy_labels[RAW_DATA_POLICY_KEEP_SEPARATE],
+        )
+    )
 
     ttk.Label(general, text="Корневая папка серий:").grid(row=0, column=0, sticky="e", pady=4, padx=(0, 8))
     ttk.Entry(general, textvariable=root_var, width=62).grid(row=0, column=1, sticky="we", pady=4)
@@ -55,13 +76,21 @@ def open_settings_window(app) -> None:
     ttk.Checkbutton(general, text="Автонастройка COM порта Ossila", variable=auto_com_var).grid(row=3, column=1, sticky="w", pady=3)
     add_settings_entry(general, 4, "Площадь пикселя, мм^2", pixel_area_var)
     add_settings_entry(general, 5, "Коэфф. мкА -> кд/м^2", luminance_coeff_var)
+    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=6, column=0, sticky="e", pady=4, padx=(0, 8))
+    ttk.Combobox(
+        general,
+        textvariable=raw_policy_var,
+        values=list(raw_policy_values.keys()),
+        state="readonly",
+        width=30,
+    ).grid(row=6, column=1, sticky="w", pady=4)
     ttk.Label(
         general,
         text="simulator = встроенная эмуляция пикселя; real = настоящие xtralien/seabreeze из Python-среды.",
         foreground="#555555",
         wraplength=610,
         justify="left",
-    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(12, 0))
     general.columnconfigure(1, weight=1)
 
     sim_cfg_var = tk.StringVar(value=str(app.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
@@ -152,6 +181,10 @@ def open_settings_window(app) -> None:
             settings["measurement_units"] = {
                 "pixel_area_mm2": parse_float(pixel_area_var.get(), "Площадь пикселя"),
                 "luminance_cd_m2_per_uA": parse_float(luminance_coeff_var.get(), "Коэффициент яркости"),
+            }
+            settings["raw_data"] = {
+                "policy": raw_policy_values.get(raw_policy_var.get(), RAW_DATA_POLICY_KEEP_SEPARATE),
+                "folder_name": RAW_DATA_FOLDER,
             }
             settings["simulator_config_path"] = sim_cfg_var.get().strip() or str(SCRIPT_DIR / SIM_CONFIG_FILE)
             settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)

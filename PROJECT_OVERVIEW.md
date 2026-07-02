@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.4`
+Версия: `v1.7.5`
 
 ## Назначение
 
@@ -22,6 +22,7 @@
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` и подключен к новому GUI.
+- общая запись raw CSV вынесена в `oled_app/measurements/raw_io.py`; сборка IVL-, Spectrum- и Stability-книг из raw CSV вынесена в `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py` и `oled_app/processing/stability_results.py`.
 - workflow спектров подготовлен в `oled_app/measurements/spectrum.py` и подключен к новому GUI.
 - workflow стабильности подготовлен в `oled_app/measurements/stability.py` и подключен к новому GUI.
 - первые общие GUI helpers и progress windows подготовлены в `oled_app/gui/widgets.py` и `oled_app/gui/progress.py`.
@@ -64,8 +65,14 @@ oled_app_v2_5_package/
       spectrometer.py
     measurements/
       ivl.py
+      raw_io.py
       spectrum.py
       stability.py
+    processing/
+      __init__.py
+      ivl_results.py
+      spectrum_results.py
+      stability_results.py
     reports/
       origin_report.py
   requirements.txt
@@ -82,6 +89,7 @@ oled_app_v2_5_package/
     GITHUB_RELEASE_WORKFLOW.md
     report_origin_pipeline.md
     modularization_plan.md
+    raw_csv_measurement_pipeline_plan.md
     project_manifest.json
     versions/
       v1.5.2.md
@@ -95,6 +103,7 @@ oled_app_v2_5_package/
       v1.7.2.md
       v1.7.3.md
       v1.7.4.md
+      v1.7.5.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 
@@ -112,6 +121,8 @@ OLED_series/
       02_SPECTRA/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
       03_STABILITY/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
 ```
+
+Начиная с `v1.7.5`, ВАЯХ, спектры и стабильность в модульном приложении пишут промежуточные `*_raw.csv` после каждой точки и после завершения собирают из них совместимые итоговые `.xlsx`. В настройках можно выбрать, сохранять raw CSV в подпапке `raw_data` или удалять после успешной сборки XLSX.
 
 ## Основной Рабочий Процесс
 

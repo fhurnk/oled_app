@@ -8,19 +8,19 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-from openpyxl import Workbook
-from openpyxl.chart import ScatterChart, Series, Reference
-from openpyxl.chart.axis import ChartLines
-from openpyxl.styles import Font
 
 from oled_app.hardware import prepare_hardware_environment, safe_shutdown_smu
+from oled_app.measurements.raw_io import RawCsvWriter, cleanup_raw_files, raw_csv_path
+from oled_app.processing.ivl_results import (
+    IVL_RAW_HEADERS,
+    build_ivl_workbook_from_raw_csv,
+    save_ivl_workbook as write_ivl_workbook,
+)
 from oled_app.utils import (
-    autosize_columns,
     current_density_mA_cm2,
     luminance_cd_m2,
     now_str,
     safe_filename,
-    style_header_row,
     timestamp_for_file,
 )
 
@@ -107,6 +107,7 @@ def run_ivl_cycle(
     params: IVLParams,
     log: Callable[[str], None],
     progress_callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    raw_writer: Optional[RawCsvWriter] = None,
 ) -> Dict[str, Any]:
     log(f"\nВАЯХ {pixel_id}, цикл {cycle_number}: до {params.sweep_end:.3f} В, лимит {params.current_limit_mA:.3f} мА")
 
@@ -141,6 +142,7 @@ def run_ivl_cycle(
         voltage_pd, current_pd = smu.smu2.measure()[0]
         current_led_mA = current_led * 1000.0
         current_pd_uA = -current_pd * 1_000_000.0
+        date_time = now_str()
 
         point_row = {
             "Point": idx,
@@ -152,6 +154,21 @@ def run_ivl_cycle(
             "Photodiode current (uA)": float(current_pd_uA),
             "Luminance (cd/m^2)": luminance_cd_m2(current_pd_uA, params.luminance_cd_m2_per_uA),
         }
+        if raw_writer is not None:
+            raw_writer.writerow(
+                {
+                    "cycle": cycle_number,
+                    "point": idx,
+                    "date_time": date_time,
+                    "voltage_set_V": float(set_v),
+                    "voltage_led_measured_V": float(voltage_led),
+                    "current_led_A": float(current_led),
+                    "voltage_photodiode_measured_V": float(voltage_pd),
+                    "current_photodiode_A": float(current_pd),
+                    "current_led_mA": float(current_led_mA),
+                    "current_photodiode_uA": float(current_pd_uA),
+                }
+            )
         data.append(point_row)
         if progress_callback is not None:
             try:
@@ -194,104 +211,7 @@ def run_ivl_cycle(
 
 def save_ivl_workbook(pixel_id: str, output_dir: Path, params: IVLParams, cycles: List[Dict[str, Any]]) -> Path:
     filename = output_dir / f"IVL_{safe_filename(pixel_id)}_{timestamp_for_file()}.xlsx"
-    ivl_diagnosis = describe_ivl_first_measurement(cycles)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    wb = Workbook()
-    ws_sum = wb.active
-    ws_sum.title = "Summary"
-
-    ws_sum["A1"] = "IVL / ВАЯХ"
-    ws_sum["A1"].font = Font(bold=True, size=14)
-    meta = [
-        ("Pixel", pixel_id),
-        ("Created", now_str()),
-        ("COM port", params.com_port),
-        ("Sweep", f"{params.sweep_start}-{params.sweep_end} В, step {params.sweep_increment} В"),
-        ("Cycles requested", params.num_cycles),
-        ("Current limit (mA)", params.current_limit_mA),
-        ("Photodiode threshold (uA)", params.photodiode_threshold_uA),
-        ("Pixel area (mm^2)", params.pixel_area_mm2),
-        ("Luminance conversion (cd/m^2 per uA)", params.luminance_cd_m2_per_uA),
-        ("Burned confirmation cycles", params.burned_confirmation_cycles),
-        ("Первый промер / диагноз", ivl_diagnosis),
-        ("Naming rule", "{quarter_code}{quarter_number}_{substrate_number}_{pixel_number}"),
-    ]
-    for idx, (key, value) in enumerate(meta, start=3):
-        ws_sum.cell(row=idx, column=1, value=key).font = Font(bold=True)
-        ws_sum.cell(row=idx, column=2, value=value)
-
-    summary_headers = [
-        "Cycle",
-        "Status",
-        "Status description",
-        "Max current (mA)",
-        "Max photodiode (uA)",
-        "Opening voltage detected (V)",
-        "Current limit reached",
-        "First measurement diagnosis",
-    ]
-    start = 13
-    ws_sum.append([])
-    for column, header in enumerate(summary_headers, start=1):
-        ws_sum.cell(row=start, column=column, value=header)
-    style_header_row(ws_sum, start, 1, len(summary_headers))
-
-    for row_idx, cycle in enumerate(cycles, start=start + 1):
-        ws_sum.cell(row=row_idx, column=1, value=cycle["cycle"])
-        ws_sum.cell(row=row_idx, column=2, value=cycle["status"])
-        ws_sum.cell(row=row_idx, column=3, value=cycle["status_desc"])
-        ws_sum.cell(row=row_idx, column=4, value=cycle["max_current_mA"])
-        ws_sum.cell(row=row_idx, column=5, value=cycle["max_photo_uA"])
-        ws_sum.cell(row=row_idx, column=6, value=cycle["opening_voltage"])
-        ws_sum.cell(row=row_idx, column=7, value="YES" if cycle["current_limit_reached"] else "NO")
-        ws_sum.cell(row=row_idx, column=8, value=ivl_diagnosis if cycle["cycle"] == 1 else "")
-
-    headers = [
-        "Point",
-        "Voltage set (V)",
-        "Voltage OLED / LED measured (V)",
-        "Current OLED / LED (mA)",
-        "Current density (mA/cm^2)",
-        "Voltage photodiode measured (V)",
-        "Photodiode current (uA)",
-        "Luminance (cd/m^2)",
-    ]
-    for cycle in cycles:
-        ws = wb.create_sheet(f"Cycle_{cycle['cycle']}")
-        ws["A1"] = f"Pixel {pixel_id} | Cycle {cycle['cycle']} | {cycle['status']}"
-        ws["A1"].font = Font(bold=True, size=13)
-        header_row = 4
-        for column, header in enumerate(headers, start=1):
-            ws.cell(row=header_row, column=column, value=header)
-        style_header_row(ws, header_row, 1, len(headers))
-
-        for row_idx, row in enumerate(cycle["data"], start=header_row + 1):
-            for col_idx, header in enumerate(headers, start=1):
-                ws.cell(row=row_idx, column=col_idx, value=row.get(header))
-        ws.freeze_panes = f"A{header_row + 1}"
-
-        if len(cycle["data"]) >= 2:
-            chart = ScatterChart()
-            chart.title = f"{pixel_id} | Cycle {cycle['cycle']} | {cycle['status']}"
-            chart.x_axis.title = "Voltage OLED / LED (V)"
-            chart.y_axis.title = "Current OLED / LED (mA) / Photodiode (uA)"
-            chart.x_axis.majorGridlines = ChartLines()
-            min_row = header_row + 1
-            max_row = header_row + len(cycle["data"])
-            xvalues = Reference(ws, min_col=2, min_row=min_row, max_row=max_row)
-            y_current = Reference(ws, min_col=4, min_row=header_row, max_row=max_row)
-            y_photo = Reference(ws, min_col=7, min_row=header_row, max_row=max_row)
-            chart.series.append(Series(y_current, xvalues, title_from_data=True))
-            chart.series.append(Series(y_photo, xvalues, title_from_data=True))
-            ws.add_chart(chart, "H4")
-        autosize_columns(ws, max_width=34)
-
-    for ws in wb.worksheets:
-        autosize_columns(ws, max_width=42)
-    wb.save(filename)
-    wb.close()
-    return filename
+    return write_ivl_workbook(pixel_id, filename, params, cycles)
 
 
 def run_ivl_measurement(
@@ -305,26 +225,42 @@ def run_ivl_measurement(
     prepare_hardware_environment(pixel_id, app_settings, log)
     import xtralien
 
+    measurement_timestamp = timestamp_for_file()
+    file_stem = f"IVL_{safe_filename(pixel_id)}_{measurement_timestamp}"
+    filename = output_dir / f"{file_stem}.xlsx"
+    raw_file = raw_csv_path(output_dir, f"{file_stem}_raw.csv", app_settings)
+    log(f"Raw CSV ВАЯХ: {raw_file}")
+
     cycles: List[Dict[str, Any]] = []
     cycles_to_run = max(1, int(params.num_cycles))
     burned_confirmations_left = max(0, int(params.burned_confirmation_cycles))
-    with xtralien.Device(params.com_port) as smu:
-        cycle = 1
-        while cycle <= cycles_to_run:
-            cycle_result = run_ivl_cycle(smu, pixel_id, cycle, params, log, progress_callback=progress_callback)
-            cycles.append(cycle_result)
-            if cycle_result["status"] == "BURNED" and burned_confirmations_left > 0:
-                burned_confirmations_left -= 1
-                cycles_to_run = max(cycles_to_run, cycle + 1)
-                log("  BURNED: запускается дополнительный подтверждающий цикл.")
-            elif cycle_result["status"] in {"BURNED", "NO_CONTACT", "NONWORKING"}:
-                log(f"  Дальнейшие циклы остановлены: {cycle_result['status']}")
-                break
-            if cycle < cycles_to_run:
-                time.sleep(params.delay_between_cycles)
-            cycle += 1
+    with RawCsvWriter(raw_file, IVL_RAW_HEADERS) as raw_writer:
+        with xtralien.Device(params.com_port) as smu:
+            cycle = 1
+            while cycle <= cycles_to_run:
+                cycle_result = run_ivl_cycle(
+                    smu,
+                    pixel_id,
+                    cycle,
+                    params,
+                    log,
+                    progress_callback=progress_callback,
+                    raw_writer=raw_writer,
+                )
+                cycles.append(cycle_result)
+                if cycle_result["status"] == "BURNED" and burned_confirmations_left > 0:
+                    burned_confirmations_left -= 1
+                    cycles_to_run = max(cycles_to_run, cycle + 1)
+                    log("  BURNED: запускается дополнительный подтверждающий цикл.")
+                elif cycle_result["status"] in {"BURNED", "NO_CONTACT", "NONWORKING"}:
+                    log(f"  Дальнейшие циклы остановлены: {cycle_result['status']}")
+                    break
+                if cycle < cycles_to_run:
+                    time.sleep(params.delay_between_cycles)
+                cycle += 1
 
-    filename = save_ivl_workbook(pixel_id, output_dir, params, cycles)
+    filename = build_ivl_workbook_from_raw_csv(raw_file, filename, pixel_id, params, cycles)
+    kept_raw_files = cleanup_raw_files([raw_file], app_settings, log)
     best_opening = next((cycle.get("opening_voltage") for cycle in cycles if cycle.get("opening_voltage") is not None), None)
     max_current = max([cycle["max_current_mA"] for cycle in cycles], default=0.0)
     max_photo = max([cycle["max_photo_uA"] for cycle in cycles], default=0.0)
@@ -336,6 +272,7 @@ def run_ivl_measurement(
     final_status = "BURNED" if burned_cycle is not None else cycles[-1]["status"] if cycles else "FAILED"
     return {
         "file": filename,
+        "raw_file": kept_raw_files[0] if kept_raw_files else None,
         "status": final_status,
         "opening_voltage": best_opening,
         "max_current_mA": max_current,

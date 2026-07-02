@@ -1,5 +1,23 @@
 # История Обновлений
 
+## v1.7.5 - 2026-07-02
+
+### Добавлено
+
+- Добавлен общий модуль `oled_app/measurements/raw_io.py` для построчной записи raw CSV с flush после каждой точки измерения.
+- Добавлен пакет `oled_app/processing/` и модуль `ivl_results.py`, который собирает совместимый итоговый `IVL_*.xlsx` из raw CSV.
+- Добавлен модуль `oled_app/processing/spectrum_results.py`, который собирает совместимый итоговый `SPECTRUM_*.xlsx` из raw summary/spectra CSV.
+- Добавлен модуль `oled_app/processing/stability_results.py`, который собирает совместимый итоговый `STABILITY_*.xlsx` из raw CSV.
+- В настройках появился пункт `Сырые CSV после обработки`: raw-файлы можно сохранять в подпапке `raw_data` или удалять после успешной сборки XLSX.
+
+### Изменено
+
+- Модульная ВАЯХ теперь пишет `IVL_<pixel>_<timestamp>_raw.csv` во время измерения и только после завершения собирает итоговый `IVL_<pixel>_<timestamp>.xlsx`.
+- Модульная съемка спектров теперь пишет `SPECTRUM_<pixel>_<timestamp>_summary_raw.csv` и `SPECTRUM_<pixel>_<timestamp>_spectra_raw.csv` во время измерения и только после завершения собирает итоговый `SPECTRUM_<pixel>_<timestamp>.xlsx`.
+- Модульная стабильность теперь пишет `STABILITY_<pixel>_<current>mA_<timestamp>_raw.csv` во время измерения и только после завершения собирает итоговый `STABILITY_<pixel>_<current>mA_<timestamp>.xlsx`.
+- Журнал серии и `result["file"]` по-прежнему указывают на итоговый `.xlsx`; raw CSV остается рабочим/восстановительным форматом и не заменяет внешний контракт приложения.
+- `docs/raw_csv_measurement_pipeline_plan.md` отмечает выполненные этапы перехода: общий raw-слой, перенос IVL, Spectrum и Stability.
+
 ## v1.7.4 - 2026-07-02
 
 ### Изменено

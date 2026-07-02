@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.7.4",
+    "current_version": "v1.7.5",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.7.4.md"
+    "docs/versions/v1.7.5.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -26,6 +26,10 @@
     "report_script": "scripts/build_report_origin_workbook.py",
     "report_module": "oled_app/reports/origin_report.py",
     "measurement_ivl_module": "oled_app/measurements/ivl.py",
+    "measurement_raw_io_module": "oled_app/measurements/raw_io.py",
+    "processing_ivl_results_module": "oled_app/processing/ivl_results.py",
+    "processing_stability_results_module": "oled_app/processing/stability_results.py",
+    "processing_spectrum_results_module": "oled_app/processing/spectrum_results.py",
     "measurement_spectrum_module": "oled_app/measurements/spectrum.py",
     "measurement_stability_module": "oled_app/measurements/stability.py",
     "gui_widgets_module": "oled_app/gui/widgets.py",
@@ -49,11 +53,12 @@
     "changelog": "CHANGELOG.md",
     "release_workflow": "docs/GITHUB_RELEASE_WORKFLOW.md",
     "modularization_plan": "docs/modularization_plan.md",
+    "raw_csv_measurement_pipeline_plan": "docs/raw_csv_measurement_pipeline_plan.md",
     "version_archive_dir": "docs/versions"
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR",
-    "modularization_single_version": "v1.7.4",
+    "modularization_single_version": "v1.7.5",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -68,9 +73,9 @@
     "github_release_required": true
   },
   "measurement_workflows": {
-    "IVL": "Voltage/current/light sweep and pixel status classification.",
-    "SPECTRUM": "Spectral measurement after known opening voltage, with integration-time optimization.",
-    "STABILITY": "Constant-current stability measurement after IVL."
+    "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing.",
+    "SPECTRUM": "Spectral measurement after known opening voltage, with integration-time optimization; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
+    "STABILITY": "Constant-current stability measurement after IVL; modular workflow writes raw CSV during measurement and builds final XLSX after processing."
   },
   "git": {
     "primary_remote": "oled_app",

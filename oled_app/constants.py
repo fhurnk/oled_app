@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-APP_VERSION = "1.7.4"
+APP_VERSION = "1.7.5"
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 
 CONFIG_FILE = "series_config.json"
@@ -12,9 +12,12 @@ JOURNAL_FILE = "series_journal.xlsx"
 DEFAULT_ROOT = "OLED_series"
 APP_SETTINGS_FILE = "oled_app_settings.json"
 SIM_CONFIG_FILE = "oled_simulator_config.json"
+RAW_DATA_FOLDER = "raw_data"
 
 HARDWARE_MODE_REAL = "real"
 HARDWARE_MODE_SIM = "simulator"
+RAW_DATA_POLICY_KEEP_SEPARATE = "keep_separate"
+RAW_DATA_POLICY_DELETE_AFTER_XLSX = "delete_after_xlsx"
 
 MEASUREMENT_FOLDER_NAMES = {
     "IVL": "01_IVL_VAH",

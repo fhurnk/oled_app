@@ -11,6 +11,8 @@ from .constants import (
     APP_SETTINGS_FILE,
     DEFAULT_ROOT,
     HARDWARE_MODE_SIM,
+    RAW_DATA_FOLDER,
+    RAW_DATA_POLICY_KEEP_SEPARATE,
     SCRIPT_DIR,
     SIM_CONFIG_FILE,
 )
@@ -115,6 +117,10 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     "measurement_units": {
         "pixel_area_mm2": 1.0,
         "luminance_cd_m2_per_uA": 1.0,
+    },
+    "raw_data": {
+        "policy": RAW_DATA_POLICY_KEEP_SEPARATE,
+        "folder_name": RAW_DATA_FOLDER,
     },
     "stability_advanced": {
         "voltage_step_max": 0.02,

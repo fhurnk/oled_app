@@ -43,8 +43,13 @@
     <Compile Include="oled_app\hardware\spectrometer.py" />
     <Compile Include="oled_app\measurements\__init__.py" />
     <Compile Include="oled_app\measurements\ivl.py" />
+    <Compile Include="oled_app\measurements\raw_io.py" />
     <Compile Include="oled_app\measurements\spectrum.py" />
     <Compile Include="oled_app\measurements\stability.py" />
+    <Compile Include="oled_app\processing\__init__.py" />
+    <Compile Include="oled_app\processing\ivl_results.py" />
+    <Compile Include="oled_app\processing\spectrum_results.py" />
+    <Compile Include="oled_app\processing\stability_results.py" />
     <Compile Include="oled_app\reports\__init__.py" />
     <Compile Include="oled_app\reports\origin_report.py" />
     <Compile Include="oled_app\series\__init__.py" />
@@ -68,6 +73,7 @@
     <Content Include="docs\GITHUB_RELEASE_WORKFLOW.md" />
     <Content Include="docs\modularization_plan.md" />
     <Content Include="docs\project_manifest.json" />
+    <Content Include="docs\raw_csv_measurement_pipeline_plan.md" />
     <Content Include="docs\report_origin_pipeline.md" />
     <Content Include="docs\versions\v1.5.2.md" />
     <Content Include="docs\versions\v1.5.3.md" />
@@ -80,6 +86,7 @@
     <Content Include="docs\versions\v1.7.2.md" />
     <Content Include="docs\versions\v1.7.3.md" />
     <Content Include="docs\versions\v1.7.4.md" />
+    <Content Include="docs\versions\v1.7.5.md" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">
@@ -91,6 +98,18 @@
       <PathEnvironmentVariable>PYTHONPATH</PathEnvironmentVariable>
       <Architecture>X64</Architecture>
     </Interpreter>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="docs\" />
+    <Folder Include="docs\versions\" />
+    <Folder Include="oled_app\" />
+    <Folder Include="oled_app\gui\" />
+    <Folder Include="oled_app\hardware\" />
+    <Folder Include="oled_app\measurements\" />
+    <Folder Include="oled_app\processing\" />
+    <Folder Include="oled_app\reports\" />
+    <Folder Include="oled_app\series\" />
+    <Folder Include="scripts\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
 </Project>
