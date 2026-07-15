@@ -9,6 +9,7 @@ from PIL import Image
 
 from oled_app.camera.client import (
     CameraClient,
+    RemoteFile,
     available_path,
     build_camera_service_url,
     extract_jpeg_frames,
@@ -67,6 +68,24 @@ class CameraClientHelpersTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(failures, [])
         client.close_liveview_stream()
+
+    def test_quality_payloads_and_delete_endpoint(self) -> None:
+        client = CameraClient("http://camera.test:8765")
+        remote_payload = {
+            "file": {"file_id": "abc 123", "name": "photo.jpg", "kind": "photo", "size": 10}
+        }
+        with patch.object(client, "_json_request", side_effect=[remote_payload, {"success": True}, {"success": True}]) as request:
+            remote = client.capture_photo({"/main/imgsettings/imageformat": "Large Fine JPEG"})
+            client.start_recording("maximum")
+            client.delete_file(RemoteFile("abc 123", "photo.jpg", "photo", 10))
+
+        self.assertEqual(remote.file_id, "abc 123")
+        self.assertEqual(
+            request.call_args_list[0].args,
+            ("POST", "/api/photo/capture", {"photo_settings": {"/main/imgsettings/imageformat": "Large Fine JPEG"}}),
+        )
+        self.assertEqual(request.call_args_list[1].args, ("POST", "/api/video/start", {"video_profile": "maximum"}))
+        self.assertEqual(request.call_args_list[2].args, ("DELETE", "/api/files/abc%20123"))
 
 
 class BlockingResponse:

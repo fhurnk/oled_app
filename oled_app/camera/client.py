@@ -89,6 +89,9 @@ class CameraClient:
     def initialize(self) -> Dict[str, Any]:
         return self._json_request("POST", "/api/camera/initialize")
 
+    def capabilities(self) -> Dict[str, Any]:
+        return self._json_request("GET", "/api/camera/capabilities")
+
     def start_liveview(self) -> Dict[str, Any]:
         return self._json_request("POST", "/api/liveview/start")
 
@@ -98,11 +101,12 @@ class CameraClient:
     def save_liveview_snapshot(self) -> RemoteFile:
         return self._file_from_action("/api/liveview/snapshot")
 
-    def capture_photo(self) -> RemoteFile:
-        return self._file_from_action("/api/photo/capture")
+    def capture_photo(self, photo_settings: Optional[Dict[str, str]] = None) -> RemoteFile:
+        payload = {"photo_settings": photo_settings or {}}
+        return self._file_from_action("/api/photo/capture", payload)
 
-    def start_recording(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/api/video/start")
+    def start_recording(self, video_profile: str = "standard") -> Dict[str, Any]:
+        return self._json_request("POST", "/api/video/start", {"video_profile": str(video_profile or "standard")})
 
     def stop_recording(self) -> RemoteFile:
         return self._file_from_action("/api/video/stop")
@@ -110,6 +114,10 @@ class CameraClient:
     def list_files(self) -> list[RemoteFile]:
         payload = self._json_request("GET", "/api/files")
         return [RemoteFile.from_dict(item) for item in payload.get("files", [])]
+
+    def delete_file(self, remote_file: RemoteFile | str) -> Dict[str, Any]:
+        file_id = remote_file.file_id if isinstance(remote_file, RemoteFile) else str(remote_file)
+        return self._json_request("DELETE", "/api/files/" + urllib.parse.quote(file_id, safe=""))
 
     def iter_liveview_frames(
         self,
@@ -250,8 +258,8 @@ class CameraClient:
         os.replace(temporary, target)
         return target
 
-    def _file_from_action(self, path: str) -> RemoteFile:
-        payload = self._json_request("POST", path)
+    def _file_from_action(self, path: str, request_payload: Optional[Dict[str, Any]] = None) -> RemoteFile:
+        payload = self._json_request("POST", path, request_payload)
         file_payload = payload.get("file")
         if not isinstance(file_payload, dict):
             raise CameraClientError("Сервис не вернул сведения о созданном файле.", "INVALID_OUTPUT_FILE")

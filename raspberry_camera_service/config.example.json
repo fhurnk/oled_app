@@ -1,7 +1,7 @@
 {
   "host": "0.0.0.0",
   "port": 8765,
-  "data_dir": "/home/pi/oled-camera/camera_data",
+  "data_dir": "/home/user/oled-camera/camera_data",
   "gphoto2_bin": "gphoto2",
   "ffmpeg_bin": "ffmpeg",
   "ffprobe_bin": "ffprobe",

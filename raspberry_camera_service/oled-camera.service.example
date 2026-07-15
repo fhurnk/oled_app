@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/oled-camera
-ExecStart=/home/pi/oled-camera/.venv/bin/python /home/pi/oled-camera/camera_service.py --config /home/pi/oled-camera/config.json
+User=user
+WorkingDirectory=/home/user/oled-camera
+ExecStart=/home/user/oled-camera/.venv/bin/python /home/user/oled-camera/camera_service.py --config /home/user/oled-camera/config.json
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20

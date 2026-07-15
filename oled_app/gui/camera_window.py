@@ -52,7 +52,7 @@ class CameraTestWindow(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Тест камеры Canon — v1.8 alpha")
-        self.geometry("1180x780")
+        self.geometry("1180x860")
         self.minsize(900, 620)
         self.transient(app)
 
@@ -65,10 +65,16 @@ class CameraTestWindow(tk.Toplevel):
         self.disk_var = tk.StringVar(value="—")
         self.file_var = tk.StringVar(value="—")
         self.error_var = tk.StringVar(value="—")
+        self.video_source_var = tk.StringVar(value="LiveView: разрешение появится после первого кадра")
+        self.video_quality_var = tk.StringVar(value="Стандартное качество")
+        self.keep_remote_var = tk.BooleanVar(value=bool(settings.get("keep_remote_files_after_download", True)))
 
         self.client: Optional[CameraClient] = None
         self.status: Dict[str, Any] = {}
+        self.capability_data: Dict[str, Any] = {}
         self.remote_files: Dict[str, RemoteFile] = {}
+        self.photo_quality_vars: Dict[str, tk.StringVar] = {}
+        self.video_profile_by_label: Dict[str, str] = {}
         self._busy = False
         self._closed = False
         self._status_request_running = False
@@ -147,6 +153,34 @@ class CameraTestWindow(tk.Toplevel):
             ttk.Label(status_box, textvariable=variable, wraplength=310, justify="left").grid(row=row, column=1, sticky="nw", pady=2)
         status_box.columnconfigure(1, weight=1)
 
+        quality_box = ttk.LabelFrame(controls_frame, text="Качество фото и видео", padding=8)
+        quality_box.pack(fill="x", pady=(10, 0))
+        self.photo_quality_frame = ttk.Frame(quality_box)
+        self.photo_quality_frame.pack(fill="x")
+        ttk.Label(self.photo_quality_frame, text="Параметры фото появятся после подключения камеры.").grid(
+            row=0, column=0, sticky="w"
+        )
+        video_row = ttk.Frame(quality_box)
+        video_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(video_row, text="Профиль видео:").pack(side="left")
+        self.video_quality_combo = ttk.Combobox(
+            video_row,
+            textvariable=self.video_quality_var,
+            state="readonly",
+            width=43,
+        )
+        self.video_quality_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.video_quality_combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
+        ttk.Label(quality_box, textvariable=self.video_source_var, foreground="#555555", wraplength=360).pack(
+            anchor="w", pady=(5, 0)
+        )
+        ttk.Checkbutton(
+            quality_box,
+            text="Оставлять файл на Raspberry Pi после скачивания",
+            variable=self.keep_remote_var,
+            command=self._save_quality_preferences,
+        ).pack(anchor="w", pady=(6, 0))
+
         actions = ttk.LabelFrame(controls_frame, text="Ручная проверка функций", padding=8)
         actions.pack(fill="x", pady=(10, 0))
         self.start_live_button = ttk.Button(actions, text="Запустить LiveView", command=self.start_liveview)
@@ -208,12 +242,16 @@ class CameraTestWindow(tk.Toplevel):
             status = self.client.status()
             if not status.get("camera_connected"):
                 status = self.client.initialize()
-            return status
+            return status, self._capabilities_or_legacy(self.client)
 
         self._run_async("Подключение к сервису", work, self._connected)
 
-    def _connected(self, status: Dict[str, Any]) -> None:
+    def _connected(self, result) -> None:
+        status, capabilities = result
         self._apply_status(status)
+        self._apply_capabilities(capabilities)
+        if capabilities.get("legacy_service"):
+            self._log("Сервис Raspberry Pi работает по старому API: обновите его для выбора качества и удаления файлов.")
         self._log(f"Сервис камеры доступен: {self.client.base_url if self.client else ''}")
         self.refresh_files(silent=True)
         self._schedule_status_poll()
@@ -222,10 +260,18 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
-        self._run_async("Инициализация камеры", client.initialize, self._camera_initialized)
+        self._run_async(
+            "Инициализация камеры",
+            lambda: (client.initialize(), self._capabilities_or_legacy(client)),
+            self._camera_initialized,
+        )
 
-    def _camera_initialized(self, status: Dict[str, Any]) -> None:
+    def _camera_initialized(self, result) -> None:
+        status, capabilities = result
         self._apply_status(status)
+        self._apply_capabilities(capabilities)
+        if capabilities.get("legacy_service"):
+            self._log("Сервис Raspberry Pi работает по старому API: обновите его для выбора качества и удаления файлов.")
         self._log(f"Камера готова: {status.get('camera_model') or 'модель не указана'}")
 
     def start_liveview(self) -> None:
@@ -262,18 +308,22 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
+        keep_remote = bool(self.keep_remote_var.get())
+        photo_settings = self._selected_photo_settings()
 
         def work():
-            remote = client.save_liveview_snapshot() if kind == "snapshot" else client.capture_photo()
+            remote = client.save_liveview_snapshot() if kind == "snapshot" else client.capture_photo(photo_settings)
             local = client.download_file(remote, self._download_dir())
-            return remote, local, client.status()
+            deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
+            return remote, local, deleted, delete_error, client.status()
 
         def complete(result) -> None:
-            remote, local, status = result
+            _remote, local, deleted, delete_error, status = result
             self._apply_status(status)
             if status.get("liveview_active"):
                 self._start_local_stream()
             self._log(f"{success_label}: {local}")
+            self._log_remote_cleanup(deleted, delete_error)
             self.refresh_files(silent=True)
 
         self._run_async(operation_label, work, complete)
@@ -282,7 +332,8 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
-        self._run_async("Запуск записи", client.start_recording, self._recording_started)
+        video_profile = self._selected_video_profile()
+        self._run_async("Запуск записи", lambda: client.start_recording(video_profile), self._recording_started)
 
     def _recording_started(self, status: Dict[str, Any]) -> None:
         self._apply_status(status)
@@ -293,16 +344,19 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
+        keep_remote = bool(self.keep_remote_var.get())
 
         def work():
             remote = client.stop_recording()
             local = client.download_file(remote, self._download_dir())
-            return remote, local, client.status()
+            deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
+            return remote, local, deleted, delete_error, client.status()
 
         def complete(result) -> None:
-            _remote, local, status = result
+            _remote, local, deleted, delete_error, status = result
             self._apply_status(status)
             self._log(f"Видео корректно завершено и скачано: {local}")
+            self._log_remote_cleanup(deleted, delete_error)
             self.refresh_files(silent=True)
 
         self._run_async("Остановка записи", work, complete)
@@ -339,11 +393,20 @@ class CameraTestWindow(tk.Toplevel):
         remote = self.remote_files.get(selection[0])
         if not remote:
             return
-        self._run_async(
-            "Скачивание файла",
-            lambda: client.download_file(remote, self._download_dir()),
-            lambda path: self._log(f"Файл скачан: {path}"),
-        )
+        keep_remote = bool(self.keep_remote_var.get())
+
+        def work():
+            local = client.download_file(remote, self._download_dir())
+            deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
+            return local, deleted, delete_error
+
+        def complete(result) -> None:
+            local, deleted, delete_error = result
+            self._log(f"Файл скачан: {local}")
+            self._log_remote_cleanup(deleted, delete_error)
+            self.refresh_files(silent=True)
+
+        self._run_async("Скачивание файла", work, complete)
 
     def open_download_folder(self) -> None:
         folder = self._download_dir()
@@ -352,6 +415,125 @@ class CameraTestWindow(tk.Toplevel):
             os.startfile(str(folder))  # type: ignore[attr-defined]
         except Exception as exc:
             messagebox.showerror("Папка камеры", str(exc), parent=self)
+
+    def _apply_capabilities(self, capabilities: Dict[str, Any]) -> None:
+        self.capability_data = capabilities or {}
+        for child in self.photo_quality_frame.winfo_children():
+            child.destroy()
+        self.photo_quality_vars = {}
+        settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
+        saved_photo = dict(settings.get("photo_quality_settings") or {})
+        controls = list(capabilities.get("photo_controls") or [])
+        if not controls:
+            ttk.Label(
+                self.photo_quality_frame,
+                text="Камера не сообщила переключаемые JPEG-параметры; используется её текущее качество.",
+                wraplength=360,
+                justify="left",
+            ).grid(row=0, column=0, columnspan=2, sticky="w")
+        for row, control in enumerate(controls):
+            path = str(control.get("path") or "")
+            choices = [str(value) for value in control.get("choices") or []]
+            if not path or not choices:
+                continue
+            selected = str(saved_photo.get(path) or control.get("current") or choices[0])
+            if selected not in choices:
+                selected = str(control.get("current") or choices[0])
+            variable = tk.StringVar(value=selected)
+            self.photo_quality_vars[path] = variable
+            ttk.Label(self.photo_quality_frame, text=str(control.get("label") or "Качество фото") + ":").grid(
+                row=row, column=0, sticky="w", pady=2
+            )
+            combo = ttk.Combobox(
+                self.photo_quality_frame,
+                textvariable=variable,
+                values=choices,
+                state="readonly",
+                width=30,
+            )
+            combo.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=2)
+            combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
+        self.photo_quality_frame.columnconfigure(1, weight=1)
+
+        profiles = list(capabilities.get("video_profiles") or [])
+        self.video_profile_by_label = {}
+        label_by_id: Dict[str, str] = {}
+        for profile in profiles:
+            profile_id = str(profile.get("id") or "")
+            label = f"{profile.get('label') or profile_id} · CRF {profile.get('crf')}"
+            if profile_id:
+                self.video_profile_by_label[label] = profile_id
+                label_by_id[profile_id] = label
+        self.video_quality_combo.configure(values=list(self.video_profile_by_label))
+        selected_id = str(settings.get("video_quality_profile") or capabilities.get("selected_video_profile") or "standard")
+        if selected_id not in label_by_id:
+            selected_id = str(capabilities.get("selected_video_profile") or "standard")
+        if label_by_id:
+            self.video_quality_var.set(label_by_id.get(selected_id) or next(iter(label_by_id.values())))
+        self._update_video_source_text()
+        self._save_quality_preferences()
+
+    def _selected_photo_settings(self) -> Dict[str, str]:
+        return {path: variable.get() for path, variable in self.photo_quality_vars.items() if variable.get()}
+
+    def _selected_video_profile(self) -> str:
+        return self.video_profile_by_label.get(self.video_quality_var.get(), "standard")
+
+    @staticmethod
+    def _capabilities_or_legacy(client: CameraClient) -> Dict[str, Any]:
+        try:
+            return client.capabilities()
+        except CameraClientError as exc:
+            if exc.error_code != "HTTP_404":
+                raise
+            return {
+                "success": True,
+                "legacy_service": True,
+                "photo_controls": [],
+                "video_profiles": [],
+                "selected_video_profile": "standard",
+            }
+
+    def _save_quality_preferences(self, _event=None) -> None:
+        settings = dict(self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"]))
+        settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
+        if self.video_profile_by_label:
+            settings["video_quality_profile"] = self._selected_video_profile()
+        if self.photo_quality_vars:
+            settings["photo_quality_settings"] = self._selected_photo_settings()
+        self.app.app_settings["camera"] = settings
+        save_app_settings(self.app.app_settings)
+
+    @staticmethod
+    def _delete_remote_after_download(
+        client: CameraClient,
+        remote: RemoteFile,
+        keep_remote: bool,
+    ) -> tuple[bool, str]:
+        if keep_remote:
+            return False, ""
+        try:
+            client.delete_file(remote)
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
+
+    def _log_remote_cleanup(self, deleted: bool, delete_error: str) -> None:
+        if deleted:
+            self._log("Проверенное скачивание завершено; исходный файл удалён с Raspberry Pi.")
+        elif delete_error:
+            self._log(f"Локальный файл сохранён, но удалить исходник с Raspberry Pi не удалось: {delete_error}")
+
+    def _update_video_source_text(self) -> None:
+        width = self.status.get("frame_width")
+        height = self.status.get("frame_height")
+        fps = float(self.status.get("fps") or 0.0)
+        if width and height:
+            self.video_source_var.set(
+                f"Источник видео: LiveView {int(width)}×{int(height)}, сейчас {fps:.1f} кадр/с. Профиль меняет сжатие, не разрешение камеры."
+            )
+        else:
+            self.video_source_var.set("Источник видео: LiveView; разрешение появится после первого кадра.")
 
     def _start_local_stream(self) -> None:
         if not self.client:
@@ -482,6 +664,7 @@ class CameraTestWindow(tk.Toplevel):
         self.disk_var.set(f"{int(status.get('free_disk_mb') or 0)} МБ")
         self.file_var.set(str(status.get("current_file") or "—"))
         self.error_var.set(str(status.get("last_error") or "—"))
+        self._update_video_source_text()
         if status.get("liveview_active"):
             self._start_local_stream()
         elif not status.get("recording_active"):
@@ -607,6 +790,11 @@ class CameraTestWindow(tk.Toplevel):
         settings = dict(self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"]))
         settings["host"] = self.host_var.get().strip() or "192.168.4.1"
         settings["port"] = int(self.port_var.get().strip())
+        settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
+        if self.video_profile_by_label:
+            settings["video_quality_profile"] = self._selected_video_profile()
+        if self.photo_quality_vars:
+            settings["photo_quality_settings"] = self._selected_photo_settings()
         self.app.app_settings["camera"] = settings
         save_app_settings(self.app.app_settings)
 

@@ -7,7 +7,9 @@
 - сохранение текущего preview-кадра;
 - полноразмерная фотография;
 - запись LiveView-потока в MP4;
-- скачивание фотографий и видео на основной компьютер.
+- выбор доступного конкретной камерой JPEG-качества фотографии;
+- выбор профиля сжатия MP4;
+- скачивание фотографий и видео на основной компьютер с опциональным удалением исходника на Raspberry Pi.
 
 Сервис пока не связан с ВАЯХ, Ossila, сериями или пикселями OLED.
 
@@ -24,22 +26,22 @@ ffmpeg -version
 ffprobe -version
 ```
 
-Скопировать папку `raspberry_camera_service` на Raspberry Pi, например в `/home/pi/oled-camera`, затем выполнить:
+Инструкция и примеры службы рассчитаны на Linux-пользователя `user`. Скопировать папку `raspberry_camera_service` на Raspberry Pi в `/home/user/oled-camera`, затем выполнить:
 
 ```bash
-cd /home/pi/oled-camera
+cd /home/user/oled-camera
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.txt
 cp config.example.json config.json
 ```
 
-Если используется не пользователь `pi`, изменить `data_dir` в `config.json` и пути в файле службы.
+Если фактический Linux-пользователь отличается от `user`, изменить `User`, домашние пути службы и `data_dir` в `config.json` согласованно.
 
 ## 2. Первый ручной запуск
 
 ```bash
-cd /home/pi/oled-camera
+cd /home/user/oled-camera
 .venv/bin/python camera_service.py --config config.json
 ```
 
@@ -49,6 +51,7 @@ cd /home/pi/oled-camera
 curl http://127.0.0.1:8765/api/health
 curl -X POST http://127.0.0.1:8765/api/camera/initialize
 curl http://127.0.0.1:8765/api/camera/status
+curl http://127.0.0.1:8765/api/camera/capabilities
 ```
 
 После этого на основном компьютере открыть приложение, нажать `Камера (alpha)`, указать IP Raspberry Pi и порт `8765`, затем нажать `Подключиться`.
@@ -70,7 +73,7 @@ sudo systemctl status oled-camera.service
 
 ```bash
 journalctl -u oled-camera.service -f
-tail -f /home/pi/oled-camera/camera_data/logs/camera_service.log
+tail -f /home/user/oled-camera/camera_data/logs/camera_service.log
 ```
 
 ## 4. Как устроена запись
@@ -88,6 +91,8 @@ gphoto2 --stdout --capture-movie
 
 Поэтому при нажатии `Начать запись видео` LiveView не перезапускается. FFmpeg использует временные метки поступления кадров и режим VFR, без искусственно заданного FPS. Готовое видео кодируется в H.264 (`libx264`, `yuv420p`) без звука. Если Raspberry Pi не успевает кодировать, можно выбрать `superfast` или `ultrafast` в `config.json`.
 
+В приложении доступны три профиля MP4: максимальный, стандартный и компактный. Они меняют CRF относительно `ffmpeg_crf` из `config.json`, но сохраняют фактическое разрешение LiveView. Профиль не может добавить детализацию, отсутствующую во входном preview-потоке камеры.
+
 Файлы сначала пишутся в `camera_data/temporary` с окончанием `.part`. После штатной остановки MP4 проверяется через `ffprobe` и только затем переносится в `camera_data/videos`. Повреждённые или незавершённые файлы попадают в `camera_data/failed`.
 
 ## 5. Фото и LiveView
@@ -99,6 +104,10 @@ gphoto2 --filename <путь>.jpg --capture-image-and-download
 ```
 
 и затем автоматически восстанавливает LiveView. Кнопка `Сохранить кадр LiveView` не останавливает поток: она сохраняет последний preview-кадр.
+
+При инициализации сервис выполняет `gphoto2 --list-config` и читает подходящие `imageformat`, `imagequality`, `imagesize`, `resolution` или `quality`. Приложение показывает только варианты, реально возвращённые подключённой камерой. RAW и RAW+JPEG исключены на этом этапе: текущая операция фото ожидает один безопасно скачиваемый JPEG-файл.
+
+Если флажок `Оставлять файл на Raspberry Pi после скачивания` снят, desktop-приложение сначала полностью скачивает `.part`, проверяет размер и SHA-256, атомарно переименовывает локальный файл и только затем вызывает удаление на Pi. При ошибке удаления проверенный локальный файл сохраняется.
 
 ## 6. Освобождение камеры от GVFS
 
@@ -118,15 +127,17 @@ gphoto2 --filename <путь>.jpg --capture-image-and-download
 GET  /api/health
 GET  /api/camera/status
 POST /api/camera/initialize
+GET  /api/camera/capabilities
 POST /api/liveview/start
 GET  /api/liveview/stream
 POST /api/liveview/stop
 POST /api/liveview/snapshot
-POST /api/photo/capture
-POST /api/video/start
+POST /api/photo/capture              # JSON: photo_settings по данным capabilities
+POST /api/video/start                # JSON: video_profile
 POST /api/video/stop
 GET  /api/files
 GET  /api/files/{file_id}
+DELETE /api/files/{file_id}
 ```
 
 Swagger-документация доступна по адресу `http://<raspberry-pi>:8765/docs`.

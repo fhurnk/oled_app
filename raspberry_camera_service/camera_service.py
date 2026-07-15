@@ -28,7 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -36,6 +36,78 @@ from starlette.concurrency import run_in_threadpool
 LOGGER = logging.getLogger("oled_camera_service")
 JPEG_START = b"\xff\xd8"
 JPEG_END = b"\xff\xd9"
+PHOTO_CONFIG_LABELS = {
+    "imageformat": "Формат и качество фото",
+    "imagequality": "Качество JPEG",
+    "imagesize": "Размер фото",
+    "resolution": "Разрешение фото",
+    "quality": "Качество фото",
+}
+PHOTO_CONFIG_PRIORITY = {name: index for index, name in enumerate(PHOTO_CONFIG_LABELS)}
+VIDEO_PROFILE_LABELS = {
+    "maximum": "Максимальное качество (исходный LiveView, CRF ниже)",
+    "standard": "Стандартное качество (исходный LiveView)",
+    "compact": "Компактный файл (исходный LiveView, CRF выше)",
+}
+
+
+def parse_gphoto_config(path: str, output: str) -> Dict[str, Any]:
+    """Parse gphoto2 --get-config output without depending on its locale."""
+
+    result: Dict[str, Any] = {"path": path, "label": "", "type": "", "current": "", "choices": [], "readonly": False}
+    choices: list[str] = []
+    for raw_line in str(output or "").splitlines():
+        line = raw_line.strip()
+        choice_match = re.match(r"Choice\s*:\s*\d+\s+(.*)$", line, flags=re.IGNORECASE)
+        if choice_match:
+            choices.append(choice_match.group(1).strip())
+            continue
+        if ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        normalized = re.sub(r"[^a-zа-яё]", "", key.lower())
+        if normalized in {"label", "метка"}:
+            result["label"] = value
+        elif normalized in {"type", "тип"}:
+            result["type"] = value
+        elif normalized in {"current", "текущий", "текущеезначение"}:
+            result["current"] = value
+        elif normalized in {"readonly", "толькочтение"}:
+            result["readonly"] = value.lower() not in {"0", "false", "off", "no", "нет"}
+    result["choices"] = choices
+    return result
+
+
+def jpeg_dimensions(frame: bytes) -> Optional[tuple[int, int]]:
+    """Read JPEG dimensions from a SOF marker without Pillow on Raspberry Pi."""
+
+    if not frame.startswith(JPEG_START):
+        return None
+    offset = 2
+    sof_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+    while offset + 4 <= len(frame):
+        if frame[offset] != 0xFF:
+            offset += 1
+            continue
+        while offset < len(frame) and frame[offset] == 0xFF:
+            offset += 1
+        if offset >= len(frame):
+            return None
+        marker = frame[offset]
+        offset += 1
+        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if offset + 2 > len(frame):
+            return None
+        segment_length = int.from_bytes(frame[offset : offset + 2], "big")
+        if segment_length < 2 or offset + segment_length > len(frame):
+            return None
+        if marker in sof_markers and segment_length >= 7:
+            height = int.from_bytes(frame[offset + 3 : offset + 5], "big")
+            width = int.from_bytes(frame[offset + 5 : offset + 7], "big")
+            return (width, height) if width > 0 and height > 0 else None
+        offset += segment_length
+    return None
 
 
 class CameraState(str, Enum):
@@ -139,6 +211,9 @@ class CameraController:
         self._frame_sequence = 0
         self._last_frame_at: Optional[datetime] = None
         self._frame_times: deque[float] = deque(maxlen=120)
+        self._latest_frame_dimensions: Optional[tuple[int, int]] = None
+        self._photo_controls: Dict[str, Dict[str, Any]] = {}
+        self._video_profile = "standard"
 
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._ffmpeg_stderr: list[str] = []
@@ -172,6 +247,7 @@ class CameraController:
                         self.state = CameraState.ERROR
             fps = self._current_fps_locked()
             free_mb = int(shutil.disk_usage(self.data_dir).free / (1024 * 1024))
+            frame_width, frame_height = self._latest_frame_dimensions or (None, None)
             return {
                 "success": True,
                 "camera_connected": self.camera_connected,
@@ -181,6 +257,9 @@ class CameraController:
                 "recording_active": recording_active,
                 "last_frame_at": self._iso(self._last_frame_at),
                 "fps": round(fps, 2),
+                "frame_width": frame_width,
+                "frame_height": frame_height,
+                "video_profile": self._video_profile,
                 "current_file": self._recording_final.name if self._recording_final else None,
                 "recorded_frames": self._recorded_frames,
                 "dropped_frames": self._dropped_frames,
@@ -214,13 +293,146 @@ class CameraController:
                 code = "CAMERA_NOT_FOUND" if self._camera_missing(details) else "CAMERA_INITIALIZATION_FAILED"
                 raise CameraServiceError("Камера Canon не готова к работе.", code, details)
             model = self._parse_camera_model(detect.stdout, summary.stdout)
+            try:
+                photo_controls = self._discover_photo_controls()
+            except Exception:
+                LOGGER.exception("Could not discover camera photo quality controls")
+                photo_controls = []
             with self._lock:
                 self.camera_connected = True
                 self.camera_model = model or "Canon / gPhoto2 camera"
+                self._photo_controls = {str(item["path"]): item for item in photo_controls}
+                self._latest_frame_dimensions = None
                 self.state = CameraState.READY
                 self.last_error = None
             LOGGER.info("Camera initialized: %s", self.camera_model)
             return self.status()
+
+    def capabilities(self) -> Dict[str, Any]:
+        with self._lock:
+            if not self.camera_connected:
+                raise CameraServiceError("Сначала инициализируйте камеру.", "CAMERA_NOT_FOUND")
+            controls = [dict(value) for value in self._photo_controls.values()]
+            dimensions = list(self._latest_frame_dimensions) if self._latest_frame_dimensions else None
+            selected_profile = self._video_profile
+        return {
+            "success": True,
+            "camera_model": self.camera_model,
+            "photo_controls": controls,
+            "photo_note": "Показываются только безопасные JPEG-варианты, обнаруженные у подключённой камеры.",
+            "video_profiles": self._video_profiles_public(),
+            "selected_video_profile": selected_profile,
+            "liveview_resolution": dimensions,
+            "video_note": "Разрешение и FPS берутся из LiveView камеры; профиль меняет сжатие H.264, но не добавляет детализацию.",
+        }
+
+    def _discover_photo_controls(self) -> list[Dict[str, Any]]:
+        result = self._run_command(
+            [self.config.gphoto2_bin, "--list-config"],
+            self.config.command_timeout_s,
+            check=False,
+        )
+        if result.returncode != 0:
+            LOGGER.warning("gphoto2 --list-config failed: %s", (result.stderr or result.stdout).strip())
+            return []
+        candidates: list[tuple[int, str, str]] = []
+        seen: set[str] = set()
+        for raw_path in result.stdout.splitlines():
+            path = raw_path.strip()
+            if not path.startswith("/") or path in seen:
+                continue
+            basename = re.sub(r"[^a-z0-9]", "", path.rsplit("/", 1)[-1].lower())
+            if basename not in PHOTO_CONFIG_LABELS:
+                continue
+            candidates.append((PHOTO_CONFIG_PRIORITY[basename], path, basename))
+            seen.add(path)
+
+        controls: list[Dict[str, Any]] = []
+        for _priority, path, basename in sorted(candidates):
+            details = self._run_command(
+                [self.config.gphoto2_bin, "--get-config", path],
+                self.config.command_timeout_s,
+                check=False,
+            )
+            if details.returncode != 0:
+                continue
+            control = parse_gphoto_config(path, details.stdout)
+            choices = [str(value) for value in control.get("choices") or []]
+            if basename == "imageformat":
+                choices = [value for value in choices if "jpeg" in value.lower() and "raw" not in value.lower()]
+            if control.get("readonly") or len(choices) < 2:
+                continue
+            current = str(control.get("current") or "")
+            if current not in choices:
+                current = choices[0]
+            controls.append(
+                {
+                    "path": path,
+                    "key": basename,
+                    "label": PHOTO_CONFIG_LABELS[basename],
+                    "current": current,
+                    "choices": choices,
+                }
+            )
+        return controls
+
+    def _apply_photo_settings(self, requested: Optional[Dict[str, str]]) -> None:
+        if not requested:
+            return
+        with self._lock:
+            controls = {path: dict(value) for path, value in self._photo_controls.items()}
+        for path, requested_value in requested.items():
+            control = controls.get(str(path))
+            value = str(requested_value)
+            if not control:
+                raise CameraServiceError("Параметр качества не поддерживается этой камерой.", "UNSUPPORTED_CAMERA_SETTING", str(path), 400)
+            if value not in control.get("choices", []):
+                raise CameraServiceError("Недопустимое качество для подключённой камеры.", "UNSUPPORTED_CAMERA_SETTING", value, 400)
+            applied = self._run_command(
+                [self.config.gphoto2_bin, "--set-config-value", f"{path}={value}"],
+                self.config.command_timeout_s,
+                check=False,
+            )
+            if applied.returncode != 0:
+                details = (applied.stderr or applied.stdout).strip()
+                raise CameraServiceError("Камера не применила выбранное качество фото.", "CAMERA_SETTING_FAILED", details)
+            verify = self._run_command(
+                [self.config.gphoto2_bin, "--get-config", str(path)],
+                self.config.command_timeout_s,
+                check=False,
+            )
+            verified = parse_gphoto_config(str(path), verify.stdout) if verify.returncode == 0 else {}
+            actual = str(verified.get("current") or value)
+            if actual != value:
+                raise CameraServiceError(
+                    "Камера применила другое качество фото.",
+                    "CAMERA_SETTING_FAILED",
+                    f"Запрошено: {value}; установлено: {actual}",
+                )
+            with self._lock:
+                if str(path) in self._photo_controls:
+                    self._photo_controls[str(path)]["current"] = actual
+
+    def _video_profiles_public(self) -> list[Dict[str, Any]]:
+        base_crf = min(max(int(self.config.ffmpeg_crf), 0), 51)
+        crf_values = {
+            "maximum": max(base_crf - 4, 0),
+            "standard": base_crf,
+            "compact": min(base_crf + 7, 51),
+        }
+        return [
+            {"id": profile_id, "label": label, "crf": crf_values[profile_id]}
+            for profile_id, label in VIDEO_PROFILE_LABELS.items()
+        ]
+
+    def _select_video_profile(self, profile_id: str) -> int:
+        profiles = {str(item["id"]): item for item in self._video_profiles_public()}
+        selected = str(profile_id or "standard")
+        if selected not in profiles:
+            raise CameraServiceError("Неизвестный профиль качества видео.", "UNSUPPORTED_VIDEO_PROFILE", selected, 400)
+        with self._lock:
+            self._video_profile = selected
+        return int(profiles[selected]["crf"])
 
     def start_stream(self) -> Dict[str, Any]:
         with self._operation("Камера уже выполняет другую операцию."):
@@ -309,7 +521,7 @@ class CameraController:
             path.write_bytes(frame)
             return self._register_file(path, "preview")
 
-    def capture_photo(self) -> MediaRecord:
+    def capture_photo(self, photo_settings: Optional[Dict[str, str]] = None) -> MediaRecord:
         restart_stream = False
         record: Optional[MediaRecord] = None
         pending_error: Optional[Exception] = None
@@ -332,6 +544,7 @@ class CameraController:
                 "--capture-image-and-download",
             ]
             try:
+                self._apply_photo_settings(photo_settings)
                 result = self._run_command(command, self.config.photo_timeout_s, check=False)
                 if result.returncode != 0 or not path.exists() or path.stat().st_size == 0:
                     details = (result.stderr or result.stdout).strip()
@@ -358,7 +571,8 @@ class CameraController:
         assert record is not None
         return record
 
-    def start_recording(self) -> Dict[str, Any]:
+    def start_recording(self, video_profile: str = "standard") -> Dict[str, Any]:
+        selected_crf = self._select_video_profile(video_profile)
         with self._lock:
             already_streaming = self._process_running(self._gphoto)
         if not already_streaming:
@@ -400,7 +614,7 @@ class CameraController:
                     "-preset",
                     str(self.config.ffmpeg_preset),
                     "-crf",
-                    str(int(self.config.ffmpeg_crf)),
+                    str(selected_crf),
                     "-pix_fmt",
                     "yuv420p",
                     "-fps_mode",
@@ -516,6 +730,20 @@ class CameraController:
             raise CameraServiceError("Файл больше не существует.", "FILE_NOT_FOUND", status_code=404)
         return path, record
 
+    def delete_file(self, file_id: str) -> MediaRecord:
+        path, record = self.file_path(file_id)
+        with self._lock:
+            recording_path = self._recording_final.resolve() if self._recording_final else None
+            if recording_path == path:
+                raise CameraServiceError("Нельзя удалить файл активной записи.", "CAMERA_BUSY")
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise CameraServiceError("Не удалось удалить файл с Raspberry Pi.", "FILE_DELETE_FAILED", str(exc)) from exc
+        with self._lock:
+            self._files.pop(file_id, None)
+        return record
+
     def wait_for_frame(self, previous_sequence: int, timeout_s: float = 5.0) -> tuple[Optional[bytes], int, bool]:
         deadline = time.monotonic() + timeout_s
         with self._frame_condition:
@@ -553,8 +781,11 @@ class CameraController:
                 buffer.extend(chunk)
                 for frame in self._extract_frames(buffer):
                     now_mono = time.monotonic()
+                    dimensions = jpeg_dimensions(frame)
                     with self._frame_condition:
                         self._latest_frame = frame
+                        if dimensions:
+                            self._latest_frame_dimensions = dimensions
                         self._last_frame_at = datetime.now(timezone.utc)
                         self._frame_sequence += 1
                         self._frame_times.append(now_mono)
@@ -932,6 +1163,10 @@ def create_app(config: ServiceConfig) -> FastAPI:
     async def initialize():
         return await run_in_threadpool(controller.initialize)
 
+    @app.get("/api/camera/capabilities")
+    async def capabilities():
+        return controller.capabilities()
+
     @app.post("/api/liveview/start")
     async def start_liveview():
         return await run_in_threadpool(controller.start_stream)
@@ -967,13 +1202,17 @@ def create_app(config: ServiceConfig) -> FastAPI:
         return {"success": True, "file": record.public(), "status": controller.status()}
 
     @app.post("/api/photo/capture")
-    async def capture_photo():
-        record = await run_in_threadpool(controller.capture_photo)
+    async def capture_photo(payload: Optional[Dict[str, Any]] = Body(default=None)):
+        photo_settings = (payload or {}).get("photo_settings") or {}
+        if not isinstance(photo_settings, dict):
+            raise CameraServiceError("Некорректные параметры качества фото.", "INVALID_REQUEST", status_code=400)
+        record = await run_in_threadpool(controller.capture_photo, photo_settings)
         return {"success": True, "file": record.public(), "status": controller.status()}
 
     @app.post("/api/video/start")
-    async def start_video():
-        return await run_in_threadpool(controller.start_recording)
+    async def start_video(payload: Optional[Dict[str, Any]] = Body(default=None)):
+        video_profile = str((payload or {}).get("video_profile") or "standard")
+        return await run_in_threadpool(controller.start_recording, video_profile)
 
     @app.post("/api/video/stop")
     async def stop_video():
@@ -988,6 +1227,11 @@ def create_app(config: ServiceConfig) -> FastAPI:
     async def download(file_id: str):
         path, record = controller.file_path(file_id)
         return FileResponse(path, filename=record.name, media_type="application/octet-stream")
+
+    @app.delete("/api/files/{file_id}")
+    async def delete_file(file_id: str):
+        record = await run_in_threadpool(controller.delete_file, file_id)
+        return {"success": True, "deleted": record.public()}
 
     return app
 

@@ -118,6 +118,7 @@ def open_settings_window(app) -> None:
     camera_timeout_var = tk.StringVar(value=str(camera_settings.get("request_timeout_s", 8.0)))
     camera_stream_timeout_var = tk.StringVar(value=str(camera_settings.get("stream_timeout_s", 12.0)))
     camera_download_var = tk.StringVar(value=str(camera_settings.get("download_dir", SCRIPT_DIR / "camera_downloads")))
+    camera_keep_remote_var = tk.BooleanVar(value=bool(camera_settings.get("keep_remote_files_after_download", True)))
     add_settings_entry(camera_tab, 0, "IP-адрес или имя Raspberry Pi", camera_host_var, width=32)
     add_settings_entry(camera_tab, 1, "Порт сервиса", camera_port_var)
     add_settings_entry(camera_tab, 2, "Тайм-аут запросов, с", camera_timeout_var)
@@ -125,6 +126,11 @@ def open_settings_window(app) -> None:
     ttk.Label(camera_tab, text="Папка скачивания:").grid(row=4, column=0, sticky="e", pady=3, padx=(0, 8))
     ttk.Entry(camera_tab, textvariable=camera_download_var, width=52).grid(row=4, column=1, sticky="we", pady=3)
     ttk.Button(camera_tab, text="Обзор", command=lambda: browse_root(camera_download_var)).grid(row=4, column=2, padx=(8, 0))
+    ttk.Checkbutton(
+        camera_tab,
+        text="Оставлять фото и видео на Raspberry Pi после успешного скачивания",
+        variable=camera_keep_remote_var,
+    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
     ttk.Label(
         camera_tab,
         text=(
@@ -134,7 +140,7 @@ def open_settings_window(app) -> None:
         foreground="#555555",
         wraplength=620,
         justify="left",
-    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
     camera_tab.columnconfigure(1, weight=1)
 
     def make_vars(section: str) -> Dict[str, tk.StringVar]:
@@ -228,6 +234,9 @@ def open_settings_window(app) -> None:
                 "request_timeout_s": parse_float(camera_timeout_var.get(), "Тайм-аут запросов камеры"),
                 "stream_timeout_s": parse_float(camera_stream_timeout_var.get(), "Тайм-аут LiveView"),
                 "download_dir": camera_download_var.get().strip() or str(SCRIPT_DIR / "camera_downloads"),
+                "keep_remote_files_after_download": bool(camera_keep_remote_var.get()),
+                "video_quality_profile": str(camera_settings.get("video_quality_profile", "standard")),
+                "photo_quality_settings": dict(camera_settings.get("photo_quality_settings") or {}),
             }
             settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
             settings["spectrum_advanced"] = collect_section("spectrum_advanced", spec_vars, spec_bool_vars)
