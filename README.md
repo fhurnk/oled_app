@@ -1,6 +1,6 @@
 # OLED Measurement App
 
-Версия: `v1.7.6`
+Версия: `v1.8.0-alpha.1`
 
 Приложение для ведения серий измерений OLED-пикселей: ВАЯХ/IVL, спектры, стабильность, журнал серии и экспорт данных в Excel.
 
@@ -31,6 +31,19 @@ py -3 -m venv env
 .\env\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+## Камера Canon (alpha)
+
+В стартовом окне и в меню открытой серии доступна кнопка `Камера (alpha)`. Она открывает независимое тестовое окно для Canon, подключённой к Raspberry Pi:
+
+- подключение к сервису и проверка `gphoto2`;
+- LiveView без VNC Viewer;
+- сохранение текущего preview-кадра;
+- полноразмерное фото;
+- запись LiveView-потока в MP4;
+- скачивание файлов на основной компьютер.
+
+На этом этапе камера не запускает измерения и не привязывает файлы к пикселям. Сервис Raspberry Pi, пример `systemd` и инструкция установки находятся в `raspberry_camera_service/`.
+
 ## Что Должно Попасть В Репозиторий
 
 В GitHub-репозитории `OLED_meas` должны храниться исходники, конфиги-примеры и документация. Папка с результатами измерений не коммитится:
@@ -44,6 +57,9 @@ py -3 -m venv env
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
+- `oled_app/camera/client.py` - HTTP-клиент сервиса камеры Raspberry Pi.
+- `oled_app/gui/camera_window.py` - независимое тестовое окно LiveView, фото и видео.
+- `raspberry_camera_service/` - сервис Canon/gPhoto2/FFmpeg для Raspberry Pi, конфигурация и инструкция.
 - `requirements.txt` - зависимости Python.
 - `README.md` - краткое описание проекта.
 - `PROJECT_OVERVIEW.md` - структура и логика работы.
@@ -62,16 +78,16 @@ py -3 -m venv env
 - `oled_app/measurements/spectrum.py` - модульная логика съёмки и обработки спектров для нового приложения.
 - `oled_app/measurements/stability.py` - модульная логика измерения стабильности для нового приложения.
 - `oled_app/gui/widgets.py`, `oled_app/gui/progress.py` - общие GUI helpers и progress windows для нового приложения.
-- `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, `oled_app/gui/report_window.py` - базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ, окно спектров, окно стабильности и окно отчета.
+- `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/camera_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, `oled_app/gui/report_window.py` - базовый класс нового GUI, основные окна и альфа-окно камеры.
 - `docs/versions/` - архив описаний версий.
 - `docs/GITHUB_RELEASE_WORKFLOW.md` - порядок публикации версий и GitHub Releases.
 
 ## Нумерация Версий
 
-Формат: `vMAJOR.MIDDLE.MINOR`.
+Стабильный формат: `vMAJOR.MIDDLE.MINOR`. Для экспериментальной сборки допускается суффикс prerelease, например `v1.8.0-alpha.1`.
 
 - `MAJOR` - крупное изменение логики или структуры проекта.
 - `MIDDLE` - функциональное обновление среднего масштаба.
 - `MINOR` - небольшая правка или точечное добавление.
 
-Текущая версия: `v1.7.6`.
+Текущая версия: `v1.8.0-alpha.1`.

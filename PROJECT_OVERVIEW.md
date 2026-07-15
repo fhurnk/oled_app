@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.7.6`
+Версия: `v1.8.0-alpha.1`
 
 ## Назначение
 
@@ -20,13 +20,15 @@
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
+- альфа-клиент Canon через Raspberry Pi находится в `oled_app/camera/client.py`, а независимое тестовое окно — в `oled_app/gui/camera_window.py`.
+- отдельный сервис Raspberry Pi находится в `raspberry_camera_service/`; он получает единый MJPEG-поток через `gphoto2`, отдаёт LiveView по HTTP и направляет те же кадры в FFmpeg при записи.
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` и подключен к новому GUI.
 - общая запись raw CSV вынесена в `oled_app/measurements/raw_io.py`; сборка IVL-, Spectrum- и Stability-книг из raw CSV вынесена в `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py` и `oled_app/processing/stability_results.py`.
 - workflow спектров подготовлен в `oled_app/measurements/spectrum.py` и подключен к новому GUI.
 - workflow стабильности подготовлен в `oled_app/measurements/stability.py` и подключен к новому GUI.
 - первые общие GUI helpers и progress windows подготовлены в `oled_app/gui/widgets.py` и `oled_app/gui/progress.py`.
-- базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, окно ВАЯХ, окно спектров, окно стабильности и окно отчета подготовлены в `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py` и `oled_app/gui/report_window.py`.
+- базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, альфа-окно камеры, окно ВАЯХ, окно спектров, окно стабильности и окно отчета подготовлены в `oled_app/gui/`.
 
 ## Структура Проекта
 
@@ -40,8 +42,12 @@ oled_app_v2_5_package/
     constants.py
     settings.py
     utils.py
+    camera/
+      __init__.py
+      client.py
     gui/
       app.py
+      camera_window.py
       start_screen.py
       measurement_menu.py
       settings_window.py
@@ -76,6 +82,12 @@ oled_app_v2_5_package/
       stability_results.py
     reports/
       origin_report.py
+  raspberry_camera_service/
+    camera_service.py
+    config.example.json
+    oled-camera.service.example
+    requirements.txt
+    README.md
   requirements.txt
   oled_simulator_config.json
   README.md
@@ -106,6 +118,7 @@ oled_app_v2_5_package/
       v1.7.4.md
       v1.7.5.md
       v1.7.6.md
+      v1.8.0-alpha.1.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

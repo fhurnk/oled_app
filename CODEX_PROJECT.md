@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.7.6`
+- Current app version: `v1.8.0-alpha.1`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. The current series metadata and scaling release is `v1.7.6`.
+When changing user-visible behavior, update all version references in the same commit. The current camera integration prerelease is `v1.8.0-alpha.1`.
 
 ## Main Entry Points
 
@@ -25,13 +25,15 @@ When changing user-visible behavior, update all version references in the same c
 - Shared constants, settings defaults, settings I/O, and common utility helpers now live in `oled_app/constants.py`, `oled_app/settings.py`, and `oled_app/utils.py`.
 - Series creation, quarter metadata/naming, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
+- The desktop camera HTTP client lives in `oled_app/camera/client.py`; the independent alpha test window lives in `oled_app/gui/camera_window.py`.
+- The Raspberry Pi FastAPI service, gPhoto2/FFmpeg process controller, example config, systemd unit, and setup guide live under `raspberry_camera_service/`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.
 - Raw CSV measurement helpers now live in `oled_app/measurements/raw_io.py`; IVL, Spectrum, and Stability post-processing live in `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, and `oled_app/processing/stability_results.py`.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular application.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular application.
 - Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
-- The modular GUI shell, start screen, series measurement menu, settings window, IVL window, spectrum window, stability window, and report window now live in `oled_app/gui/app.py`, `oled_app/gui/start_screen.py`, `oled_app/gui/measurement_menu.py`, `oled_app/gui/settings_window.py`, `oled_app/gui/ivl_window.py`, `oled_app/gui/spectrum_window.py`, `oled_app/gui/stability_window.py`, and `oled_app/gui/report_window.py`.
+- The modular GUI shell, start screen, series measurement menu, settings window, camera alpha window, IVL window, spectrum window, stability window, and report window now live under `oled_app/gui/`.
 
 During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`.
 

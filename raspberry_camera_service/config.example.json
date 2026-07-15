@@ -1,0 +1,19 @@
+{
+  "host": "0.0.0.0",
+  "port": 8765,
+  "data_dir": "/home/pi/oled-camera/camera_data",
+  "gphoto2_bin": "gphoto2",
+  "ffmpeg_bin": "ffmpeg",
+  "ffprobe_bin": "ffprobe",
+  "command_timeout_s": 15,
+  "photo_timeout_s": 45,
+  "first_frame_timeout_s": 12,
+  "no_frame_timeout_s": 10,
+  "process_stop_timeout_s": 8,
+  "min_free_disk_mb": 512,
+  "ffmpeg_preset": "veryfast",
+  "ffmpeg_crf": 20,
+  "ffmpeg_codec": "libx264",
+  "auto_initialize": false,
+  "allow_broad_gvfs_cleanup": true
+}

@@ -36,6 +36,7 @@ Useful options:
 
 ```powershell
 .\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --draft
+.\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z-alpha.1 --prerelease --latest false
 .\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --repo fhurnk/oled_app
 .\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --dry-run
 ```

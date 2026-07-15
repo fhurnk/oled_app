@@ -37,6 +37,7 @@ def open_settings_window(app) -> None:
 
     general = scrollable_notebook_tab(notebook, "Общие")
     sim_tab = scrollable_notebook_tab(notebook, "Эмулятор")
+    camera_tab = scrollable_notebook_tab(notebook, "Камера alpha")
     ivl_tab = scrollable_notebook_tab(notebook, "ВАЯХ доп.")
     spec_tab = scrollable_notebook_tab(notebook, "Спектры доп.")
     stab_tab = scrollable_notebook_tab(notebook, "Стабильность доп.")
@@ -110,6 +111,31 @@ def open_settings_window(app) -> None:
         justify="left",
     ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 0))
     sim_tab.columnconfigure(1, weight=1)
+
+    camera_settings = app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
+    camera_host_var = tk.StringVar(value=str(camera_settings.get("host", "192.168.4.1")))
+    camera_port_var = tk.StringVar(value=str(camera_settings.get("port", 8765)))
+    camera_timeout_var = tk.StringVar(value=str(camera_settings.get("request_timeout_s", 8.0)))
+    camera_stream_timeout_var = tk.StringVar(value=str(camera_settings.get("stream_timeout_s", 12.0)))
+    camera_download_var = tk.StringVar(value=str(camera_settings.get("download_dir", SCRIPT_DIR / "camera_downloads")))
+    add_settings_entry(camera_tab, 0, "IP-адрес или имя Raspberry Pi", camera_host_var, width=32)
+    add_settings_entry(camera_tab, 1, "Порт сервиса", camera_port_var)
+    add_settings_entry(camera_tab, 2, "Тайм-аут запросов, с", camera_timeout_var)
+    add_settings_entry(camera_tab, 3, "Тайм-аут кадра LiveView, с", camera_stream_timeout_var)
+    ttk.Label(camera_tab, text="Папка скачивания:").grid(row=4, column=0, sticky="e", pady=3, padx=(0, 8))
+    ttk.Entry(camera_tab, textvariable=camera_download_var, width=52).grid(row=4, column=1, sticky="we", pady=3)
+    ttk.Button(camera_tab, text="Обзор", command=lambda: browse_root(camera_download_var)).grid(row=4, column=2, padx=(8, 0))
+    ttk.Label(
+        camera_tab,
+        text=(
+            "Альфа-модуль камеры работает отдельно от измерений. На Raspberry Pi должен быть запущен "
+            "сервис из папки raspberry_camera_service."
+        ),
+        foreground="#555555",
+        wraplength=620,
+        justify="left",
+    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    camera_tab.columnconfigure(1, weight=1)
 
     def make_vars(section: str) -> Dict[str, tk.StringVar]:
         return {key: tk.StringVar(value=str(value)) for key, value in app.app_settings.get(section, {}).items() if not isinstance(value, bool)}
@@ -193,6 +219,16 @@ def open_settings_window(app) -> None:
                 "folder_name": RAW_DATA_FOLDER,
             }
             settings["simulator_config_path"] = sim_cfg_var.get().strip() or str(SCRIPT_DIR / SIM_CONFIG_FILE)
+            camera_port = parse_int(camera_port_var.get(), "Порт сервиса камеры")
+            if not 1 <= camera_port <= 65535:
+                raise ValueError("Порт сервиса камеры должен быть от 1 до 65535.")
+            settings["camera"] = {
+                "host": camera_host_var.get().strip() or "192.168.4.1",
+                "port": camera_port,
+                "request_timeout_s": parse_float(camera_timeout_var.get(), "Тайм-аут запросов камеры"),
+                "stream_timeout_s": parse_float(camera_stream_timeout_var.get(), "Тайм-аут LiveView"),
+                "download_dir": camera_download_var.get().strip() or str(SCRIPT_DIR / "camera_downloads"),
+            }
             settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
             settings["spectrum_advanced"] = collect_section("spectrum_advanced", spec_vars, spec_bool_vars)
             settings["stability_advanced"] = collect_section("stability_advanced", stab_vars, {})

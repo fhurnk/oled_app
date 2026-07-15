@@ -34,6 +34,7 @@ def show_measurement_menu(app) -> None:
     ttk.Label(header, text="Измерения OLED", font=("Segoe UI", 18, "bold")).pack(side="left")
     ttk.Button(header, text="Открыть другую серию", command=app.show_start_screen).pack(side="right")
     ttk.Button(header, text="Настройки", command=app.open_settings_window).pack(side="right", padx=(0, 10))
+    ttk.Button(header, text="Камера (alpha)", command=app.open_camera_test_window).pack(side="right", padx=(0, 10))
     ttk.Button(header, text="Настройки серии", command=app.show_edit_series_screen).pack(side="right", padx=(0, 10))
 
     ttk.Label(main, text=f"Серия: {app.series.series_folder}").pack(anchor="w", pady=(4, 2))

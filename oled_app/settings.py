@@ -80,6 +80,13 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
     "com_port": "SIM",
     "auto_com_port": False,
     "simulator_config_path": str(SCRIPT_DIR / SIM_CONFIG_FILE),
+    "camera": {
+        "host": "192.168.4.1",
+        "port": 8765,
+        "request_timeout_s": 8.0,
+        "stream_timeout_s": 12.0,
+        "download_dir": str(SCRIPT_DIR / "camera_downloads"),
+    },
     "ivl_advanced": {
         "photodiode_bias_V": -5.0,
         "photodiode_range": 4,

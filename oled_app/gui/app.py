@@ -28,6 +28,7 @@ from .ivl_window import (
     pixel_info_from_journal,
     remove_same_substrate_from_queue,
 )
+from .camera_window import open_camera_test_window
 from .measurement_menu import pixel_ids, refresh_pixel_table, show_measurement_menu
 from .report_window import open_report_window
 from .settings_window import open_settings_window
@@ -191,6 +192,9 @@ class OLEDModularApp(tk.Tk):
 
     def open_report_window(self) -> None:
         open_report_window(self)
+
+    def open_camera_test_window(self) -> None:
+        open_camera_test_window(self)
 
     def open_settings_window(self) -> None:
         open_settings_window(self)
