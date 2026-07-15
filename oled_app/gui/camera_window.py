@@ -23,6 +23,28 @@ from oled_app.constants import SCRIPT_DIR
 from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
 
 
+def decode_liveview_frame(frame: bytes, max_size: tuple[int, int]):
+    """Fully decode and resize one JPEG before handing it to Tk."""
+
+    if Image is None:
+        raise RuntimeError("Для LiveView требуется Pillow.")
+    width = max(1, min(int(max_size[0]), 8192))
+    height = max(1, min(int(max_size[1]), 8192))
+    with io.BytesIO(frame) as stream:
+        with Image.open(stream) as source:
+            source.load()
+            image = source.convert("RGB")
+    if image.width <= width and image.height <= height:
+        return image
+    original = image.copy()
+    try:
+        image.thumbnail((width, height), Image.Resampling.LANCZOS)
+    except OSError:
+        image = original
+        image.thumbnail((width, height), Image.Resampling.BILINEAR)
+    return image
+
+
 class CameraTestWindow(tk.Toplevel):
     """Manual validation UI for the Raspberry Pi camera service."""
 
@@ -55,6 +77,8 @@ class CameraTestWindow(tk.Toplevel):
         self._frame_queue: queue.Queue[bytes] = queue.Queue(maxsize=1)
         self._canvas_image = None
         self._last_frame: Optional[bytes] = None
+        self._last_render_error = ""
+        self._render_error_count = 0
         self._poll_after_id = None
         self._frame_after_id = None
 
@@ -382,11 +406,16 @@ class CameraTestWindow(tk.Toplevel):
 
     def _render_frame(self, frame: bytes) -> None:
         try:
-            image = Image.open(io.BytesIO(frame)).convert("RGB")
             width = max(self.preview_canvas.winfo_width() - 8, 200)
             height = max(self.preview_canvas.winfo_height() - 8, 160)
-            image.thumbnail((width, height), Image.Resampling.LANCZOS)
-            photo = ImageTk.PhotoImage(image)
+            image = decode_liveview_frame(frame, (width, height))
+        except Exception as exc:
+            self._report_render_error("декодирование JPEG", exc)
+            return
+
+        try:
+            # Bind the image to this window's Tcl interpreter explicitly.
+            photo = ImageTk.PhotoImage(image=image, master=self.preview_canvas)
             self._canvas_image = photo
             self.preview_canvas.delete("all")
             canvas_w = self.preview_canvas.winfo_width()
@@ -396,8 +425,21 @@ class CameraTestWindow(tk.Toplevel):
             arm = max(12, min(image.width, image.height) // 16)
             self.preview_canvas.create_line(center_x - arm, center_y, center_x + arm, center_y, fill="#00FF66", width=1)
             self.preview_canvas.create_line(center_x, center_y - arm, center_x, center_y + arm, fill="#00FF66", width=1)
+            self._last_render_error = ""
+            self._render_error_count = 0
         except Exception as exc:
-            self._log(f"Повреждённый кадр LiveView: {exc}")
+            self._report_render_error("отрисовка Tk", exc)
+
+    def _report_render_error(self, stage: str, exc: Exception) -> None:
+        signature = f"{stage}: {type(exc).__name__}: {exc}"
+        if signature == self._last_render_error:
+            self._render_error_count += 1
+        else:
+            self._last_render_error = signature
+            self._render_error_count = 1
+        if self._render_error_count == 1 or self._render_error_count % 50 == 0:
+            repeats = f" (повторено {self._render_error_count} раз)" if self._render_error_count > 1 else ""
+            self._log(f"Ошибка LiveView, этап «{stage}»: {exc}{repeats}")
 
     def _stream_failed(self, exc: Exception) -> None:
         self._stop_local_stream()
