@@ -196,6 +196,7 @@ class CameraTestWindow(tk.Toplevel):
     def connect(self) -> None:
         try:
             self._save_camera_settings()
+            self._stop_local_stream()
             self.client = self._make_client()
         except Exception as exc:
             messagebox.showerror("Камера", str(exc), parent=self)
@@ -357,14 +358,15 @@ class CameraTestWindow(tk.Toplevel):
             return
         if self._stream_thread and self._stream_thread.is_alive():
             return
-        self._stream_stop = threading.Event()
+        stop_event = threading.Event()
+        self._stream_stop = stop_event
         client = self.client
 
         def receive() -> None:
             try:
-                client.iter_liveview_frames(self._stream_stop, self._queue_frame)
+                client.iter_liveview_frames(stop_event, self._queue_frame)
             except Exception as exc:
-                if not self._stream_stop.is_set() and not self._closed:
+                if not stop_event.is_set() and not self._closed:
                     try:
                         self.after(0, lambda error=exc: self._stream_failed(error))
                     except tk.TclError:
@@ -374,8 +376,21 @@ class CameraTestWindow(tk.Toplevel):
         self._stream_thread.start()
 
     def _stop_local_stream(self) -> None:
-        self._stream_stop.set()
-        self._stream_thread = None
+        stop_event = self._stream_stop
+        thread = self._stream_thread
+        client = self.client
+        stop_event.set()
+        if client is not None:
+            client.close_liveview_stream()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        while True:
+            try:
+                self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        if self._stream_thread is thread and (thread is None or not thread.is_alive()):
+            self._stream_thread = None
 
     def _queue_frame(self, frame: bytes) -> None:
         try:

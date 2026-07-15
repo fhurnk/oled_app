@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import select
+import socket
 import threading
 import urllib.error
 import urllib.parse
@@ -75,6 +77,8 @@ class CameraClient:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = max(float(timeout_s), 0.5)
         self.stream_timeout_s = max(float(stream_timeout_s), 1.0)
+        self._stream_response_lock = threading.Lock()
+        self._stream_response = None
 
     def health(self) -> Dict[str, Any]:
         return self._json_request("GET", "/api/health")
@@ -120,17 +124,28 @@ class CameraClient:
             method="GET",
         )
         buffer = bytearray()
+        response = None
         try:
-            with urllib.request.urlopen(request, timeout=self.stream_timeout_s) as response:
-                while not stop_event.is_set():
-                    chunk = response.read(16_384)
-                    if not chunk:
-                        raise CameraClientError("Поток LiveView был закрыт сервисом.", "LIVEVIEW_STREAM_LOST")
-                    buffer.extend(chunk)
-                    for frame in extract_jpeg_frames(buffer):
-                        if stop_event.is_set():
-                            return
-                        on_frame(frame)
+            response = urllib.request.urlopen(request, timeout=self.stream_timeout_s)
+            with self._stream_response_lock:
+                if stop_event.is_set():
+                    response.close()
+                    return
+                self._stream_response = response
+            while not stop_event.is_set():
+                if not self._wait_for_stream_data(response, stop_event):
+                    return
+                reader = getattr(response, "read1", response.read)
+                chunk = reader(16_384)
+                if not chunk:
+                    if stop_event.is_set():
+                        return
+                    raise CameraClientError("Поток LiveView был закрыт сервисом.", "LIVEVIEW_STREAM_LOST")
+                buffer.extend(chunk)
+                for frame in extract_jpeg_frames(buffer):
+                    if stop_event.is_set():
+                        return
+                    on_frame(frame)
         except CameraClientError:
             raise
         except urllib.error.HTTPError as exc:
@@ -142,6 +157,59 @@ class CameraClient:
                     "NETWORK_ERROR",
                     str(exc),
                 ) from exc
+        finally:
+            with self._stream_response_lock:
+                if self._stream_response is response:
+                    self._stream_response = None
+            if response is not None:
+                try:
+                    response.close()
+                except OSError:
+                    pass
+
+    def close_liveview_stream(self) -> None:
+        """Interrupt an active LiveView read from another thread."""
+
+        with self._stream_response_lock:
+            response = self._stream_response
+        if response is not None:
+            self._shutdown_stream_socket(response)
+            try:
+                response.close()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _shutdown_stream_socket(response: Any) -> None:
+        """Unblock HTTPResponse.read before closing it on Windows."""
+
+        buffered = getattr(response, "fp", None)
+        raw = getattr(buffered, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is None:
+            return
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _wait_for_stream_data(response: Any, stop_event: threading.Event) -> bool:
+        """Poll the stream socket so cancellation never waits on a long read."""
+
+        buffered = getattr(response, "fp", None)
+        raw = getattr(buffered, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is None:
+            return not stop_event.is_set()
+        while not stop_event.is_set():
+            try:
+                readable, _, _ = select.select([sock], [], [], 0.2)
+            except (OSError, ValueError):
+                return True
+            if readable:
+                return True
+        return False
 
     def download_file(self, remote_file: RemoteFile, output_dir: Path | str) -> Path:
         """Download through .part, then verify size and optional SHA-256."""

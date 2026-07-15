@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.0-alpha.2`
+- Current app version: `v1.8.0-alpha.3`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. The current camera integration prerelease is `v1.8.0-alpha.2`.
+When changing user-visible behavior, update all version references in the same commit. The current camera integration prerelease is `v1.8.0-alpha.3`.
 
 ## Main Entry Points
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import threading
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 
 from PIL import Image
 
 from oled_app.camera.client import (
+    CameraClient,
     available_path,
     build_camera_service_url,
     extract_jpeg_frames,
@@ -40,6 +43,44 @@ class CameraClientHelpersTests(unittest.TestCase):
         self.assertEqual(decoded.mode, "RGB")
         self.assertEqual(decoded.size, (320, 213))
         self.assertIsNone(getattr(decoded, "fp", None))
+
+    def test_active_liveview_response_can_be_closed_from_another_thread(self) -> None:
+        response = BlockingResponse()
+        client = CameraClient("http://camera.test:8765")
+        stop_event = threading.Event()
+        failures: list[Exception] = []
+
+        def receive() -> None:
+            try:
+                client.iter_liveview_frames(stop_event, lambda _frame: None)
+            except Exception as exc:  # pragma: no cover - assertion reports the actual failure
+                failures.append(exc)
+
+        with patch("urllib.request.urlopen", return_value=response):
+            thread = threading.Thread(target=receive)
+            thread.start()
+            self.assertTrue(response.read_started.wait(1.0))
+            stop_event.set()
+            client.close_liveview_stream()
+            thread.join(1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, [])
+        client.close_liveview_stream()
+
+
+class BlockingResponse:
+    def __init__(self) -> None:
+        self.read_started = threading.Event()
+        self.closed = threading.Event()
+
+    def read(self, _size: int) -> bytes:
+        self.read_started.set()
+        self.closed.wait(2.0)
+        raise OSError("stream closed")
+
+    def close(self) -> None:
+        self.closed.set()
 
 
 if __name__ == "__main__":
