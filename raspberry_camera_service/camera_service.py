@@ -44,11 +44,20 @@ PHOTO_CONFIG_LABELS = {
     "quality": "Качество фото",
 }
 PHOTO_CONFIG_PRIORITY = {name: index for index, name in enumerate(PHOTO_CONFIG_LABELS)}
-VIDEO_PROFILE_LABELS = {
-    "maximum": "Максимальное качество (исходный LiveView, CRF ниже)",
-    "standard": "Стандартное качество (исходный LiveView)",
-    "compact": "Компактный файл (исходный LiveView, CRF выше)",
+VIDEO_CONFIG_LABELS = {
+    "liveviewsize": ("quality", "Качество/размер LiveView"),
+    "output": ("quality", "Качество/размер LiveView Canon"),
+    "moviequality": ("quality", "Режим качества камеры"),
+    "videoquality": ("quality", "Качество видео камеры"),
+    "moviesize": ("quality", "Размер видео камеры"),
+    "videosize": ("quality", "Размер видео камеры"),
+    "liveviewfps": ("fps", "Кадров в секунду LiveView"),
+    "moviefps": ("fps", "Кадров в секунду камеры"),
+    "movieframerate": ("fps", "Кадров в секунду камеры"),
+    "videoframerate": ("fps", "Кадров в секунду камеры"),
+    "framerate": ("fps", "Кадров в секунду камеры"),
 }
+VIDEO_CONFIG_PRIORITY = {name: index for index, name in enumerate(VIDEO_CONFIG_LABELS)}
 
 
 def parse_gphoto_config(path: str, output: str) -> Dict[str, Any]:
@@ -213,7 +222,7 @@ class CameraController:
         self._frame_times: deque[float] = deque(maxlen=120)
         self._latest_frame_dimensions: Optional[tuple[int, int]] = None
         self._photo_controls: Dict[str, Dict[str, Any]] = {}
-        self._video_profile = "standard"
+        self._video_controls: Dict[str, Dict[str, Any]] = {}
 
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._ffmpeg_stderr: list[str] = []
@@ -259,7 +268,6 @@ class CameraController:
                 "fps": round(fps, 2),
                 "frame_width": frame_width,
                 "frame_height": frame_height,
-                "video_profile": self._video_profile,
                 "current_file": self._recording_final.name if self._recording_final else None,
                 "recorded_frames": self._recorded_frames,
                 "dropped_frames": self._dropped_frames,
@@ -298,10 +306,16 @@ class CameraController:
             except Exception:
                 LOGGER.exception("Could not discover camera photo quality controls")
                 photo_controls = []
+            try:
+                video_controls = self._discover_video_controls()
+            except Exception:
+                LOGGER.exception("Could not discover camera video controls")
+                video_controls = []
             with self._lock:
                 self.camera_connected = True
                 self.camera_model = model or "Canon / gPhoto2 camera"
                 self._photo_controls = {str(item["path"]): item for item in photo_controls}
+                self._video_controls = {str(item["path"]): item for item in video_controls}
                 self._latest_frame_dimensions = None
                 self.state = CameraState.READY
                 self.last_error = None
@@ -313,17 +327,17 @@ class CameraController:
             if not self.camera_connected:
                 raise CameraServiceError("Сначала инициализируйте камеру.", "CAMERA_NOT_FOUND")
             controls = [dict(value) for value in self._photo_controls.values()]
+            video_controls = [dict(value) for value in self._video_controls.values()]
             dimensions = list(self._latest_frame_dimensions) if self._latest_frame_dimensions else None
-            selected_profile = self._video_profile
         return {
             "success": True,
             "camera_model": self.camera_model,
             "photo_controls": controls,
             "photo_note": "Показываются только безопасные JPEG-варианты, обнаруженные у подключённой камеры.",
-            "video_profiles": self._video_profiles_public(),
-            "selected_video_profile": selected_profile,
+            "video_quality_controls": [item for item in video_controls if item.get("role") == "quality"],
+            "video_fps_controls": [item for item in video_controls if item.get("role") == "fps"],
             "liveview_resolution": dimensions,
-            "video_note": "Разрешение и FPS берутся из LiveView камеры; профиль меняет сжатие H.264, но не добавляет детализацию.",
+            "video_note": "Показываются только параметры LiveView/video, которые сообщила камера. Если параметра FPS нет, частоту задаёт сама камера.",
         }
 
     def _discover_photo_controls(self) -> list[Dict[str, Any]]:
@@ -413,28 +427,109 @@ class CameraController:
                 if str(path) in self._photo_controls:
                     self._photo_controls[str(path)]["current"] = actual
 
-    def _video_profiles_public(self) -> list[Dict[str, Any]]:
-        base_crf = min(max(int(self.config.ffmpeg_crf), 0), 51)
-        crf_values = {
-            "maximum": max(base_crf - 4, 0),
-            "standard": base_crf,
-            "compact": min(base_crf + 7, 51),
-        }
-        return [
-            {"id": profile_id, "label": label, "crf": crf_values[profile_id]}
-            for profile_id, label in VIDEO_PROFILE_LABELS.items()
-        ]
+    def _discover_video_controls(self) -> list[Dict[str, Any]]:
+        result = self._run_command(
+            [self.config.gphoto2_bin, "--list-config"],
+            self.config.command_timeout_s,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        candidates: list[tuple[int, str, str]] = []
+        for raw_path in result.stdout.splitlines():
+            path = raw_path.strip()
+            if not path.startswith("/"):
+                continue
+            basename = re.sub(r"[^a-z0-9]", "", path.rsplit("/", 1)[-1].lower())
+            if basename in VIDEO_CONFIG_LABELS:
+                candidates.append((VIDEO_CONFIG_PRIORITY[basename], path, basename))
+        controls: list[Dict[str, Any]] = []
+        for _priority, path, basename in sorted(candidates):
+            details = self._run_command(
+                [self.config.gphoto2_bin, "--get-config", path],
+                self.config.command_timeout_s,
+                check=False,
+            )
+            if details.returncode != 0:
+                continue
+            control = parse_gphoto_config(path, details.stdout)
+            choices = [str(value) for value in control.get("choices") or []]
+            if control.get("readonly") or len(choices) < 2:
+                continue
+            role, label = VIDEO_CONFIG_LABELS[basename]
+            current = str(control.get("current") or "")
+            if current not in choices:
+                current = choices[0]
+            controls.append(
+                {
+                    "path": path,
+                    "key": basename,
+                    "role": role,
+                    "label": label,
+                    "current": current,
+                    "choices": choices,
+                }
+            )
+        return controls
 
-    def _select_video_profile(self, profile_id: str) -> int:
-        profiles = {str(item["id"]): item for item in self._video_profiles_public()}
-        selected = str(profile_id or "standard")
-        if selected not in profiles:
-            raise CameraServiceError("Неизвестный профиль качества видео.", "UNSUPPORTED_VIDEO_PROFILE", selected, 400)
+    def _apply_video_settings(self, requested: Optional[Dict[str, str]]) -> None:
+        if not requested:
+            return
         with self._lock:
-            self._video_profile = selected
-        return int(profiles[selected]["crf"])
+            controls = {path: dict(value) for path, value in self._video_controls.items()}
+        for path, requested_value in requested.items():
+            control = controls.get(str(path))
+            value = str(requested_value)
+            if not control or value not in control.get("choices", []):
+                raise CameraServiceError(
+                    "Камера не поддерживает выбранный режим видео.",
+                    "UNSUPPORTED_CAMERA_VIDEO_SETTING",
+                    f"{path}={value}",
+                    400,
+                )
+            if value == str(control.get("current") or ""):
+                continue
+            applied = self._run_command(
+                [self.config.gphoto2_bin, "--set-config-value", f"{path}={value}"],
+                self.config.command_timeout_s,
+                check=False,
+            )
+            if applied.returncode != 0:
+                raise CameraServiceError(
+                    "Камера не применила выбранный режим видео.",
+                    "CAMERA_VIDEO_SETTING_FAILED",
+                    (applied.stderr or applied.stdout).strip(),
+                )
+            with self._lock:
+                if str(path) in self._video_controls:
+                    self._video_controls[str(path)]["current"] = value
 
-    def start_stream(self) -> Dict[str, Any]:
+    def _video_settings_require_change(self, requested: Optional[Dict[str, str]]) -> bool:
+        if not requested:
+            return False
+        with self._lock:
+            controls = {path: dict(value) for path, value in self._video_controls.items()}
+        changed = False
+        for path, requested_value in requested.items():
+            control = controls.get(str(path))
+            value = str(requested_value)
+            if not control or value not in control.get("choices", []):
+                raise CameraServiceError(
+                    "Камера не поддерживает выбранный режим видео.",
+                    "UNSUPPORTED_CAMERA_VIDEO_SETTING",
+                    f"{path}={value}",
+                    400,
+                )
+            changed = changed or value != str(control.get("current") or "")
+        return changed
+
+    def start_stream(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        settings_changed = self._video_settings_require_change(video_settings)
+        if settings_changed:
+            with self._lock:
+                if self._process_running(self._gphoto):
+                    raise CameraServiceError("Остановите LiveView перед сменой режима камеры.", "CAMERA_BUSY")
+            self._apply_video_settings(video_settings)
         with self._operation("Камера уже выполняет другую операцию."):
             with self._lock:
                 if self._process_running(self._gphoto):
@@ -571,12 +666,16 @@ class CameraController:
         assert record is not None
         return record
 
-    def start_recording(self, video_profile: str = "standard") -> Dict[str, Any]:
-        selected_crf = self._select_video_profile(video_profile)
+    def start_recording(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        selected_crf = min(max(int(self.config.ffmpeg_crf), 0), 51)
+        settings_changed = self._video_settings_require_change(video_settings)
         with self._lock:
             already_streaming = self._process_running(self._gphoto)
+        if already_streaming and settings_changed:
+            self.stop_stream()
+            already_streaming = False
         if not already_streaming:
-            self.start_stream()
+            self.start_stream(video_settings)
         with self._operation("Камера уже выполняет другую операцию."):
             with self._lock:
                 if self._process_running(self._ffmpeg):
@@ -609,6 +708,8 @@ class CameraController:
                     "-i",
                     "pipe:0",
                     "-an",
+                ]
+                command.extend([
                     "-c:v",
                     str(self.config.ffmpeg_codec),
                     "-preset",
@@ -624,7 +725,7 @@ class CameraController:
                     "-f",
                     "mp4",
                     str(temp_path),
-                ]
+                ])
                 LOGGER.info("Starting recording: %s", command)
                 try:
                     self._ffmpeg = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
@@ -1168,8 +1269,11 @@ def create_app(config: ServiceConfig) -> FastAPI:
         return controller.capabilities()
 
     @app.post("/api/liveview/start")
-    async def start_liveview():
-        return await run_in_threadpool(controller.start_stream)
+    async def start_liveview(payload: Optional[Dict[str, Any]] = Body(default=None)):
+        video_settings = (payload or {}).get("video_settings") or {}
+        if not isinstance(video_settings, dict):
+            raise CameraServiceError("Некорректные параметры LiveView.", "INVALID_REQUEST", status_code=400)
+        return await run_in_threadpool(controller.start_stream, video_settings)
 
     @app.post("/api/liveview/stop")
     async def stop_liveview():
@@ -1211,8 +1315,11 @@ def create_app(config: ServiceConfig) -> FastAPI:
 
     @app.post("/api/video/start")
     async def start_video(payload: Optional[Dict[str, Any]] = Body(default=None)):
-        video_profile = str((payload or {}).get("video_profile") or "standard")
-        return await run_in_threadpool(controller.start_recording, video_profile)
+        request_data = payload or {}
+        video_settings = request_data.get("video_settings") or {}
+        if not isinstance(video_settings, dict):
+            raise CameraServiceError("Некорректные параметры видео.", "INVALID_REQUEST", status_code=400)
+        return await run_in_threadpool(controller.start_recording, video_settings)
 
     @app.post("/api/video/stop")
     async def stop_video():

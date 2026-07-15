@@ -92,8 +92,8 @@ class CameraClient:
     def capabilities(self) -> Dict[str, Any]:
         return self._json_request("GET", "/api/camera/capabilities")
 
-    def start_liveview(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/api/liveview/start")
+    def start_liveview(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        return self._json_request("POST", "/api/liveview/start", {"video_settings": video_settings or {}})
 
     def stop_liveview(self) -> Dict[str, Any]:
         return self._json_request("POST", "/api/liveview/stop")
@@ -105,8 +105,8 @@ class CameraClient:
         payload = {"photo_settings": photo_settings or {}}
         return self._file_from_action("/api/photo/capture", payload)
 
-    def start_recording(self, video_profile: str = "standard") -> Dict[str, Any]:
-        return self._json_request("POST", "/api/video/start", {"video_profile": str(video_profile or "standard")})
+    def start_recording(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        return self._json_request("POST", "/api/video/start", {"video_settings": video_settings or {}})
 
     def stop_recording(self) -> RemoteFile:
         return self._file_from_action("/api/video/stop")

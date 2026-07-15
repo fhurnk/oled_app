@@ -59,6 +59,38 @@ Choice: 2 RAW + Large Fine JPEG
         self.assertEqual(controls[0]["choices"], ["Large Fine JPEG", "Medium Fine JPEG"])
         self.assertEqual(controls[1]["choices"], ["Large", "Medium"])
 
+    def test_video_discovery_uses_only_camera_reported_quality_and_fps(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = CameraController(ServiceConfig(data_dir=folder))
+            responses = [
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    "/main/actions/liveviewsize\n/main/capturesettings/moviefps\n/main/other/fps\n",
+                    "",
+                ),
+                subprocess.CompletedProcess([], 0, "Current: Large\nChoice: 0 Small\nChoice: 1 Large\n", ""),
+                subprocess.CompletedProcess([], 0, "Current: 25\nChoice: 0 24\nChoice: 1 25\n", ""),
+            ]
+            with patch.object(controller, "_run_command", side_effect=responses):
+                controls = controller._discover_video_controls()
+
+        self.assertEqual([control["role"] for control in controls], ["quality", "fps"])
+        self.assertEqual(controls[0]["choices"], ["Small", "Large"])
+        self.assertEqual(controls[1]["choices"], ["24", "25"])
+
+    def test_video_discovery_does_not_invent_fps_when_camera_has_no_control(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = CameraController(ServiceConfig(data_dir=folder))
+            responses = [
+                subprocess.CompletedProcess([], 0, "/main/actions/liveviewsize\n", ""),
+                subprocess.CompletedProcess([], 0, "Current: Large\nChoice: 0 Small\nChoice: 1 Large\n", ""),
+            ]
+            with patch.object(controller, "_run_command", side_effect=responses):
+                controls = controller._discover_video_controls()
+
+        self.assertEqual([control["role"] for control in controls], ["quality"])
+
     def test_delete_file_removes_only_registered_media(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             controller = CameraController(ServiceConfig(data_dir=folder))

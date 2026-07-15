@@ -235,7 +235,7 @@ def open_settings_window(app) -> None:
                 "stream_timeout_s": parse_float(camera_stream_timeout_var.get(), "Тайм-аут LiveView"),
                 "download_dir": camera_download_var.get().strip() or str(SCRIPT_DIR / "camera_downloads"),
                 "keep_remote_files_after_download": bool(camera_keep_remote_var.get()),
-                "video_quality_profile": str(camera_settings.get("video_quality_profile", "standard")),
+                "video_camera_settings": dict(camera_settings.get("video_camera_settings") or {}),
                 "photo_quality_settings": dict(camera_settings.get("photo_quality_settings") or {}),
             }
             settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)

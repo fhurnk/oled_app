@@ -87,7 +87,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "stream_timeout_s": 12.0,
         "download_dir": str(SCRIPT_DIR / "camera_downloads"),
         "keep_remote_files_after_download": True,
-        "video_quality_profile": "standard",
+        "video_camera_settings": {},
         "photo_quality_settings": {},
     },
     "ivl_advanced": {

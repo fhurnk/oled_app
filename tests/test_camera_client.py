@@ -74,9 +74,15 @@ class CameraClientHelpersTests(unittest.TestCase):
         remote_payload = {
             "file": {"file_id": "abc 123", "name": "photo.jpg", "kind": "photo", "size": 10}
         }
-        with patch.object(client, "_json_request", side_effect=[remote_payload, {"success": True}, {"success": True}]) as request:
+        video_settings = {"/main/capturesettings/moviefps": "25"}
+        with patch.object(
+            client,
+            "_json_request",
+            side_effect=[remote_payload, {"success": True}, {"success": True}, {"success": True}],
+        ) as request:
             remote = client.capture_photo({"/main/imgsettings/imageformat": "Large Fine JPEG"})
-            client.start_recording("maximum")
+            client.start_liveview(video_settings)
+            client.start_recording(video_settings)
             client.delete_file(RemoteFile("abc 123", "photo.jpg", "photo", 10))
 
         self.assertEqual(remote.file_id, "abc 123")
@@ -84,8 +90,9 @@ class CameraClientHelpersTests(unittest.TestCase):
             request.call_args_list[0].args,
             ("POST", "/api/photo/capture", {"photo_settings": {"/main/imgsettings/imageformat": "Large Fine JPEG"}}),
         )
-        self.assertEqual(request.call_args_list[1].args, ("POST", "/api/video/start", {"video_profile": "maximum"}))
-        self.assertEqual(request.call_args_list[2].args, ("DELETE", "/api/files/abc%20123"))
+        self.assertEqual(request.call_args_list[1].args, ("POST", "/api/liveview/start", {"video_settings": video_settings}))
+        self.assertEqual(request.call_args_list[2].args, ("POST", "/api/video/start", {"video_settings": video_settings}))
+        self.assertEqual(request.call_args_list[3].args, ("DELETE", "/api/files/abc%20123"))
 
 
 class BlockingResponse:

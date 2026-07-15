@@ -66,7 +66,8 @@ class CameraTestWindow(tk.Toplevel):
         self.file_var = tk.StringVar(value="—")
         self.error_var = tk.StringVar(value="—")
         self.video_source_var = tk.StringVar(value="LiveView: разрешение появится после первого кадра")
-        self.video_quality_var = tk.StringVar(value="Стандартное качество")
+        self.video_quality_var = tk.StringVar(value="Камера не подключена")
+        self.video_fps_var = tk.StringVar(value="Камера не подключена")
         self.keep_remote_var = tk.BooleanVar(value=bool(settings.get("keep_remote_files_after_download", True)))
 
         self.client: Optional[CameraClient] = None
@@ -74,7 +75,10 @@ class CameraTestWindow(tk.Toplevel):
         self.capability_data: Dict[str, Any] = {}
         self.remote_files: Dict[str, RemoteFile] = {}
         self.photo_quality_vars: Dict[str, tk.StringVar] = {}
-        self.video_profile_by_label: Dict[str, str] = {}
+        self.video_quality_control_path = ""
+        self.video_fps_control_path = ""
+        self.video_quality_by_label: Dict[str, str] = {}
+        self.video_fps_by_label: Dict[str, str] = {}
         self._busy = False
         self._closed = False
         self._status_request_running = False
@@ -162,7 +166,7 @@ class CameraTestWindow(tk.Toplevel):
         )
         video_row = ttk.Frame(quality_box)
         video_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(video_row, text="Профиль видео:").pack(side="left")
+        ttk.Label(video_row, text="Качество/размер камеры:").pack(side="left")
         self.video_quality_combo = ttk.Combobox(
             video_row,
             textvariable=self.video_quality_var,
@@ -171,6 +175,17 @@ class CameraTestWindow(tk.Toplevel):
         )
         self.video_quality_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.video_quality_combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
+        fps_row = ttk.Frame(quality_box)
+        fps_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(fps_row, text="Кадров в секунду камеры:").pack(side="left")
+        self.video_fps_combo = ttk.Combobox(
+            fps_row,
+            textvariable=self.video_fps_var,
+            state="readonly",
+            width=43,
+        )
+        self.video_fps_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.video_fps_combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
         ttk.Label(quality_box, textvariable=self.video_source_var, foreground="#555555", wraplength=360).pack(
             anchor="w", pady=(5, 0)
         )
@@ -278,7 +293,8 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
-        self._run_async("Запуск LiveView", client.start_liveview, self._liveview_started)
+        video_settings = self._selected_video_settings()
+        self._run_async("Запуск LiveView", lambda: client.start_liveview(video_settings), self._liveview_started)
 
     def _liveview_started(self, status: Dict[str, Any]) -> None:
         self._apply_status(status)
@@ -332,8 +348,8 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
-        video_profile = self._selected_video_profile()
-        self._run_async("Запуск записи", lambda: client.start_recording(video_profile), self._recording_started)
+        video_settings = self._selected_video_settings()
+        self._run_async("Запуск записи", lambda: client.start_recording(video_settings), self._recording_started)
 
     def _recording_started(self, status: Dict[str, Any]) -> None:
         self._apply_status(status)
@@ -455,29 +471,59 @@ class CameraTestWindow(tk.Toplevel):
             combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
         self.photo_quality_frame.columnconfigure(1, weight=1)
 
-        profiles = list(capabilities.get("video_profiles") or [])
-        self.video_profile_by_label = {}
-        label_by_id: Dict[str, str] = {}
-        for profile in profiles:
-            profile_id = str(profile.get("id") or "")
-            label = f"{profile.get('label') or profile_id} · CRF {profile.get('crf')}"
-            if profile_id:
-                self.video_profile_by_label[label] = profile_id
-                label_by_id[profile_id] = label
-        self.video_quality_combo.configure(values=list(self.video_profile_by_label))
-        selected_id = str(settings.get("video_quality_profile") or capabilities.get("selected_video_profile") or "standard")
-        if selected_id not in label_by_id:
-            selected_id = str(capabilities.get("selected_video_profile") or "standard")
-        if label_by_id:
-            self.video_quality_var.set(label_by_id.get(selected_id) or next(iter(label_by_id.values())))
+        saved_video = dict(settings.get("video_camera_settings") or {})
+        self.video_quality_control_path, self.video_quality_by_label = self._configure_video_control(
+            self.video_quality_combo,
+            self.video_quality_var,
+            list(capabilities.get("video_quality_controls") or []),
+            saved_video,
+            "Камера не предоставляет выбор качества",
+        )
+        self.video_fps_control_path, self.video_fps_by_label = self._configure_video_control(
+            self.video_fps_combo,
+            self.video_fps_var,
+            list(capabilities.get("video_fps_controls") or []),
+            saved_video,
+            "Камера не предоставляет выбор FPS",
+        )
         self._update_video_source_text()
         self._save_quality_preferences()
+
+    @staticmethod
+    def _configure_video_control(
+        combo: ttk.Combobox,
+        variable: tk.StringVar,
+        controls: list[Dict[str, Any]],
+        saved: Dict[str, str],
+        unavailable_text: str,
+    ) -> tuple[str, Dict[str, str]]:
+        control = controls[0] if controls else {}
+        path = str(control.get("path") or "")
+        choices = [str(value) for value in control.get("choices") or []]
+        if not path or not choices:
+            combo.configure(values=(), state="disabled")
+            variable.set(unavailable_text)
+            return "", {}
+        selected = str(saved.get(path) or control.get("current") or choices[0])
+        if selected not in choices:
+            selected = str(control.get("current") or choices[0])
+        labels = {value: value for value in choices}
+        combo.configure(values=list(labels), state="readonly")
+        variable.set(selected)
+        return path, labels
 
     def _selected_photo_settings(self) -> Dict[str, str]:
         return {path: variable.get() for path, variable in self.photo_quality_vars.items() if variable.get()}
 
-    def _selected_video_profile(self) -> str:
-        return self.video_profile_by_label.get(self.video_quality_var.get(), "standard")
+    def _selected_video_settings(self) -> Dict[str, str]:
+        selected: Dict[str, str] = {}
+        quality = self.video_quality_by_label.get(self.video_quality_var.get())
+        fps = self.video_fps_by_label.get(self.video_fps_var.get())
+        if self.video_quality_control_path and quality:
+            selected[self.video_quality_control_path] = quality
+        if self.video_fps_control_path and fps:
+            selected[self.video_fps_control_path] = fps
+        return selected
 
     @staticmethod
     def _capabilities_or_legacy(client: CameraClient) -> Dict[str, Any]:
@@ -490,15 +536,14 @@ class CameraTestWindow(tk.Toplevel):
                 "success": True,
                 "legacy_service": True,
                 "photo_controls": [],
-                "video_profiles": [],
-                "selected_video_profile": "standard",
+                "video_quality_controls": [],
+                "video_fps_controls": [],
             }
 
     def _save_quality_preferences(self, _event=None) -> None:
         settings = dict(self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"]))
         settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
-        if self.video_profile_by_label:
-            settings["video_quality_profile"] = self._selected_video_profile()
+        settings["video_camera_settings"] = self._selected_video_settings()
         if self.photo_quality_vars:
             settings["photo_quality_settings"] = self._selected_photo_settings()
         self.app.app_settings["camera"] = settings
@@ -530,10 +575,14 @@ class CameraTestWindow(tk.Toplevel):
         fps = float(self.status.get("fps") or 0.0)
         if width and height:
             self.video_source_var.set(
-                f"Источник видео: LiveView {int(width)}×{int(height)}, сейчас {fps:.1f} кадр/с. Профиль меняет сжатие, не разрешение камеры."
+                f"Источник: LiveView {int(width)}×{int(height)}, сейчас {fps:.1f} кадр/с. "
+                "Доступны только варианты, которые сообщила камера; FFmpeg не подменяет её FPS."
             )
         else:
-            self.video_source_var.set("Источник видео: LiveView; разрешение появится после первого кадра.")
+            self.video_source_var.set(
+                "Источник: LiveView; разрешение и фактический FPS появятся после первого кадра. "
+                "Выбор доступен только для параметров, которые сообщила камера."
+            )
 
     def _start_local_stream(self) -> None:
         if not self.client:
@@ -791,8 +840,7 @@ class CameraTestWindow(tk.Toplevel):
         settings["host"] = self.host_var.get().strip() or "192.168.4.1"
         settings["port"] = int(self.port_var.get().strip())
         settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
-        if self.video_profile_by_label:
-            settings["video_quality_profile"] = self._selected_video_profile()
+        settings["video_camera_settings"] = self._selected_video_settings()
         if self.photo_quality_vars:
             settings["photo_quality_settings"] = self._selected_photo_settings()
         self.app.app_settings["camera"] = settings
