@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.0-alpha.3",
+    "current_version": "v1.8.0-alpha",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.0-alpha.3.md"
+    "docs/versions/v1.8.0-alpha.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -59,12 +59,14 @@
     "release_workflow": "docs/GITHUB_RELEASE_WORKFLOW.md",
     "modularization_plan": "docs/modularization_plan.md",
     "raw_csv_measurement_pipeline_plan": "docs/raw_csv_measurement_pipeline_plan.md",
+    "camera_quality_research": "docs/camera_quality_research.md",
     "version_archive_dir": "docs/versions"
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "alpha",
-    "modularization_single_version": "v1.8.0-alpha.3",
+    "modularization_single_version": "v1.8.0-alpha",
+    "alpha_update_policy": "Accumulate camera integration changes in v1.8.0-alpha without numbered alpha suffixes.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

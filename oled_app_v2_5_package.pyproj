@@ -71,6 +71,7 @@
     <Content Include="README_OLED_APP_V2_5.md" />
     <Content Include="requirements.txt" />
     <Content Include="docs\GITHUB_RELEASE_WORKFLOW.md" />
+    <Content Include="docs\camera_quality_research.md" />
     <Content Include="docs\modularization_plan.md" />
     <Content Include="docs\project_manifest.json" />
     <Content Include="docs\raw_csv_measurement_pipeline_plan.md" />
@@ -87,6 +88,7 @@
     <Content Include="docs\versions\v1.7.3.md" />
     <Content Include="docs\versions\v1.7.4.md" />
     <Content Include="docs\versions\v1.7.5.md" />
+    <Content Include="docs\versions\v1.8.0-alpha.md" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">

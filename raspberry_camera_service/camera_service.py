@@ -154,7 +154,7 @@ class CameraController:
         self._index_existing_files()
 
     def health(self) -> Dict[str, Any]:
-        return {"success": True, "service": "camera", "status": "ok", "version": "1.8.0-alpha.1"}
+        return {"success": True, "service": "camera", "status": "ok", "version": "1.8.0-alpha"}
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
@@ -893,7 +893,7 @@ class CameraController:
 
 def create_app(config: ServiceConfig) -> FastAPI:
     controller = CameraController(config)
-    app = FastAPI(title="OLED Canon Camera Service", version="1.8.0-alpha.1")
+    app = FastAPI(title="OLED Canon Camera Service", version="1.8.0-alpha")
     app.state.camera = controller
 
     @app.exception_handler(CameraServiceError)

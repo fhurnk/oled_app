@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.8.0-alpha.3`
+Версия: `v1.8.0-alpha`
 
 ## Назначение
 
@@ -103,6 +103,7 @@ oled_app_v2_5_package/
     report_origin_pipeline.md
     modularization_plan.md
     raw_csv_measurement_pipeline_plan.md
+    camera_quality_research.md
     project_manifest.json
     versions/
       v1.5.2.md
@@ -118,9 +119,7 @@ oled_app_v2_5_package/
       v1.7.4.md
       v1.7.5.md
       v1.7.6.md
-      v1.8.0-alpha.1.md
-      v1.8.0-alpha.2.md
-      v1.8.0-alpha.3.md
+      v1.8.0-alpha.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

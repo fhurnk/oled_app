@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.0-alpha.3`
+- Current app version: `v1.8.0-alpha`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-When changing user-visible behavior, update all version references in the same commit. The current camera integration prerelease is `v1.8.0-alpha.3`.
+When changing user-visible behavior, update all version references in the same commit. During camera integration, all alpha changes accumulate in the single prerelease `v1.8.0-alpha`; do not create numbered `alpha.1`, `alpha.2`, and similar versions unless the user explicitly changes this policy.
 
 ## Main Entry Points
 
@@ -27,6 +27,7 @@ When changing user-visible behavior, update all version references in the same c
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
 - The desktop camera HTTP client lives in `oled_app/camera/client.py`; the independent alpha test window lives in `oled_app/gui/camera_window.py`.
 - The Raspberry Pi FastAPI service, gPhoto2/FFmpeg process controller, example config, systemd unit, and setup guide live under `raspberry_camera_service/`.
+- The camera-dependent photo/video quality feasibility study lives in `docs/camera_quality_research.md`; it is research only and is not implemented in the desktop client or Raspberry Pi API.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.
 - Raw CSV measurement helpers now live in `oled_app/measurements/raw_io.py`; IVL, Spectrum, and Stability post-processing live in `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, and `oled_app/processing/stability_results.py`.
