@@ -164,7 +164,9 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
             "use_opening_voltage": True,
         },
         "stability": {
+            "control_mode": "current",
             "current_setpoint_mA": "3.5",
+            "voltage_setpoint_V": "3.5",
             "voltage_limit_V": "5",
             "current_limit_mA": "10",
             "measurement_time_s": "86400",

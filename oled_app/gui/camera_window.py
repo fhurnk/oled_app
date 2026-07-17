@@ -1,11 +1,15 @@
-"""Alpha camera test window; intentionally independent from OLED measurements."""
+"""Free and series-bound camera workflows."""
 
 from __future__ import annotations
 
+import csv
 import io
+import json
+import math
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -26,9 +30,49 @@ from oled_app.camera import (
     safe_capture_stem,
 )
 from oled_app.constants import SCRIPT_DIR
+from oled_app.series import ensure_measurement_folder
 from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
+from oled_app.utils import safe_filename, timestamp_for_file
 
 from .widgets import create_scrollable_frame, fit_window_to_screen
+
+
+SERIES_CAMERA_STATIONS = {
+    "ivl": {"label": "ВАЯХ", "measurement_type": "IVL", "journal_type": "CAMERA_IVL"},
+    "stability": {
+        "label": "Стабильность",
+        "measurement_type": "STABILITY",
+        "journal_type": "CAMERA_STABILITY",
+    },
+}
+
+
+def camera_station_key(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized in SERIES_CAMERA_STATIONS:
+        return normalized
+    for key, station in SERIES_CAMERA_STATIONS.items():
+        if station["label"] == normalized:
+            return key
+    return "ivl"
+
+
+def build_series_capture_stem(
+    pixel_id: str,
+    station: str,
+    kind: str,
+    suffix: str = "",
+    timestamp: Optional[str] = None,
+) -> str:
+    """Build a predictable series-camera filename starting with the pixel ID."""
+
+    station_key = camera_station_key(station)
+    parts = [safe_filename(pixel_id, fallback="pixel"), station_key, safe_filename(kind, fallback="capture")]
+    safe_suffix = safe_capture_stem(suffix)
+    if safe_suffix:
+        parts.append(safe_suffix)
+    parts.append(timestamp or timestamp_for_file())
+    return safe_capture_stem("_".join(parts))
 
 
 def center_crop_dimensions(width: int, height: int, crop: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
@@ -79,12 +123,14 @@ def decode_liveview_frame(
 
 
 class CameraTestWindow(tk.Toplevel):
-    """Manual validation UI for the Raspberry Pi camera service."""
+    """Camera UI in either free mode or a series/pixel-bound mode."""
 
-    def __init__(self, app):
+    def __init__(self, app, context: str = "free"):
         super().__init__(app)
         self.app = app
-        self.title("Тест камеры Canon — v1.8 alpha")
+        self.camera_context = "series" if context == "series" else "free"
+        self.series_bound = self.camera_context == "series"
+        self.title("Камера серии — v1.8 beta" if self.series_bound else "Свободная камера — v1.8 beta")
         fit_window_to_screen(self, 1280, 720, 800, 520, horizontal_margin=40, vertical_margin=70)
         self.transient(app)
 
@@ -104,6 +150,9 @@ class CameraTestWindow(tk.Toplevel):
         self.video_quality_var = tk.StringVar(value="Камера не подключена")
         self.video_fps_var = tk.StringVar(value="Камера не подключена")
         self.snapshot_name_var = tk.StringVar()
+        self.station_var = tk.StringVar(value=SERIES_CAMERA_STATIONS["ivl"]["label"])
+        series_pixels = app.pixel_ids() if self.series_bound and app.series is not None else []
+        self.pixel_var = tk.StringVar(value=series_pixels[0] if series_pixels else "")
         self.crop_width_var = tk.StringVar(value=str(settings.get("crop_width_percent", 100.0)))
         self.crop_height_var = tk.StringVar(value=str(settings.get("crop_height_percent", 100.0)))
         try:
@@ -140,6 +189,12 @@ class CameraTestWindow(tk.Toplevel):
         self._render_error_count = 0
         self._poll_after_id = None
         self._frame_after_id = None
+        self._recording_capture_stem = ""
+        self._recording_started_monotonic: Optional[float] = None
+        self._recording_stop_requested_monotonic: Optional[float] = None
+        self._recording_context: Dict[str, Any] = {}
+        self.station_combo = None
+        self.pixel_combo = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -153,11 +208,15 @@ class CameraTestWindow(tk.Toplevel):
 
         header = ttk.Frame(outer)
         header.pack(fill="x")
-        ttk.Label(header, text="Тест камеры Canon", font=("Segoe UI", 17, "bold")).pack(side="left")
         ttk.Label(
             header,
-            text="ALPHA · без связи с измерениями",
-            foreground="#9A6700",
+            text="Камера серии" if self.series_bound else "Свободная камера Canon",
+            font=("Segoe UI", 17, "bold"),
+        ).pack(side="left")
+        ttk.Label(
+            header,
+            text="BETA · привязка к станции и пикселю" if self.series_bound else "BETA · свободная съёмка и файлы",
+            foreground="#0969DA" if self.series_bound else "#57606A",
             font=("Segoe UI", 10, "bold"),
         ).pack(side="left", padx=(12, 0))
 
@@ -173,6 +232,39 @@ class CameraTestWindow(tk.Toplevel):
         self.initialize_button.grid(row=1, column=2, columnspan=2, padx=(4, 0), pady=(8, 0), sticky="ew")
         connection.columnconfigure(1, weight=1)
         connection.columnconfigure(3, weight=1)
+
+        if self.series_bound:
+            context_box = ttk.LabelFrame(outer, text="Привязка к серии", padding=8)
+            context_box.pack(fill="x", pady=(0, 10))
+            ttk.Label(context_box, text="Станция:").grid(row=0, column=0, sticky="w")
+            station_combo = ttk.Combobox(
+                context_box,
+                textvariable=self.station_var,
+                values=tuple(station["label"] for station in SERIES_CAMERA_STATIONS.values()),
+                state="readonly",
+                width=16,
+            )
+            station_combo.grid(row=0, column=1, sticky="w", padx=(6, 18))
+            station_combo.bind("<<ComboboxSelected>>", self._series_context_changed)
+            self.station_combo = station_combo
+            ttk.Label(context_box, text="Пиксель:").grid(row=0, column=2, sticky="w")
+            pixel_values = self.app.pixel_ids() if self.app.series is not None else []
+            pixel_combo = ttk.Combobox(
+                context_box,
+                textvariable=self.pixel_var,
+                values=pixel_values,
+                state="readonly",
+                width=24,
+            )
+            pixel_combo.grid(row=0, column=3, sticky="w", padx=(6, 0))
+            pixel_combo.bind("<<ComboboxSelected>>", self._series_context_changed)
+            self.pixel_combo = pixel_combo
+            self.series_target_var = tk.StringVar()
+            ttk.Label(context_box, textvariable=self.series_target_var, foreground="#555555", wraplength=980).grid(
+                row=1, column=0, columnspan=4, sticky="w", pady=(6, 0)
+            )
+            context_box.columnconfigure(3, weight=1)
+            self._series_context_changed()
 
         content = ttk.Panedwindow(outer, orient="horizontal")
         content.pack(fill="both", expand=True)
@@ -313,13 +405,27 @@ class CameraTestWindow(tk.Toplevel):
             widget.bind("<Return>", self._crop_changed)
             widget.bind("<FocusOut>", self._crop_changed)
 
-        actions = ttk.LabelFrame(controls_frame, text="Ручная проверка функций", padding=8)
+        actions = ttk.LabelFrame(
+            controls_frame,
+            text="Съёмка выбранного пикселя" if self.series_bound else "Ручная проверка функций",
+            padding=8,
+        )
         actions.pack(fill="x", pady=(10, 0))
-        ttk.Label(actions, text="Название снимка:").grid(row=0, column=0, sticky="w", padx=4, pady=(0, 2))
+        ttk.Label(actions, text="Суффикс файла:" if self.series_bound else "Название снимка:").grid(
+            row=0, column=0, sticky="w", padx=4, pady=(0, 2)
+        )
         ttk.Entry(actions, textvariable=self.snapshot_name_var).grid(
             row=0, column=1, sticky="ew", padx=4, pady=(0, 2)
         )
-        ttk.Label(actions, text="без расширения; пусто — автоматическое имя", foreground="#555555").grid(
+        ttk.Label(
+            actions,
+            text=(
+                "необязательно; ID пикселя, станция и время добавляются автоматически"
+                if self.series_bound
+                else "без расширения; пусто — автоматическое имя"
+            ),
+            foreground="#555555",
+        ).grid(
             row=1, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4)
         )
         self.start_live_button = ttk.Button(actions, text="Запустить LiveView", command=self.start_liveview)
@@ -426,8 +532,8 @@ class CameraTestWindow(tk.Toplevel):
         if not client:
             return
         entered_name = self.snapshot_name_var.get().strip()
-        requested_name = safe_capture_stem(entered_name)
-        if entered_name and not requested_name:
+        requested_name = self._capture_stem(kind) if self.series_bound else safe_capture_stem(entered_name)
+        if entered_name and not safe_capture_stem(entered_name):
             messagebox.showwarning(
                 "Название снимка",
                 "Введите название, содержащее буквы или цифры.",
@@ -452,11 +558,12 @@ class CameraTestWindow(tk.Toplevel):
             return remote, local, deleted, delete_error, client.status()
 
         def complete(result) -> None:
-            _remote, local, deleted, delete_error, status = result
+            remote, local, deleted, delete_error, status = result
             self._apply_status(status)
             if status.get("liveview_active"):
                 self._start_local_stream()
             self._log(f"{success_label}: {local}")
+            self._record_series_camera_file(local, kind, remote)
             self._log_remote_cleanup(deleted, delete_error)
             self.refresh_files(silent=True)
 
@@ -470,9 +577,18 @@ class CameraTestWindow(tk.Toplevel):
         crop = self._selected_crop(show_error=True)
         if crop is None:
             return
+        self._recording_capture_stem = self._capture_stem("video") if self.series_bound else ""
+        if self.series_bound:
+            self._recording_context = {
+                "pixel_id": self.pixel_var.get().strip(),
+                "station_key": camera_station_key(self.station_var.get()),
+                "download_dir": self._download_dir(),
+            }
         self._run_async("Запуск записи", lambda: client.start_recording(video_settings, crop), self._recording_started)
 
     def _recording_started(self, status: Dict[str, Any]) -> None:
+        self._recording_started_monotonic = time.monotonic()
+        self._recording_stop_requested_monotonic = None
         self._apply_status(status)
         self._start_local_stream()
         self._log("Запись видео началась; LiveView продолжает работать из того же потока.")
@@ -482,17 +598,32 @@ class CameraTestWindow(tk.Toplevel):
         if not client:
             return
         keep_remote = bool(self.keep_remote_var.get())
+        self._recording_stop_requested_monotonic = time.monotonic()
 
         def work():
             remote = client.stop_recording()
-            local = client.download_file(remote, self._download_dir())
+            preferred_name = f"{self._recording_capture_stem}.mp4" if self._recording_capture_stem else ""
+            download_dir = Path(self._recording_context.get("download_dir") or self._download_dir())
+            local = client.download_file(remote, download_dir, preferred_name=preferred_name)
             deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
             return remote, local, deleted, delete_error, client.status()
 
         def complete(result) -> None:
-            _remote, local, deleted, delete_error, status = result
+            remote, local, deleted, delete_error, status = result
             self._apply_status(status)
             self._log(f"Видео корректно завершено и скачано: {local}")
+            sync_metadata = self._write_video_measurement_timeline(Path(local))
+            self._record_series_camera_file(
+                local,
+                "video",
+                remote,
+                extra_params=sync_metadata,
+                capture_context=self._recording_context,
+            )
+            self._recording_capture_stem = ""
+            self._recording_started_monotonic = None
+            self._recording_stop_requested_monotonic = None
+            self._recording_context = {}
             self._log_remote_cleanup(deleted, delete_error)
             self.refresh_files(silent=True)
 
@@ -533,13 +664,18 @@ class CameraTestWindow(tk.Toplevel):
         keep_remote = bool(self.keep_remote_var.get())
 
         def work():
-            local = client.download_file(remote, self._download_dir())
+            preferred_name = ""
+            if self.series_bound:
+                extension = Path(remote.name).suffix or (".mp4" if remote.kind == "video" else ".jpg")
+                preferred_name = f"{self._capture_stem('import')}{extension}"
+            local = client.download_file(remote, self._download_dir(), preferred_name=preferred_name)
             deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
             return local, deleted, delete_error
 
         def complete(result) -> None:
             local, deleted, delete_error = result
             self._log(f"Файл скачан: {local}")
+            self._record_series_camera_file(local, "import", remote)
             self._log_remote_cleanup(deleted, delete_error)
             self.refresh_files(silent=True)
 
@@ -1011,6 +1147,12 @@ class CameraTestWindow(tk.Toplevel):
         self.download_button.configure(
             state="normal" if service_connected and bool(self.files_tree.selection()) and not self._busy else "disabled"
         )
+        if self.series_bound:
+            context_state = "disabled" if recording or self._busy else "readonly"
+            if self.station_combo is not None:
+                self.station_combo.configure(state=context_state)
+            if self.pixel_combo is not None:
+                self.pixel_combo.configure(state=context_state)
 
     def _make_client(self) -> CameraClient:
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
@@ -1044,8 +1186,158 @@ class CameraTestWindow(tk.Toplevel):
         save_app_settings(self.app.app_settings)
 
     def _download_dir(self) -> Path:
+        if self.series_bound:
+            if self.app.series is None:
+                raise ValueError("Серия закрыта. Вернитесь в меню и откройте её снова.")
+            pixel_id = self.pixel_var.get().strip()
+            if not pixel_id:
+                raise ValueError("Выберите пиксель для съёмки.")
+            station = SERIES_CAMERA_STATIONS[camera_station_key(self.station_var.get())]
+            output_dir = ensure_measurement_folder(
+                self.app.series.series_folder,
+                station["measurement_type"],
+                pixel_id,
+                self.app.series.journal.get_pixel(pixel_id),
+            )
+            camera_dir = output_dir / "camera"
+            camera_dir.mkdir(parents=True, exist_ok=True)
+            return camera_dir
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
         return Path(str(settings.get("download_dir") or SCRIPT_DIR / "camera_downloads")).expanduser()
+
+    def _capture_stem(self, kind: str) -> str:
+        if not self.series_bound:
+            return safe_capture_stem(self.snapshot_name_var.get())
+        pixel_id = self.pixel_var.get().strip()
+        if not pixel_id:
+            raise ValueError("Выберите пиксель для съёмки.")
+        return build_series_capture_stem(
+            pixel_id,
+            camera_station_key(self.station_var.get()),
+            kind,
+            self.snapshot_name_var.get().strip(),
+        )
+
+    def _series_context_changed(self, _event=None) -> None:
+        if not self.series_bound or not hasattr(self, "series_target_var"):
+            return
+        station_key = camera_station_key(self.station_var.get())
+        station = SERIES_CAMERA_STATIONS[station_key]
+        pixel_id = self.pixel_var.get().strip() or "—"
+        self.series_target_var.set(
+            f"{station['label']} · пиксель {pixel_id}. "
+            "Файлы будут названы по пикселю и записаны в его папку camera."
+        )
+
+    def _record_series_camera_file(
+        self,
+        local: Path,
+        kind: str,
+        remote: RemoteFile,
+        extra_params: Optional[Dict[str, Any]] = None,
+        capture_context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self.series_bound or self.app.series is None:
+            return
+        capture_context = capture_context or {}
+        pixel_id = str(capture_context.get("pixel_id") or self.pixel_var.get().strip())
+        if not pixel_id:
+            return
+        station_key = str(capture_context.get("station_key") or camera_station_key(self.station_var.get()))
+        station = SERIES_CAMERA_STATIONS[station_key]
+        params = {
+            "station": station_key,
+            "station_label": station["label"],
+            "pixel_id": pixel_id,
+            "media_kind": kind,
+            "remote_file": remote.name,
+        }
+        if extra_params:
+            params.update(extra_params)
+        self.app.series.journal.update_after_measurement(
+            station["journal_type"],
+            pixel_id,
+            "CAPTURED",
+            Path(local),
+            params,
+            notes="Съёмка камеры, привязанная к станции и пикселю",
+        )
+        self.app.log(f"Камера: {local.name} привязан к {station['label']} / {pixel_id}")
+
+    def _write_video_measurement_timeline(self, local: Path) -> Dict[str, Any]:
+        if not self.series_bound or self.app.series is None:
+            return {}
+        video_start = self._recording_started_monotonic
+        video_end = self._recording_stop_requested_monotonic or time.monotonic()
+        if video_start is None:
+            return {"measurement_sync": False, "sync_error": "Не зафиксировано время начала видео"}
+        video_end = max(video_end, video_start)
+        pixel_id = str(self._recording_context.get("pixel_id") or self.pixel_var.get().strip())
+        station_key = str(
+            self._recording_context.get("station_key") or camera_station_key(self.station_var.get())
+        )
+        station = SERIES_CAMERA_STATIONS[station_key]
+        session = self.app.measurement_session_for_interval(
+            station["measurement_type"], pixel_id, video_start, video_end
+        )
+        duration = video_end - video_start
+        sync_path = local.with_name(f"{local.stem}_sync.json")
+        timeline_path = local.with_name(f"{local.stem}_timeline.csv")
+        metadata: Dict[str, Any] = {
+            "measurement_sync": session is not None,
+            "video_duration_clock_s": duration,
+            "sync_file": sync_path.name,
+            "timeline_file": timeline_path.name,
+            "station": station_key,
+            "pixel_id": pixel_id,
+        }
+        if session is not None:
+            offset = video_start - float(session["started_monotonic"])
+            synced_events = []
+            for event in session.get("events") or []:
+                measurement_time = float(event.get("measurement_time_s") or 0.0)
+                video_time = measurement_time - offset
+                if 0.0 <= video_time <= duration:
+                    synced_event = dict(event)
+                    synced_event["video_time_s"] = video_time
+                    synced_events.append(synced_event)
+            metadata.update(
+                {
+                    "measurement_type": session["measurement_type"],
+                    "measurement_started_at": session["started_at"],
+                    "measurement_time_at_video_start_s": offset,
+                    "mapping": "measurement_time_s = video_time_s + measurement_time_at_video_start_s",
+                    "events": synced_events,
+                }
+            )
+        else:
+            offset = None
+            metadata["sync_error"] = "Пересекающийся сеанс измерения для станции и пикселя не найден"
+
+        sync_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        with timeline_path.open("w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["video_time_s", "measurement_time_s", "measurement_type", "pixel_id", "event"])
+            timeline_points = {float(second): "" for second in range(int(duration) + 1)}
+            if not timeline_points or not math.isclose(max(timeline_points), duration, abs_tol=1e-6):
+                timeline_points[duration] = ""
+            for event in metadata.get("events") or []:
+                timeline_points[float(event["video_time_s"])] = str(event.get("label") or event.get("event") or "")
+            for video_time in sorted(timeline_points):
+                writer.writerow(
+                    [
+                        round(video_time, 3),
+                        round(video_time + offset, 3) if offset is not None else "",
+                        session["measurement_type"] if session is not None else "",
+                        pixel_id,
+                        timeline_points[video_time],
+                    ]
+                )
+        self._log(
+            f"Временная шкала видео сохранена: {timeline_path.name}"
+            + ("" if session is not None else " (измерение для синхронизации не найдено)")
+        )
+        return metadata
 
     def _require_client(self, show_error: bool = True) -> Optional[CameraClient]:
         if self.client:
@@ -1123,8 +1415,8 @@ class CameraTestWindow(tk.Toplevel):
         return f"{size} Б"
 
 
-def open_camera_test_window(app) -> Optional[CameraTestWindow]:
-    """Open one non-modal camera test window."""
+def open_camera_test_window(app, context: str = "free") -> Optional[CameraTestWindow]:
+    """Open one non-modal camera window in free or series-bound mode."""
 
     if Image is None or ImageTk is None:
         messagebox.showerror(
@@ -1137,9 +1429,15 @@ def open_camera_test_window(app) -> Optional[CameraTestWindow]:
 
     existing = getattr(app, "_camera_test_window", None)
     if existing is not None and existing.winfo_exists():
-        existing.lift()
-        existing.focus_force()
-        return existing
-    window = CameraTestWindow(app)
+        if getattr(existing, "camera_context", "free") == context:
+            existing.lift()
+            existing.focus_force()
+            return existing
+        if not existing.shutdown_for_app_close():
+            return existing
+    if context == "series" and app.series is None:
+        messagebox.showwarning("Камера серии", "Сначала откройте серию.", parent=app)
+        return None
+    window = CameraTestWindow(app, context=context)
     app._camera_test_window = window
     return window

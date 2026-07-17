@@ -34,7 +34,7 @@ def show_measurement_menu(app) -> None:
     ttk.Label(header, text="Измерения OLED", font=("Segoe UI", 18, "bold")).pack(side="left")
     ttk.Button(header, text="Открыть другую серию", command=app.show_start_screen).pack(side="right")
     ttk.Button(header, text="Настройки", command=app.open_settings_window).pack(side="right", padx=(0, 10))
-    ttk.Button(header, text="Камера (alpha)", command=app.open_camera_test_window).pack(side="right", padx=(0, 10))
+    ttk.Button(header, text="Камера серии", command=app.open_series_camera_window).pack(side="right", padx=(0, 10))
     ttk.Button(header, text="Настройки серии", command=app.show_edit_series_screen).pack(side="right", padx=(0, 10))
 
     ttk.Label(main, text=f"Серия: {app.series.series_folder}").pack(anchor="w", pady=(4, 2))
@@ -318,17 +318,15 @@ def pixel_rect_inside_substrate(x: float, y: float, w: float, h: float, pixel_nu
 def draw_status_legend(canvas: tk.Canvas, height: int) -> None:
     legend_y = height - 25
     legend = [
-        ("#8FD694", "рабочий"),
-        ("#F2D96B", "нет контакта"),
-        ("#F4A261", "требует уточнения"),
-        ("#F28B82", "нераб./пробой"),
-        ("#D9D9D9", "не измерен"),
+        (70, "#8FD694", "рабочий"),
+        (200, "#F2D96B", "нет контакта"),
+        (340, "#F4A261", "требует уточнения"),
+        (535, "#F28B82", "нераб./пробой"),
+        (700, "#D9D9D9", "не измерен"),
     ]
-    left_x = 70
-    for color, label in legend:
+    for left_x, color, label in legend:
         canvas.create_rectangle(left_x, legend_y - 7, left_x + 16, legend_y + 7, fill=color, outline="#808080")
         canvas.create_text(left_x + 22, legend_y, text=label, anchor="w", font=("Segoe UI", 8))
-        left_x += 165
 
 
 def create_ivl_history_tree(app, parent):

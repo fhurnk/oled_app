@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.8.0-alpha`
+Версия: `v1.8.0-beta`
 
 ## Назначение
 
@@ -20,15 +20,15 @@
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
-- альфа-клиент Canon через Raspberry Pi находится в `oled_app/camera/client.py`, а независимое тестовое окно — в `oled_app/gui/camera_window.py`.
+- клиент Canon через Raspberry Pi находится в `oled_app/camera/client.py`, а свободный и привязанный к серии beta-режимы — в `oled_app/gui/camera_window.py`.
 - отдельный сервис Raspberry Pi находится в `raspberry_camera_service/`; он получает единый MJPEG-поток через `gphoto2`, отдаёт LiveView по HTTP, динамически сообщает JPEG-варианты камеры, направляет кадры в FFmpeg при записи и умеет безопасно удалять скачанный файл по запросу клиента.
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` и подключен к новому GUI.
 - общая запись raw CSV вынесена в `oled_app/measurements/raw_io.py`; сборка IVL-, Spectrum- и Stability-книг из raw CSV вынесена в `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py` и `oled_app/processing/stability_results.py`.
 - workflow спектров подготовлен в `oled_app/measurements/spectrum.py` и подключен к новому GUI.
-- workflow стабильности подготовлен в `oled_app/measurements/stability.py` и подключен к новому GUI.
+- workflow стабильности в `oled_app/measurements/stability.py` поддерживает динамические уставки тока и напряжения; beta-GUI позволяет менять цель во время измерения.
 - общие GUI helpers в `oled_app/gui/widgets.py` обеспечивают прокрутку, DPI-aware геометрию и размещение окон в границах экрана; progress windows находятся в `oled_app/gui/progress.py`.
-- базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, альфа-окно камеры, окно ВАЯХ, окно спектров, окно стабильности и окно отчета подготовлены в `oled_app/gui/`.
+- базовый класс нового GUI, стартовый экран, меню открытой серии, окно настроек, beta-окно камеры, окно ВАЯХ, окно спектров, окно стабильности и окно отчета подготовлены в `oled_app/gui/`.
 - при потере Raspberry Pi окно камеры сбрасывает недоступное соединение, останавливает локальный LiveView и остаётся готовым к повторному подключению; панель управления прокручивается на компактном экране.
 - пользователь может задать общее имя следующего preview-кадра или полноразмерного фото; сервис безопасно создаёт JPEG с этим именем и добавляет числовой суффикс вместо перезаписи существующего файла.
 - сервис учитывает активных клиентов LiveView, быстро освобождает отключившиеся HTTP-потоки и полностью закрывает процессы/pipe-дескрипторы gPhoto2; главное окно выполняет согласованное завершение камерного клиента перед выходом.
@@ -126,6 +126,7 @@ oled_app_v2_5_package/
       v1.7.5.md
       v1.7.6.md
       v1.8.0-alpha.md
+      v1.8.0-beta.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 
@@ -140,8 +141,11 @@ OLED_series/
     series_journal.xlsx
     measurements/
       01_IVL_VAH/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
+        camera/CR1_1_1_ivl_video_*.mp4
+        camera/CR1_1_1_ivl_video_*_timeline.csv
       02_SPECTRA/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
       03_STABILITY/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
+        camera/CR1_1_1_stability_video_*.mp4
 ```
 
 Начиная с `v1.7.5`, ВАЯХ, спектры и стабильность в модульном приложении пишут промежуточные `*_raw.csv` после каждой точки и после завершения собирают из них совместимые итоговые `.xlsx`. В настройках можно выбрать, сохранять raw CSV в подпапке `raw_data` или удалять после успешной сборки XLSX.

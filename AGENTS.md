@@ -11,7 +11,7 @@ When a new Codex chat starts in this repository, read these files before changin
 
 ## Versioning, Changelog, And GitHub Releases
 
-During the current prerelease modularization work, keep publishing migration progress to the existing `v1.7.2` release/tag instead of creating a new version for every internal migration step. Update `APP_VERSION`, `CHANGELOG.md`, `docs/versions/v1.7.2.md`, visible docs, the `v1.7.2` tag, and the GitHub Release body together. Do not create later modularization releases unless the user explicitly asks for a new project version.
+The current project prerelease is `v1.8.0-beta`. Keep `APP_VERSION`, `CHANGELOG.md`, `docs/versions/v1.8.0-beta.md`, visible docs, tag, and GitHub prerelease synchronized. Create a later version only when the user explicitly requests the next project version.
 
 For every user-visible behavior change, bug fix, documentation change, or release preparation:
 

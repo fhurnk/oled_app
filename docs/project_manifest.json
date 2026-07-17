@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.0-alpha",
+    "current_version": "v1.8.0-beta",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.0-alpha.md"
+    "docs/versions/v1.8.0-beta.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -64,9 +64,9 @@
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
-    "release_channel": "alpha",
-    "modularization_single_version": "v1.8.0-alpha",
-    "alpha_update_policy": "Accumulate camera integration changes in v1.8.0-alpha without numbered alpha suffixes.",
+    "release_channel": "beta",
+    "current_prerelease": "v1.8.0-beta",
+    "beta_scope": "Dynamic current/voltage stability control and series/pixel-bound camera capture with measurement-time video synchronization.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -83,7 +83,7 @@
   "measurement_workflows": {
     "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing.",
     "SPECTRUM": "Spectral measurement after known opening voltage, with integration-time optimization; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
-    "STABILITY": "Constant-current stability measurement after IVL; modular workflow writes raw CSV during measurement and builds final XLSX after processing."
+    "STABILITY": "Mutable constant-current or ramped constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
   },
   "git": {
     "primary_remote": "oled_app",

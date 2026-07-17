@@ -124,6 +124,7 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
         app.series.journal.get_pixel(pixel_id),
     )
     progress = IVLProgressWindow(app, pixel_id, pixel_params)
+    measurement_session = app.begin_measurement_session("IVL", pixel_id)
     try:
         progress.set_status(f"Пиксель {pixel_id}: идет съемка ВАЯХ")
         result = run_ivl_measurement(
@@ -133,7 +134,9 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
             app.log,
             app.app_settings,
             progress_callback=progress.add_point,
+            measurement_started_monotonic=measurement_session["started_monotonic"],
         )
+        measurement_session["events"] = list(result.get("events") or [])
         progress.set_status(f"Пиксель {pixel_id}: измерение завершено, статус {result.get('status', '')}")
         opening = result.get("opening_voltage")
         if result["status"] == "WORKING":
@@ -191,6 +194,8 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
         progress.close()
         messagebox.showerror("Ошибка ВАЯХ", str(exc), parent=app)
         return None
+    finally:
+        app.end_measurement_session(measurement_session)
 
 
 def params_for_pixel_luminance(app, pixel_id: str, params: IVLParams) -> IVLParams:

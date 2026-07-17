@@ -108,6 +108,7 @@ def run_ivl_cycle(
     log: Callable[[str], None],
     progress_callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     raw_writer: Optional[RawCsvWriter] = None,
+    measurement_started_monotonic: Optional[float] = None,
 ) -> Dict[str, Any]:
     log(f"\nВАЯХ {pixel_id}, цикл {cycle_number}: до {params.sweep_end:.3f} В, лимит {params.current_limit_mA:.3f} мА")
 
@@ -125,6 +126,8 @@ def run_ivl_cycle(
 
     data: List[Dict[str, Any]] = []
     current_limit_reached = False
+    current_limit_elapsed_s: Optional[float] = None
+    current_limit_point: Optional[int] = None
 
     voltage_values = np.arange(
         params.sweep_start,
@@ -143,6 +146,11 @@ def run_ivl_cycle(
         current_led_mA = current_led * 1000.0
         current_pd_uA = -current_pd * 1_000_000.0
         date_time = now_str()
+        measurement_elapsed_s = (
+            time.monotonic() - measurement_started_monotonic
+            if measurement_started_monotonic is not None
+            else 0.0
+        )
 
         point_row = {
             "Point": idx,
@@ -153,6 +161,7 @@ def run_ivl_cycle(
             "Voltage photodiode measured (V)": float(voltage_pd),
             "Photodiode current (uA)": float(current_pd_uA),
             "Luminance (cd/m^2)": luminance_cd_m2(current_pd_uA, params.luminance_cd_m2_per_uA),
+            "Measurement time (s)": float(measurement_elapsed_s),
         }
         if raw_writer is not None:
             raw_writer.writerow(
@@ -160,6 +169,7 @@ def run_ivl_cycle(
                     "cycle": cycle_number,
                     "point": idx,
                     "date_time": date_time,
+                    "elapsed_s": float(measurement_elapsed_s),
                     "voltage_set_V": float(set_v),
                     "voltage_led_measured_V": float(voltage_led),
                     "current_led_A": float(current_led),
@@ -182,6 +192,8 @@ def run_ivl_cycle(
 
         if current_led_mA >= params.current_limit_mA:
             current_limit_reached = True
+            current_limit_elapsed_s = float(measurement_elapsed_s)
+            current_limit_point = idx
             log(f"  Аварийный стоп: ток {current_led_mA:.3f} мА >= {params.current_limit_mA:.3f} мА")
             try:
                 smu.smu1.set.voltage(0, response=0)
@@ -202,6 +214,8 @@ def run_ivl_cycle(
         "status": status,
         "status_desc": status_desc,
         "current_limit_reached": current_limit_reached,
+        "current_limit_elapsed_s": current_limit_elapsed_s,
+        "current_limit_point": current_limit_point,
         "max_photo_uA": max_photo,
         "max_current_mA": max_current,
         "opening_voltage": opening,
@@ -221,6 +235,7 @@ def run_ivl_measurement(
     log: Callable[[str], None],
     app_settings: Optional[Dict[str, Any]] = None,
     progress_callback: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    measurement_started_monotonic: Optional[float] = None,
 ) -> Dict[str, Any]:
     prepare_hardware_environment(pixel_id, app_settings, log)
     import xtralien
@@ -232,6 +247,7 @@ def run_ivl_measurement(
     log(f"Raw CSV ВАЯХ: {raw_file}")
 
     cycles: List[Dict[str, Any]] = []
+    measurement_started_monotonic = measurement_started_monotonic or time.monotonic()
     cycles_to_run = max(1, int(params.num_cycles))
     burned_confirmations_left = max(0, int(params.burned_confirmation_cycles))
     with RawCsvWriter(raw_file, IVL_RAW_HEADERS) as raw_writer:
@@ -246,6 +262,7 @@ def run_ivl_measurement(
                     log,
                     progress_callback=progress_callback,
                     raw_writer=raw_writer,
+                    measurement_started_monotonic=measurement_started_monotonic,
                 )
                 cycles.append(cycle_result)
                 if cycle_result["status"] == "BURNED" and burned_confirmations_left > 0:
@@ -270,6 +287,19 @@ def run_ivl_measurement(
         None,
     )
     final_status = "BURNED" if burned_cycle is not None else cycles[-1]["status"] if cycles else "FAILED"
+    events = []
+    for cycle_result in cycles:
+        event_time = cycle_result.get("current_limit_elapsed_s")
+        if event_time is not None:
+            events.append(
+                {
+                    "event": "current_limit_or_breakdown",
+                    "label": "Лимит тока / возможный пробой или шунт",
+                    "measurement_time_s": float(event_time),
+                    "cycle": int(cycle_result.get("cycle") or 1),
+                    "point": int(cycle_result.get("current_limit_point") or 0),
+                }
+            )
     return {
         "file": filename,
         "raw_file": kept_raw_files[0] if kept_raw_files else None,
@@ -280,4 +310,5 @@ def run_ivl_measurement(
         "ivl_diagnosis": ivl_diagnosis,
         "burned_cycle": burned_cycle,
         "first_cycle_status": cycles[0]["status"] if cycles else "FAILED",
+        "events": events,
     }

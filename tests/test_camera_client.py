@@ -17,11 +17,17 @@ from oled_app.camera.client import (
     safe_local_filename,
     safe_capture_stem,
 )
-from oled_app.gui.camera_window import center_crop_dimensions, decode_liveview_frame
+from oled_app.gui.camera_window import build_series_capture_stem, center_crop_dimensions, decode_liveview_frame
 from oled_app.gui.widgets import calculate_window_geometry
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_series_capture_name_starts_with_pixel_and_contains_station(self) -> None:
+        stem = build_series_capture_stem("CR1_2_3", "stability", "video", "пробой", "20260717_120000")
+
+        self.assertTrue(stem.startswith("CR1_2_3_stability_video_"))
+        self.assertTrue(stem.endswith("20260717_120000"))
+
     def test_window_geometry_is_clamped_to_small_screen(self) -> None:
         width, height, x, y = calculate_window_geometry(1280, 720, 1600, 1000, 900, 620)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +34,9 @@ from oled_app.utils import (
 @dataclass
 class StabilityParams:
     com_port: str = "COM3"
+    control_mode: str = "current"
     current_setpoint_mA: float = 3.5
+    voltage_setpoint_V: float = 3.5
     voltage_start: float = 3.5
     voltage_limit: float = 5.0
     current_limit_mA: float = 10.0
@@ -50,6 +53,88 @@ class StabilityParams:
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
+
+
+class StabilitySetpointController:
+    """Thread-safe mutable target used by the live stability controls."""
+
+    MODES = {"current", "voltage"}
+
+    def __init__(self, mode: str, target: float, maximum: Optional[float] = None):
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in self.MODES:
+            raise ValueError("Режим стабильности должен быть current или voltage.")
+        self.mode = normalized_mode
+        self.maximum = float(maximum) if maximum is not None else None
+        self._lock = threading.Lock()
+        self._target = 0.0
+        self._revision = 0
+        self._stop_requested = False
+        self.set_target(target)
+
+    def _normalize_target(self, value: float) -> float:
+        target = float(value)
+        if not math.isfinite(target):
+            raise ValueError("Уставка должна быть конечным числом.")
+        target = max(0.0, target)
+        if self.maximum is not None:
+            target = min(target, self.maximum)
+        return target
+
+    def set_target(self, value: float) -> float:
+        target = self._normalize_target(value)
+        with self._lock:
+            if not math.isclose(target, self._target, rel_tol=0.0, abs_tol=1e-12):
+                self._target = target
+                self._revision += 1
+            return self._target
+
+    def add(self, delta: float) -> float:
+        with self._lock:
+            current = self._target
+        return self.set_target(current + float(delta))
+
+    def request_stop(self) -> None:
+        with self._lock:
+            self._stop_requested = True
+
+    def snapshot(self) -> Tuple[float, int, bool]:
+        with self._lock:
+            return self._target, self._revision, self._stop_requested
+
+
+def next_stability_voltage(
+    control_mode: str,
+    voltage_set_V: float,
+    target_setpoint: float,
+    measured_current_mA: float,
+    params: StabilityParams,
+) -> Tuple[float, bool]:
+    """Return the next applied voltage and whether current mode hit its voltage limit."""
+
+    if control_mode == "current":
+        error_mA = float(target_setpoint) - float(measured_current_mA)
+        delta = float(
+            np.clip(
+                params.current_control_kp * error_mA,
+                -params.voltage_step_max,
+                params.voltage_step_max,
+            )
+        )
+        next_voltage = max(0.0, float(voltage_set_V) + delta)
+        limit_reached = next_voltage >= params.voltage_limit
+        return min(next_voltage, params.voltage_limit), limit_reached
+    if control_mode == "voltage":
+        desired = min(max(0.0, float(target_setpoint)), params.voltage_limit)
+        delta = float(
+            np.clip(
+                desired - float(voltage_set_V),
+                -params.voltage_step_max,
+                params.voltage_step_max,
+            )
+        )
+        return min(max(0.0, float(voltage_set_V) + delta), params.voltage_limit), False
+    raise ValueError("Неизвестный режим стабильности.")
 
 
 def find_ivl_data_columns(ws) -> Optional[Tuple[int, Dict[str, int]]]:
@@ -128,13 +213,28 @@ def run_stability_measurement(
     params: StabilityParams,
     log: Callable[[str], None],
     app_settings: Optional[Dict[str, Any]] = None,
+    control: Optional[StabilitySetpointController] = None,
+    progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    measurement_started_monotonic: Optional[float] = None,
 ) -> Dict[str, Any]:
     prepare_hardware_environment(pixel_id, app_settings, log)
     import xtralien
 
     output_dir.mkdir(parents=True, exist_ok=True)
     measurement_timestamp = timestamp_for_file()
-    file_stem = f"STABILITY_{safe_filename(pixel_id)}_{params.current_setpoint_mA:g}mA_{measurement_timestamp}"
+    control_mode = str(params.control_mode or "current").strip().lower()
+    if control_mode not in StabilitySetpointController.MODES:
+        raise ValueError("Неизвестный режим стабильности.")
+    initial_target = params.current_setpoint_mA if control_mode == "current" else params.voltage_setpoint_V
+    target_unit = "mA" if control_mode == "current" else "V"
+    if control is None:
+        maximum = params.voltage_limit if control_mode == "voltage" else params.current_limit_mA
+        control = StabilitySetpointController(control_mode, initial_target, maximum=maximum)
+    elif control.mode != control_mode:
+        raise ValueError("Режим контроллера уставки не совпадает с параметрами стабильности.")
+    file_stem = (
+        f"STABILITY_{safe_filename(pixel_id)}_{control_mode}_{initial_target:g}{target_unit}_{measurement_timestamp}"
+    )
     filename = output_dir / f"{file_stem}.xlsx"
     raw_file = raw_csv_path(output_dir, f"{file_stem}_raw.csv", app_settings)
     log(f"Raw CSV стабильности: {raw_file}")
@@ -144,8 +244,12 @@ def run_stability_measurement(
     last_autosave_elapsed = 0.0
     voltage_set = params.voltage_start
     current_limit_reached = False
+    current_limit_elapsed_s: Optional[float] = None
     voltage_limit_reached = False
+    stopped_by_user = False
     last_elapsed = 0.0
+    last_control_revision = -1
+    last_progress_payload: Optional[Dict[str, Any]] = None
 
     with RawCsvWriter(raw_file, STABILITY_RAW_HEADERS) as raw_writer:
         with xtralien.Device(params.com_port) as smu:
@@ -161,18 +265,41 @@ def run_stability_measurement(
                 smu.smu2.set.voltage(params.photodiode_bias_V, response=0)
                 time.sleep(0.3)
 
-                start = time.time()
-                next_point = start
-                log(f"Стабильность {pixel_id}: I={params.current_setpoint_mA:.3f} мА, старт V={voltage_set:.3f} В")
+                start = time.monotonic()
+                if measurement_started_monotonic is not None:
+                    start = float(measurement_started_monotonic)
+                next_point = time.monotonic()
+                log(
+                    f"Стабильность {pixel_id}: режим {control_mode}, "
+                    f"цель={initial_target:.3f} {target_unit}, старт V={voltage_set:.3f} В"
+                )
                 while True:
-                    now = time.time()
+                    target_setpoint, control_revision, stop_requested = control.snapshot()
+                    if stop_requested:
+                        stopped_by_user = True
+                        log("Стабильность остановлена пользователем.")
+                        break
+                    if control_revision != last_control_revision:
+                        log(f"  Новая уставка: {target_setpoint:.3f} {target_unit}")
+                        last_control_revision = control_revision
+
+                    now = time.monotonic()
                     elapsed = now - start
                     if elapsed > params.measurement_time_s:
                         break
-                    if now < next_point:
-                        time.sleep(next_point - now)
+                    while now < next_point:
+                        if progress is not None and last_progress_payload is not None:
+                            progress(last_progress_payload)
+                        if control.snapshot()[2]:
+                            stopped_by_user = True
+                            break
+                        time.sleep(min(0.1, next_point - now))
+                        now = time.monotonic()
+                    if stopped_by_user:
+                        log("Стабильность остановлена пользователем.")
+                        break
                     next_point += params.sample_interval_s
-                    now = time.time()
+                    now = time.monotonic()
                     elapsed = now - start
                     last_elapsed = elapsed
 
@@ -194,7 +321,12 @@ def run_stability_measurement(
                             "point": point_number,
                             "date_time": now_str(),
                             "elapsed_s": elapsed,
-                            "current_setpoint_mA": params.current_setpoint_mA,
+                            "control_mode": control_mode,
+                            "target_setpoint": target_setpoint,
+                            "target_unit": target_unit,
+                            "control_revision": control_revision,
+                            "current_setpoint_mA": target_setpoint if control_mode == "current" else "",
+                            "voltage_setpoint_V": target_setpoint if control_mode == "voltage" else "",
                             "voltage_set_V": voltage_set_for_point,
                             "voltage_led_measured_V": float(v_led),
                             "current_led_A": float(i_led),
@@ -209,21 +341,40 @@ def run_stability_measurement(
 
                     if i_led_mA > params.current_limit_mA:
                         current_limit_reached = True
+                        current_limit_elapsed_s = float(elapsed)
                         log(f"Аварийный стоп: ток {i_led_mA:.3f} мА > {params.current_limit_mA:.3f} мА")
                         try:
                             smu.smu1.set.voltage(0, response=0)
                         except Exception:
                             pass
 
-                    if not current_limit_reached:
-                        error_mA = params.current_setpoint_mA - i_led_mA
-                        d_v = params.current_control_kp * error_mA
-                        d_v = float(np.clip(d_v, -params.voltage_step_max, params.voltage_step_max))
-                        voltage_set += d_v
-                        voltage_set = max(0.0, voltage_set)
-                        if voltage_set >= params.voltage_limit:
-                            voltage_set = params.voltage_limit
-                            voltage_limit_reached = True
+                    last_progress_payload = {
+                        "point": point_number,
+                        "elapsed_s": elapsed,
+                        "control_mode": control_mode,
+                        "target_setpoint": target_setpoint,
+                        "target_unit": target_unit,
+                        "voltage_set_V": voltage_set_for_point,
+                        "voltage_measured_V": float(v_led),
+                        "current_measured_mA": float(i_led_mA),
+                        "photodiode_uA": float(i_pd_uA),
+                        "luminance_cd_m2": lum,
+                    }
+                    if progress is not None:
+                        progress(last_progress_payload)
+
+                    target_setpoint, _control_revision, stop_requested = control.snapshot()
+                    if stop_requested:
+                        stopped_by_user = True
+                    if not current_limit_reached and not stopped_by_user:
+                        voltage_set, voltage_limit_reached = next_stability_voltage(
+                            control_mode,
+                            voltage_set,
+                            target_setpoint,
+                            i_led_mA,
+                            params,
+                        )
+                        if voltage_limit_reached:
                             log(f"Достигнут предел напряжения {params.voltage_limit:.3f} В")
 
                     if point_number == 1 or point_number % 60 == 0:
@@ -238,7 +389,7 @@ def run_stability_measurement(
                         last_autosave_elapsed = elapsed
                         log(f"  Raw CSV сохранен: {raw_file.name}, t={elapsed:.1f} c")
 
-                    if current_limit_reached or voltage_limit_reached:
+                    if current_limit_reached or voltage_limit_reached or stopped_by_user:
                         break
             finally:
                 safe_shutdown_smu(smu)
@@ -267,4 +418,19 @@ def run_stability_measurement(
         "raw_file": kept_raw_files[0] if kept_raw_files else None,
         "status": status,
         "max_photo_uA": max_photo,
+        "control_mode": control_mode,
+        "final_setpoint": control.snapshot()[0],
+        "stopped_by_user": stopped_by_user,
+        "events": (
+            [
+                {
+                    "event": "current_limit_or_breakdown",
+                    "label": "Лимит тока / возможный пробой или шунт",
+                    "measurement_time_s": current_limit_elapsed_s,
+                    "point": point_number,
+                }
+            ]
+            if current_limit_elapsed_s is not None
+            else []
+        ),
     }

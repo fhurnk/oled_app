@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+import time
 from copy import deepcopy
 from pathlib import Path
 from tkinter import ttk
@@ -64,6 +65,8 @@ class OLEDModularApp(tk.Tk):
         self.app_settings: Dict[str, Any] = load_app_settings()
         ensure_default_sim_config(Path(self.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
         self._closing = False
+        self._active_measurement_session: Optional[Dict[str, Any]] = None
+        self._measurement_session_history = []
         self.protocol("WM_DELETE_WINDOW", self._close_app)
         self.show_start_screen()
 
@@ -96,6 +99,55 @@ class OLEDModularApp(tk.Tk):
         current.update(values)
         self.app_settings["measurement_defaults"][section] = current
         save_app_settings(self.app_settings)
+
+    def begin_measurement_session(self, measurement_type: str, pixel_id: str) -> Dict[str, Any]:
+        session = {
+            "measurement_type": str(measurement_type).upper(),
+            "pixel_id": str(pixel_id),
+            "started_monotonic": time.monotonic(),
+            "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "ended_monotonic": None,
+            "ended_at": None,
+        }
+        self._active_measurement_session = session
+        return session
+
+    def end_measurement_session(self, session: Optional[Dict[str, Any]]) -> None:
+        if not session or session.get("ended_monotonic") is not None:
+            return
+        session["ended_monotonic"] = time.monotonic()
+        session["ended_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._measurement_session_history.append(session)
+        self._measurement_session_history = self._measurement_session_history[-100:]
+        if self._active_measurement_session is session:
+            self._active_measurement_session = None
+
+    def measurement_session_for_interval(
+        self,
+        measurement_type: str,
+        pixel_id: str,
+        interval_start: float,
+        interval_end: float,
+    ) -> Optional[Dict[str, Any]]:
+        candidates = list(self._measurement_session_history)
+        if self._active_measurement_session is not None:
+            candidates.append(self._active_measurement_session)
+        matching = []
+        for session in candidates:
+            if session.get("measurement_type") != str(measurement_type).upper():
+                continue
+            if session.get("pixel_id") != str(pixel_id):
+                continue
+            session_start = float(session["started_monotonic"])
+            session_end = float(session.get("ended_monotonic") or interval_end)
+            overlap = min(interval_end, session_end) - max(interval_start, session_start)
+            contains_instant = interval_start == interval_end and session_start <= interval_start <= session_end
+            if overlap >= 0 or contains_instant:
+                matching.append((max(overlap, 0.0), session_start, session))
+        if not matching:
+            return None
+        matching.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return matching[0][2]
 
     def _set_initial_window_geometry(self) -> None:
         try:
@@ -211,7 +263,10 @@ class OLEDModularApp(tk.Tk):
         open_report_window(self)
 
     def open_camera_test_window(self) -> None:
-        open_camera_test_window(self)
+        open_camera_test_window(self, context="free")
+
+    def open_series_camera_window(self) -> None:
+        open_camera_test_window(self, context="series")
 
     def open_settings_window(self) -> None:
         open_settings_window(self)

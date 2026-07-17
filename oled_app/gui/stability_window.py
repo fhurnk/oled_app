@@ -11,6 +11,7 @@ from typing import Dict, Optional
 from oled_app.hardware import effective_com_port
 from oled_app.measurements.stability import (
     StabilityParams,
+    StabilitySetpointController,
     interpolate_voltage_at_current_from_ivl,
     run_stability_measurement,
 )
@@ -18,88 +19,183 @@ from oled_app.series import ensure_measurement_folder
 from oled_app.settings import DEFAULT_APP_SETTINGS
 from oled_app.utils import parse_float
 
+from .progress import StabilityProgressWindow
 from .widgets import fit_toplevel_to_content
+
+
+MODE_LABELS = {
+    "current": "Удерживать силу тока",
+    "voltage": "Удерживать напряжение",
+}
 
 
 def open_stability_window(app) -> None:
     if app.series is None:
         return
-    pixels = app.pixel_ids(require_ivl=True)
+    pixels = app.pixel_ids()
     if not pixels:
-        messagebox.showwarning("Стабильность", "В журнале нет пикселей с ВАЯХ.", parent=app)
+        messagebox.showwarning("Стабильность", "В журнале серии нет пикселей.", parent=app)
         return
 
     win = tk.Toplevel(app)
-    win.title("Стабильность по току")
-    win.geometry("600x560")
+    win.title("Стабильность по току или напряжению")
+    win.geometry("660x650")
     win.transient(app)
     frame = ttk.Frame(win, padding=14)
     frame.pack(fill="both", expand=True)
 
     ttk.Label(frame, text="Пиксель:").grid(row=0, column=0, sticky="e", pady=5)
     pixel_var = tk.StringVar(value=pixels[0])
-    ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=26).grid(row=0, column=1, sticky="w", pady=5)
+    ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=28).grid(
+        row=0, column=1, sticky="w", pady=5
+    )
 
-    saved_stability = app.measurement_defaults("stability")
+    saved = app.measurement_defaults("stability")
+    mode_var = tk.StringVar(value=str(saved.get("control_mode", "current")))
+    mode_box = ttk.LabelFrame(frame, text="Режим управления", padding=8)
+    mode_box.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 10))
+    for column, (value, label) in enumerate(MODE_LABELS.items()):
+        ttk.Radiobutton(mode_box, text=label, value=value, variable=mode_var).grid(
+            row=0, column=column, sticky="w", padx=(0, 18)
+        )
+
     fields = [
         ("COM port", str(app.app_settings.get("com_port", "COM3"))),
-        ("Current setpoint, mA", str(saved_stability.get("current_setpoint_mA", "3.5"))),
-        ("Voltage limit, V", str(saved_stability.get("voltage_limit_V", "5"))),
-        ("Current limit, mA", str(saved_stability.get("current_limit_mA", "10"))),
-        ("Measurement time, s", str(saved_stability.get("measurement_time_s", "86400"))),
-        ("Sample interval, s", str(saved_stability.get("sample_interval_s", "1"))),
-        ("Autosave interval, s", str(saved_stability.get("autosave_interval_s", "600"))),
+        ("Current setpoint, mA", str(saved.get("current_setpoint_mA", "3.5"))),
+        ("Voltage setpoint, V", str(saved.get("voltage_setpoint_V", "3.5"))),
+        ("Voltage limit, V", str(saved.get("voltage_limit_V", "5"))),
+        ("Current limit, mA", str(saved.get("current_limit_mA", "10"))),
+        ("Measurement time, s", str(saved.get("measurement_time_s", "86400"))),
+        ("Sample interval, s", str(saved.get("sample_interval_s", "1"))),
+        ("Autosave interval, s", str(saved.get("autosave_interval_s", "600"))),
     ]
     vars_: Dict[str, tk.StringVar] = {}
-    for row_idx, (label, default) in enumerate(fields, start=1):
-        ttk.Label(frame, text=label + ":").grid(row=row_idx, column=0, sticky="e", pady=3, padx=(0, 8))
+    field_widgets: Dict[str, tuple[ttk.Label, ttk.Entry]] = {}
+    for row_idx, (label, default) in enumerate(fields, start=2):
+        label_widget = ttk.Label(frame, text=label + ":")
+        label_widget.grid(row=row_idx, column=0, sticky="e", pady=3, padx=(0, 8))
         var = tk.StringVar(value=default)
         vars_[label] = var
-        ttk.Entry(frame, textvariable=var, width=18).grid(row=row_idx, column=1, sticky="w", pady=3)
+        entry = ttk.Entry(frame, textvariable=var, width=18)
+        entry.grid(row=row_idx, column=1, sticky="w", pady=3)
+        field_widgets[label] = (label_widget, entry)
 
-    ttk.Label(
-        frame,
-        text="Стартовое напряжение будет рассчитано как 0.9 x V(ВАЯХ) для заданного тока. Остальное - Настройки -> Стабильность доп.",
-        foreground="#555555",
-        wraplength=540,
-    ).grid(row=len(fields) + 1, column=0, columnspan=2, sticky="w", pady=(8, 2))
+    hint_var = tk.StringVar()
+    hint = ttk.Label(frame, textvariable=hint_var, foreground="#555555", wraplength=600, justify="left")
+    hint.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 2))
+
+    def refresh_mode(*_args) -> None:
+        current_widgets = field_widgets["Current setpoint, mA"]
+        voltage_widgets = field_widgets["Voltage setpoint, V"]
+        if mode_var.get() == "voltage":
+            for widget in current_widgets:
+                widget.grid_remove()
+            for widget in voltage_widgets:
+                widget.grid()
+            hint_var.set(
+                "Напряжение задаётся напрямую. Во время измерения его можно менять кнопкой «Установить» "
+                "или плавно увеличивать на +0.1, +0.25, +0.5 и +1 В."
+            )
+        else:
+            for widget in voltage_widgets:
+                widget.grid_remove()
+            for widget in current_widgets:
+                widget.grid()
+            hint_var.set(
+                "Стартовое напряжение рассчитывается как 0.9 × V(ВАЯХ) для заданного тока. "
+                "Уставку тока также можно менять во время измерения."
+            )
+
+    mode_var.trace_add("write", refresh_mode)
+    refresh_mode()
 
     def start() -> None:
+        progress: Optional[StabilityProgressWindow] = None
         try:
             pid = pixel_var.get()
-            target_current = parse_float(vars_["Current setpoint, mA"].get(), "Current setpoint")
-            voltage_start = resolve_stability_start_voltage(app, pid, target_current)
-            if voltage_start is None:
-                return
-            params = build_stability_params(app, vars_, target_current, voltage_start)
+            mode = mode_var.get()
+            voltage_limit = parse_float(vars_["Voltage limit, V"].get(), "Voltage limit")
+            current_limit = parse_float(vars_["Current limit, mA"].get(), "Current limit")
+            if mode == "current":
+                target = parse_float(vars_["Current setpoint, mA"].get(), "Current setpoint")
+                voltage_start = resolve_stability_start_voltage(app, pid, target)
+                if voltage_start is None:
+                    return
+                maximum = current_limit
+            else:
+                target = parse_float(vars_["Voltage setpoint, V"].get(), "Voltage setpoint")
+                if target < 0 or target > voltage_limit:
+                    raise ValueError("Уставка напряжения должна быть от 0 до предела напряжения.")
+                voltage_start = target
+                maximum = voltage_limit
+
+            params = build_stability_params(app, vars_, mode, target, voltage_start)
             params = params_for_pixel_luminance(app, pid, params)
-            app.save_measurement_defaults("stability", {
-                "current_setpoint_mA": vars_["Current setpoint, mA"].get(),
-                "voltage_limit_V": vars_["Voltage limit, V"].get(),
-                "current_limit_mA": vars_["Current limit, mA"].get(),
-                "measurement_time_s": vars_["Measurement time, s"].get(),
-                "sample_interval_s": vars_["Sample interval, s"].get(),
-                "autosave_interval_s": vars_["Autosave interval, s"].get(),
-            })
+            controller = StabilitySetpointController(mode, target, maximum=maximum)
+            app.save_measurement_defaults(
+                "stability",
+                {
+                    "control_mode": mode,
+                    "current_setpoint_mA": vars_["Current setpoint, mA"].get(),
+                    "voltage_setpoint_V": vars_["Voltage setpoint, V"].get(),
+                    "voltage_limit_V": vars_["Voltage limit, V"].get(),
+                    "current_limit_mA": vars_["Current limit, mA"].get(),
+                    "measurement_time_s": vars_["Measurement time, s"].get(),
+                    "sample_interval_s": vars_["Sample interval, s"].get(),
+                    "autosave_interval_s": vars_["Autosave interval, s"].get(),
+                },
+            )
             output_dir = ensure_measurement_folder(
                 app.series.series_folder,
                 "STABILITY",
                 pid,
                 app.series.journal.get_pixel(pid),
             )
-            result = run_stability_measurement(pid, output_dir, params, app.log, app.app_settings)
-            app.series.journal.update_after_measurement("STABILITY", pid, result["status"], result["file"], params.as_dict())
+            win.withdraw()
+            progress = StabilityProgressWindow(app, pid, controller)
+            measurement_session = app.begin_measurement_session("STABILITY", pid)
+            try:
+                result = run_stability_measurement(
+                    pid,
+                    output_dir,
+                    params,
+                    app.log,
+                    app.app_settings,
+                    control=controller,
+                    progress=progress.update,
+                    measurement_started_monotonic=measurement_session["started_monotonic"],
+                )
+                measurement_session["events"] = list(result.get("events") or [])
+            finally:
+                app.end_measurement_session(measurement_session)
+            progress.close()
+            notes = "Остановлено пользователем" if result.get("stopped_by_user") else ""
+            journal_params = params.as_dict()
+            journal_params["final_setpoint"] = result.get("final_setpoint")
+            app.series.journal.update_after_measurement(
+                "STABILITY", pid, result["status"], result["file"], journal_params, notes=notes
+            )
             app.log(f"Стабильность завершена: {pid}, файл {result['file'].name}")
             app.refresh_pixel_table()
             app.show_measurement_menu()
             win.destroy()
         except Exception as exc:
+            if progress is not None:
+                progress.close()
+            try:
+                win.deiconify()
+            except tk.TclError:
+                pass
             app.log(traceback.format_exc())
             messagebox.showerror("Ошибка стабильности", str(exc), parent=win)
 
-    ttk.Button(frame, text="Открыть настройки", command=app.open_settings_window).grid(row=len(fields) + 3, column=0, sticky="w", pady=16)
-    ttk.Button(frame, text="Начать стабильность", command=start).grid(row=len(fields) + 3, column=1, sticky="w", pady=16)
-    fit_toplevel_to_content(win, 660, 650)
+    ttk.Button(frame, text="Открыть настройки", command=app.open_settings_window).grid(
+        row=11, column=0, sticky="w", pady=18
+    )
+    ttk.Button(frame, text="Начать стабильность", command=start).grid(
+        row=11, column=1, sticky="w", pady=18
+    )
+    fit_toplevel_to_content(win, 720, 760)
 
 
 def resolve_stability_start_voltage(app, pixel_id: str, target_current_mA: float) -> Optional[float]:
@@ -111,7 +207,8 @@ def resolve_stability_start_voltage(app, pixel_id: str, target_current_mA: float
     if v_at_current is None:
         manual = simpledialog.askfloat(
             "Стартовое напряжение",
-            f"Не удалось найти V в ВАЯХ для {target_current_mA:g} мА.\nВведите напряжение, соответствующее этому току по ВАХ.",
+            f"Не удалось найти V в ВАЯХ для {target_current_mA:g} мА.\n"
+            "Введите напряжение, соответствующее этому току по ВАХ.",
             parent=app,
         )
         if manual is None:
@@ -131,14 +228,21 @@ def resolve_stability_start_voltage(app, pixel_id: str, target_current_mA: float
 def build_stability_params(
     app,
     vars_: Dict[str, tk.StringVar],
-    target_current_mA: float,
+    mode: str,
+    target: float,
     voltage_start: float,
 ) -> StabilityParams:
     adv = app.app_settings.get("stability_advanced", DEFAULT_APP_SETTINGS["stability_advanced"])
     units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
     return StabilityParams(
         com_port=effective_com_port({**app.app_settings, "com_port": vars_["COM port"].get().strip()}, app.log),
-        current_setpoint_mA=target_current_mA,
+        control_mode=mode,
+        current_setpoint_mA=target if mode == "current" else parse_float(
+            vars_["Current setpoint, mA"].get(), "Current setpoint"
+        ),
+        voltage_setpoint_V=target if mode == "voltage" else parse_float(
+            vars_["Voltage setpoint, V"].get(), "Voltage setpoint"
+        ),
         voltage_start=voltage_start,
         voltage_limit=parse_float(vars_["Voltage limit, V"].get(), "Voltage limit"),
         current_limit_mA=parse_float(vars_["Current limit, mA"].get(), "Current limit"),

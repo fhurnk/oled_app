@@ -24,7 +24,12 @@ STABILITY_RAW_HEADERS = [
     "point",
     "date_time",
     "elapsed_s",
+    "control_mode",
+    "target_setpoint",
+    "target_unit",
+    "control_revision",
     "current_setpoint_mA",
+    "voltage_setpoint_V",
     "voltage_set_V",
     "voltage_led_measured_V",
     "current_led_A",
@@ -40,7 +45,10 @@ STABILITY_WORKBOOK_HEADERS = [
     "Point",
     "Date time",
     "Time (s)",
+    "Control mode",
     "Current setpoint (mA)",
+    "Voltage setpoint (V)",
+    "Applied voltage (V)",
     "Voltage OLED / LED (V)",
     "Current OLED / LED (mA)",
     "Current density (mA/cm^2)",
@@ -95,7 +103,10 @@ def raw_row_to_workbook_row(row: Dict[str, str], params: Any) -> List[Any]:
         _int_or_default(row.get("point"), 0),
         row.get("date_time") or "",
         _float_or_none(row.get("elapsed_s")) or 0.0,
-        _float_or_none(row.get("current_setpoint_mA")) or _params_value(params, "current_setpoint_mA", 0.0),
+        row.get("control_mode") or _params_value(params, "control_mode", "current"),
+        _float_or_none(row.get("current_setpoint_mA")),
+        _float_or_none(row.get("voltage_setpoint_V")),
+        _float_or_none(row.get("voltage_set_V")) or 0.0,
         _float_or_none(row.get("voltage_led_measured_V")) or 0.0,
         float(current_led_mA),
         current_density,
@@ -122,8 +133,14 @@ def create_stability_workbook(filename: Path, pixel_id: str, params: Any) -> Wor
     info = [
         ("Pixel", pixel_id),
         ("Created", now_str()),
-        ("Mode", "constant current, software control"),
+        (
+            "Mode",
+            "constant current, software control"
+            if _params_value(params, "control_mode", "current") == "current"
+            else "constant voltage, ramped setpoint",
+        ),
         ("Current setpoint (mA)", _params_value(params, "current_setpoint_mA", "")),
+        ("Voltage setpoint (V)", _params_value(params, "voltage_setpoint_V", "")),
         ("Voltage start (V)", _params_value(params, "voltage_start", "")),
         ("Voltage limit (V)", _params_value(params, "voltage_limit", "")),
         ("Current limit (mA)", _params_value(params, "current_limit_mA", "")),
@@ -141,7 +158,7 @@ def create_stability_workbook(filename: Path, pixel_id: str, params: Any) -> Wor
         ws.cell(row=row, column=1, value=key).font = Font(bold=True)
         ws.cell(row=row, column=2, value=value)
 
-    header_row = 20
+    header_row = 21
     for column, header in enumerate(STABILITY_WORKBOOK_HEADERS, start=1):
         ws.cell(row=header_row, column=column, value=header)
     style_header_row(ws, header_row, 1, len(STABILITY_WORKBOOK_HEADERS))
@@ -152,27 +169,27 @@ def create_stability_workbook(filename: Path, pixel_id: str, params: Any) -> Wor
 
 
 def update_stability_status(ws, status: str, max_photo: float, elapsed: float) -> None:
-    ws["B16"] = status
-    ws["B17"] = max_photo
-    ws["B18"] = elapsed
+    ws["B17"] = status
+    ws["B18"] = max_photo
+    ws["B19"] = elapsed
     fill = PatternFill(
         "solid",
         fgColor="C6EFCE" if status == "WORKING" else "FFEB9C" if status == "IN_PROGRESS" else "FFC7CE",
     )
-    ws["B16"].fill = fill
+    ws["B17"].fill = fill
 
 
 def add_stability_chart(ws, pixel_id: str) -> None:
     max_row = ws.max_row
-    if max_row > 22:
+    if max_row > 23:
         chart = ScatterChart()
         chart.title = f"Stability {pixel_id}"
         chart.x_axis.title = "Time (s)"
         chart.y_axis.title = "Current OLED (mA) / Photodiode (uA)"
         chart.x_axis.majorGridlines = ChartLines()
-        xvalues = Reference(ws, min_col=3, min_row=21, max_row=max_row)
-        y_current = Reference(ws, min_col=6, min_row=20, max_row=max_row)
-        y_photo = Reference(ws, min_col=9, min_row=20, max_row=max_row)
+        xvalues = Reference(ws, min_col=3, min_row=22, max_row=max_row)
+        y_current = Reference(ws, min_col=9, min_row=21, max_row=max_row)
+        y_photo = Reference(ws, min_col=12, min_row=21, max_row=max_row)
         chart.series.append(Series(y_current, xvalues, title_from_data=True))
         chart.series.append(Series(y_photo, xvalues, title_from_data=True))
         ws.add_chart(chart, "J3")

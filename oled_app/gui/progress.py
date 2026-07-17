@@ -369,3 +369,114 @@ class SpectrumProgressWindow:
             x, y = to_xy(peak["wavelength_nm"], peak["intensity"] / norm_max)
             canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#C43C30", outline="#C43C30")
             canvas.create_text(x, y - 10, text=f"{peak['wavelength_nm']:.0f}", fill="#C43C30", font=("Segoe UI", 8))
+
+
+class StabilityProgressWindow:
+    """Live stability readout with mutable current or voltage target."""
+
+    def __init__(self, parent: tk.Misc, pixel_id: str, controller: Any):
+        self.controller = controller
+        self.closed = False
+        self.win = tk.Toplevel(parent)
+        self.win.title(f"Стабильность — {pixel_id}")
+        self.win.transient(parent)
+        self.win.protocol("WM_DELETE_WINDOW", self.request_stop)
+
+        frame = ttk.Frame(self.win, padding=14)
+        frame.pack(fill="both", expand=True)
+        mode_text = "ток" if controller.mode == "current" else "напряжение"
+        self.unit = "мА" if controller.mode == "current" else "В"
+        ttk.Label(
+            frame,
+            text=f"Пиксель {pixel_id} · управление: {mode_text}",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(anchor="w")
+
+        self.status_var = tk.StringVar(value="Подготовка оборудования…")
+        ttk.Label(frame, textvariable=self.status_var, wraplength=620).pack(anchor="w", pady=(6, 10))
+
+        target_box = ttk.LabelFrame(frame, text="Уставка во время измерения", padding=10)
+        target_box.pack(fill="x")
+        target, _revision, _stop = controller.snapshot()
+        self.target_var = tk.StringVar(value=f"{target:g}")
+        ttk.Entry(target_box, textvariable=self.target_var, width=14).grid(row=0, column=0, sticky="w")
+        ttk.Label(target_box, text=self.unit).grid(row=0, column=1, sticky="w", padx=(5, 10))
+        ttk.Button(target_box, text="Установить", command=self.set_target).grid(row=0, column=2, sticky="ew")
+        increments = (0.1, 0.25, 0.5, 1.0)
+        for index, increment in enumerate(increments):
+            ttk.Button(
+                target_box,
+                text=f"+{increment:g} {self.unit}",
+                command=lambda value=increment: self.add_target(value),
+            ).grid(row=1, column=index, sticky="ew", padx=(0 if index == 0 else 5, 0), pady=(8, 0))
+            target_box.columnconfigure(index, weight=1)
+
+        self.readout_var = tk.StringVar(value="Ожидание первой точки…")
+        ttk.Label(frame, textvariable=self.readout_var, font=("Consolas", 10), justify="left").pack(
+            anchor="w", pady=(12, 8)
+        )
+        ttk.Label(
+            frame,
+            text=(
+                "Новая цель напряжения достигается плавно с ограничением шага из расширенных настроек."
+                if controller.mode == "voltage"
+                else "Регулятор плавно меняет напряжение, чтобы удерживать новую уставку тока."
+            ),
+            foreground="#555555",
+            wraplength=620,
+        ).pack(anchor="w")
+        ttk.Button(frame, text="Безопасно остановить измерение", command=self.request_stop).pack(
+            anchor="e", pady=(14, 0)
+        )
+        fit_toplevel_to_content(self.win, 700, 430)
+
+    def set_target(self) -> None:
+        try:
+            value = float(self.target_var.get().strip().replace(",", "."))
+            applied = self.controller.set_target(value)
+        except Exception as exc:
+            self.status_var.set(f"Не удалось изменить уставку: {exc}")
+            return
+        self.target_var.set(f"{applied:g}")
+        self.status_var.set(f"Новая цель: {applied:g} {self.unit}")
+
+    def add_target(self, delta: float) -> None:
+        try:
+            applied = self.controller.add(delta)
+        except Exception as exc:
+            self.status_var.set(f"Не удалось изменить уставку: {exc}")
+            return
+        self.target_var.set(f"{applied:g}")
+        self.status_var.set(f"Цель увеличена до {applied:g} {self.unit}")
+
+    def request_stop(self) -> None:
+        self.controller.request_stop()
+        self.status_var.set("Запрошена безопасная остановка…")
+
+    def update(self, point: Dict[str, Any]) -> None:
+        if self.closed:
+            return
+        target = float(point.get("target_setpoint") or 0.0)
+        self.readout_var.set(
+            f"Точка: {int(point.get('point') or 0)}    Время: {float(point.get('elapsed_s') or 0.0):.1f} с\n"
+            f"Цель: {target:.3f} {self.unit}    Подано: {float(point.get('voltage_set_V') or 0.0):.3f} В\n"
+            f"Измерено: {float(point.get('voltage_measured_V') or 0.0):.3f} В / "
+            f"{float(point.get('current_measured_mA') or 0.0):.3f} мА\n"
+            f"Фототок: {float(point.get('photodiode_uA') or 0.0):.3f} мкА    "
+            f"Яркость: {float(point.get('luminance_cd_m2') or 0.0):.3f} кд/м²"
+        )
+        try:
+            self.win.update_idletasks()
+            self.win.update()
+        except tk.TclError:
+            self.controller.request_stop()
+            self.closed = True
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass

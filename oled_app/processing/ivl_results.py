@@ -24,6 +24,7 @@ IVL_RAW_HEADERS = [
     "cycle",
     "point",
     "date_time",
+    "elapsed_s",
     "voltage_set_V",
     "voltage_led_measured_V",
     "current_led_A",
@@ -42,6 +43,7 @@ IVL_WORKBOOK_HEADERS = [
     "Voltage photodiode measured (V)",
     "Photodiode current (uA)",
     "Luminance (cd/m^2)",
+    "Measurement time (s)",
 ]
 
 
@@ -89,6 +91,7 @@ def raw_row_to_workbook_point(row: Dict[str, str], params: Any) -> Dict[str, Any
         "Voltage photodiode measured (V)": _float_or_none(row.get("voltage_photodiode_measured_V")) or 0.0,
         "Photodiode current (uA)": float(current_pd_uA),
         "Luminance (cd/m^2)": luminance_cd_m2(current_pd_uA, luminance_coeff),
+        "Measurement time (s)": _float_or_none(row.get("elapsed_s")),
     }
 
 

@@ -37,7 +37,7 @@ def open_settings_window(app) -> None:
 
     general = scrollable_notebook_tab(notebook, "Общие")
     sim_tab = scrollable_notebook_tab(notebook, "Эмулятор")
-    camera_tab = scrollable_notebook_tab(notebook, "Камера alpha")
+    camera_tab = scrollable_notebook_tab(notebook, "Камера beta")
     ivl_tab = scrollable_notebook_tab(notebook, "ВАЯХ доп.")
     spec_tab = scrollable_notebook_tab(notebook, "Спектры доп.")
     stab_tab = scrollable_notebook_tab(notebook, "Стабильность доп.")

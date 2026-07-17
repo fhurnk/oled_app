@@ -40,7 +40,7 @@ def show_start_screen(app) -> None:
     header.pack(fill="x")
     ttk.Label(header, text="OLED Measurement App", font=("Segoe UI", 22, "bold")).pack(side="left")
     ttk.Button(header, text="Настройки", command=app.open_settings_window, width=16).pack(side="right")
-    ttk.Button(header, text="Камера (alpha)", command=app.open_camera_test_window, width=18).pack(side="right", padx=(0, 10))
+    ttk.Button(header, text="Свободная камера", command=app.open_camera_test_window, width=18).pack(side="right", padx=(0, 10))
 
     mode_text = f"Режим: {hardware_mode_label(app.app_settings)}"
     if app.app_settings.get("hardware_mode") == "simulator":

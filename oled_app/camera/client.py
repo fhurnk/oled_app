@@ -1,4 +1,4 @@
-"""HTTP client for the alpha Raspberry Pi camera service."""
+"""HTTP client for the Raspberry Pi camera service."""
 
 from __future__ import annotations
 
