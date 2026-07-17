@@ -162,7 +162,11 @@ def open_settings_window(app) -> None:
     ttk.Label(ivl_tab, text="Эти параметры убраны из основного окна ВАЯХ, чтобы оно не было перегружено.", foreground="#555555").grid(row=len(ivl_labels) + 1, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
     spec_vars = make_vars("spectrum_advanced")
+    integration_time_keys = ("t_int_initial_s", "t_int_min_s", "t_int_max_s")
+    for key in integration_time_keys:
+        spec_vars[key].set(f"{float(spec_vars[key].get()) * 1000:g}")
     spec_bool_vars = {
+        "reuse_previous_integration_time": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("reuse_previous_integration_time", True))),
         "discard_first_scan_after_tint_change": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("discard_first_scan_after_tint_change", True))),
         "dark_spectrum_enabled": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("dark_spectrum_enabled", False))),
         "baseline_correction_enabled": tk.BooleanVar(value=bool(app.app_settings.get("spectrum_advanced", {}).get("baseline_correction_enabled", True))),
@@ -176,10 +180,9 @@ def open_settings_window(app) -> None:
         ("intensity_max", "Макс. интенсивность, counts"),
         ("saturation_level", "Насыщение, counts"),
         ("min_peak_width_nm", "Мин. FWHM, нм"),
-        ("max_peak_width_nm", "Макс. FWHM, нм"),
-        ("t_int_initial_s", "Начальное T_int, с"),
-        ("t_int_min_s", "Мин. T_int, с"),
-        ("t_int_max_s", "Макс. T_int, с"),
+        ("t_int_initial_s", "Начальное T_int, мс"),
+        ("t_int_min_s", "Мин. T_int, мс"),
+        ("t_int_max_s", "Макс. T_int, мс"),
         ("kp", "Kp подбора T_int"),
         ("ki", "Ki подбора T_int"),
         ("max_iterations", "Макс. итераций"),
@@ -191,10 +194,11 @@ def open_settings_window(app) -> None:
     ]
     for row, (key, label) in enumerate(spec_labels):
         add_settings_entry(spec_tab, row, label, spec_vars[key])
-    ttk.Checkbutton(spec_tab, text="Сбрасывать первый спектр после смены T_int", variable=spec_bool_vars["discard_first_scan_after_tint_change"]).grid(row=len(spec_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
-    ttk.Checkbutton(spec_tab, text="Снимать dark spectrum", variable=spec_bool_vars["dark_spectrum_enabled"]).grid(row=len(spec_labels) + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
-    ttk.Checkbutton(spec_tab, text="Вычитать средний фон из raw-спектра", variable=spec_bool_vars["baseline_correction_enabled"]).grid(row=len(spec_labels) + 2, column=0, columnspan=2, sticky="w", pady=(4, 0))
-    ttk.Checkbutton(spec_tab, text="Искать пики производными", variable=spec_bool_vars["peak_detection_enabled"]).grid(row=len(spec_labels) + 3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(spec_tab, text="Начинать следующую точку с T_int предыдущей", variable=spec_bool_vars["reuse_previous_integration_time"]).grid(row=len(spec_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ttk.Checkbutton(spec_tab, text="Сбрасывать первый спектр после смены T_int", variable=spec_bool_vars["discard_first_scan_after_tint_change"]).grid(row=len(spec_labels) + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(spec_tab, text="Снимать dark spectrum", variable=spec_bool_vars["dark_spectrum_enabled"]).grid(row=len(spec_labels) + 2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(spec_tab, text="Вычитать средний фон из raw-спектра", variable=spec_bool_vars["baseline_correction_enabled"]).grid(row=len(spec_labels) + 3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(spec_tab, text="Искать пики производными", variable=spec_bool_vars["peak_detection_enabled"]).grid(row=len(spec_labels) + 4, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
     stab_vars = make_vars("stability_advanced")
     stab_labels = [
@@ -239,7 +243,12 @@ def open_settings_window(app) -> None:
                 "photo_quality_settings": dict(camera_settings.get("photo_quality_settings") or {}),
             }
             settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
-            settings["spectrum_advanced"] = collect_section("spectrum_advanced", spec_vars, spec_bool_vars)
+            spectrum_settings = collect_section("spectrum_advanced", spec_vars, spec_bool_vars)
+            for key in integration_time_keys:
+                spectrum_settings[key] = float(spectrum_settings[key]) / 1000.0
+            if not 0 < spectrum_settings["t_int_min_s"] <= spectrum_settings["t_int_initial_s"] <= spectrum_settings["t_int_max_s"]:
+                raise ValueError("Времена интегрирования должны удовлетворять: 0 < минимум <= начальное <= максимум.")
+            settings["spectrum_advanced"] = spectrum_settings
             settings["stability_advanced"] = collect_section("stability_advanced", stab_vars, {})
             save_app_settings(settings)
             app.app_settings = settings

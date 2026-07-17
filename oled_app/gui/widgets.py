@@ -2,9 +2,93 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
 import tkinter as tk
 from tkinter import ttk
 from typing import Iterable, Tuple
+
+
+def enable_windows_dpi_awareness() -> None:
+    """Enable per-monitor DPI scaling before the first Tk interpreter is created."""
+
+    if sys.platform != "win32":
+        return
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except (AttributeError, OSError):
+        pass
+
+
+def window_dpi_scale(win: tk.Misc) -> float:
+    """Return the current Tk monitor scale relative to 96 DPI."""
+
+    try:
+        return min(max(float(win.winfo_fpixels("1i")) / 96.0, 1.0), 4.0)
+    except (tk.TclError, TypeError, ValueError):
+        return 1.0
+
+
+def calculate_window_geometry(
+    screen_width: int,
+    screen_height: int,
+    preferred_width: int,
+    preferred_height: int,
+    min_width: int,
+    min_height: int,
+    horizontal_margin: int = 60,
+    vertical_margin: int = 80,
+) -> tuple[int, int, int, int]:
+    """Calculate centered geometry that never extends beyond the screen margins."""
+
+    screen_width = max(int(screen_width), 320)
+    screen_height = max(int(screen_height), 240)
+    available_width = max(320, screen_width - max(0, int(horizontal_margin)))
+    available_height = max(240, screen_height - max(0, int(vertical_margin)))
+    width = min(max(int(min_width), int(preferred_width)), available_width)
+    height = min(max(int(min_height), int(preferred_height)), available_height)
+    x = max(0, (screen_width - width) // 2)
+    y = max(0, (screen_height - height) // 2)
+    return width, height, x, y
+
+
+def fit_window_to_screen(
+    win: tk.Misc,
+    preferred_width: int,
+    preferred_height: int,
+    min_width: int,
+    min_height: int,
+    horizontal_margin: int = 60,
+    vertical_margin: int = 80,
+) -> None:
+    """Size a root or toplevel in DPI-independent units and keep it visible."""
+
+    try:
+        scale = window_dpi_scale(win)
+        width, height, x, y = calculate_window_geometry(
+            win.winfo_screenwidth(),
+            win.winfo_screenheight(),
+            round(preferred_width * scale),
+            round(preferred_height * scale),
+            round(min_width * scale),
+            round(min_height * scale),
+            round(horizontal_margin * scale),
+            round(vertical_margin * scale),
+        )
+        win.geometry(f"{width}x{height}+{x}+{y}")
+        win.minsize(min(width, round(min_width * scale)), min(height, round(min_height * scale)))
+    except (tk.TclError, TypeError, ValueError):
+        pass
 
 
 def mousewheel_units(event) -> int:

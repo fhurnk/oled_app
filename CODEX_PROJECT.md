@@ -33,7 +33,7 @@ When changing user-visible behavior, update all version references in the same c
 - Raw CSV measurement helpers now live in `oled_app/measurements/raw_io.py`; IVL, Spectrum, and Stability post-processing live in `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, and `oled_app/processing/stability_results.py`.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular application.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular application.
-- Shared Tk helpers and measurement progress windows now live in `oled_app/gui/widgets.py` and `oled_app/gui/progress.py`.
+- Shared Tk helpers, including Windows DPI awareness, screen-bounded geometry and scrollable containers, live in `oled_app/gui/widgets.py`; measurement progress windows live in `oled_app/gui/progress.py`.
 - The modular GUI shell, start screen, series measurement menu, settings window, camera alpha window, IVL window, spectrum window, stability window, and report window now live under `oled_app/gui/`.
 
 During modularization, do not edit `oled_measurement_app_v2_5.py` unless the user explicitly asks to change the reference app. Build and wire new behavior through `oled_modular_app.py` and `oled_app/`.

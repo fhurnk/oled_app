@@ -70,6 +70,22 @@ def build_camera_service_url(host: str, port: int | str) -> str:
     return f"{scheme}://{hostname}:{selected_port}"
 
 
+def normalize_center_crop(crop: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
+    """Validate a centered crop expressed as retained width/height percentages."""
+
+    value = crop or {}
+    if not isinstance(value, dict):
+        raise ValueError("Параметры кадрирования должны быть объектом.")
+    try:
+        width = float(str(value.get("width_percent", 100.0)).replace(",", "."))
+        height = float(str(value.get("height_percent", 100.0)).replace(",", "."))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Ширина и высота кадрирования должны быть числами.") from exc
+    if not 1.0 <= width <= 100.0 or not 1.0 <= height <= 100.0:
+        raise ValueError("Ширина и высота кадрирования должны быть от 1 до 100%.")
+    return {"width_percent": round(width, 2), "height_percent": round(height, 2)}
+
+
 class CameraClient:
     """Small dependency-free client used by the Tk camera test window."""
 
@@ -77,6 +93,8 @@ class CameraClient:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = max(float(timeout_s), 0.5)
         self.stream_timeout_s = max(float(stream_timeout_s), 1.0)
+        self.stream_control_timeout_s = max(self.timeout_s, self.stream_timeout_s + 15.0, 30.0)
+        self.operation_timeout_s = max(self.timeout_s, 60.0)
         self._stream_response_lock = threading.Lock()
         self._stream_response = None
 
@@ -87,29 +105,57 @@ class CameraClient:
         return self._json_request("GET", "/api/camera/status")
 
     def initialize(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/api/camera/initialize")
+        return self._json_request("POST", "/api/camera/initialize", timeout_s=self.operation_timeout_s)
 
     def capabilities(self) -> Dict[str, Any]:
-        return self._json_request("GET", "/api/camera/capabilities")
+        return self._json_request("GET", "/api/camera/capabilities", timeout_s=self.operation_timeout_s)
 
     def start_liveview(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        return self._json_request("POST", "/api/liveview/start", {"video_settings": video_settings or {}})
+        return self._json_request(
+            "POST",
+            "/api/liveview/start",
+            {"video_settings": video_settings or {}},
+            timeout_s=self.stream_control_timeout_s,
+        )
 
     def stop_liveview(self) -> Dict[str, Any]:
-        return self._json_request("POST", "/api/liveview/stop")
+        return self._json_request("POST", "/api/liveview/stop", timeout_s=self.stream_control_timeout_s)
 
-    def save_liveview_snapshot(self) -> RemoteFile:
-        return self._file_from_action("/api/liveview/snapshot")
+    def save_liveview_snapshot(
+        self,
+        file_name: str = "",
+        crop: Optional[Dict[str, Any]] = None,
+    ) -> RemoteFile:
+        payload: Dict[str, Any] = {"crop": normalize_center_crop(crop)}
+        if file_name:
+            payload["file_name"] = file_name
+        return self._file_from_action("/api/liveview/snapshot", payload, timeout_s=self.stream_control_timeout_s)
 
-    def capture_photo(self, photo_settings: Optional[Dict[str, str]] = None) -> RemoteFile:
-        payload = {"photo_settings": photo_settings or {}}
-        return self._file_from_action("/api/photo/capture", payload)
+    def capture_photo(
+        self,
+        photo_settings: Optional[Dict[str, str]] = None,
+        file_name: str = "",
+        crop: Optional[Dict[str, Any]] = None,
+    ) -> RemoteFile:
+        payload = {"photo_settings": photo_settings or {}, "crop": normalize_center_crop(crop)}
+        if file_name:
+            payload["file_name"] = file_name
+        return self._file_from_action("/api/photo/capture", payload, timeout_s=self.operation_timeout_s)
 
-    def start_recording(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        return self._json_request("POST", "/api/video/start", {"video_settings": video_settings or {}})
+    def start_recording(
+        self,
+        video_settings: Optional[Dict[str, str]] = None,
+        crop: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self._json_request(
+            "POST",
+            "/api/video/start",
+            {"video_settings": video_settings or {}, "crop": normalize_center_crop(crop)},
+            timeout_s=self.stream_control_timeout_s,
+        )
 
     def stop_recording(self) -> RemoteFile:
-        return self._file_from_action("/api/video/stop")
+        return self._file_from_action("/api/video/stop", timeout_s=self.operation_timeout_s)
 
     def list_files(self) -> list[RemoteFile]:
         payload = self._json_request("GET", "/api/files")
@@ -219,12 +265,13 @@ class CameraClient:
                 return True
         return False
 
-    def download_file(self, remote_file: RemoteFile, output_dir: Path | str) -> Path:
+    def download_file(self, remote_file: RemoteFile, output_dir: Path | str, preferred_name: str = "") -> Path:
         """Download through .part, then verify size and optional SHA-256."""
 
         folder = Path(output_dir).expanduser()
         folder.mkdir(parents=True, exist_ok=True)
-        target = available_path(folder / safe_local_filename(remote_file.name))
+        target_name = preferred_name or remote_file.name
+        target = available_path(folder / safe_local_filename(target_name))
         temporary = target.with_name(target.name + ".part")
         url = self.base_url + "/api/files/" + urllib.parse.quote(remote_file.file_id, safe="")
         digest = hashlib.sha256()
@@ -258,14 +305,25 @@ class CameraClient:
         os.replace(temporary, target)
         return target
 
-    def _file_from_action(self, path: str, request_payload: Optional[Dict[str, Any]] = None) -> RemoteFile:
-        payload = self._json_request("POST", path, request_payload)
+    def _file_from_action(
+        self,
+        path: str,
+        request_payload: Optional[Dict[str, Any]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> RemoteFile:
+        payload = self._json_request("POST", path, request_payload, timeout_s=timeout_s)
         file_payload = payload.get("file")
         if not isinstance(file_payload, dict):
             raise CameraClientError("Сервис не вернул сведения о созданном файле.", "INVALID_OUTPUT_FILE")
         return RemoteFile.from_dict(file_payload)
 
-    def _json_request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _json_request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> Dict[str, Any]:
         data = None
         headers = {"Accept": "application/json"}
         if payload is not None:
@@ -273,7 +331,7 @@ class CameraClient:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+            with urllib.request.urlopen(request, timeout=timeout_s or self.timeout_s) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
             raise self._http_error(exc) from exc
@@ -338,6 +396,15 @@ def safe_local_filename(name: str) -> str:
     value = Path(str(name or "camera_file")).name
     value = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", value).strip(" .")
     return value or "camera_file"
+
+
+def safe_capture_stem(name: str) -> str:
+    """Normalize a user-provided JPEG name without its extension."""
+
+    value = Path(str(name or "").strip()).name
+    value = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", value).strip(" .")
+    value = re.sub(r"\.(?:jpe?g)$", "", value, flags=re.IGNORECASE).strip(" ._")
+    return value[:100].rstrip(" ._")
 
 
 def available_path(path: Path) -> Path:

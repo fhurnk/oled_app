@@ -35,6 +35,7 @@ from .settings_window import open_settings_window
 from .spectrum_window import open_spectrum_window
 from .stability_window import open_stability_window
 from .start_screen import show_edit_series_screen, show_new_series_screen, show_start_screen
+from .widgets import enable_windows_dpi_awareness, fit_window_to_screen, window_dpi_scale
 
 
 class OLEDModularApp(tk.Tk):
@@ -45,10 +46,10 @@ class OLEDModularApp(tk.Tk):
     """
 
     def __init__(self):
+        enable_windows_dpi_awareness()
         super().__init__()
         self.title("OLED Measurement App")
         self._set_initial_window_geometry()
-        self.minsize(640, 440)
         self.series: Optional[SeriesManager] = None
         self.log_widget: Optional[ScrolledText] = None
         self._hardware_probe_running = False
@@ -62,7 +63,23 @@ class OLEDModularApp(tk.Tk):
         self.bind("<Configure>", self._schedule_ui_scale_update)
         self.app_settings: Dict[str, Any] = load_app_settings()
         ensure_default_sim_config(Path(self.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
+        self._closing = False
+        self.protocol("WM_DELETE_WINDOW", self._close_app)
         self.show_start_screen()
+
+    def _close_app(self) -> None:
+        if self._closing:
+            return
+        camera_window = getattr(self, "_camera_test_window", None)
+        try:
+            camera_exists = camera_window is not None and bool(camera_window.winfo_exists())
+        except tk.TclError:
+            camera_exists = False
+        if camera_exists and not camera_window.shutdown_for_app_close():
+            return
+        self._closing = True
+        self.withdraw()
+        self.after(350 if camera_exists else 0, self.destroy)
 
     def save_ui_preference(self, key: str, value: Any) -> None:
         self.app_settings.setdefault("ui", {})[key] = value
@@ -82,13 +99,12 @@ class OLEDModularApp(tk.Tk):
 
     def _set_initial_window_geometry(self) -> None:
         try:
-            screen_w = max(int(self.winfo_screenwidth()), 1120)
-            screen_h = max(int(self.winfo_screenheight()), 760)
-            width = int(min(max(screen_w * 0.82, 1180), screen_w - 60, 1600))
-            height = int(min(max(screen_h * 0.78, 680), screen_h - 80, 980))
-            x = max(0, (screen_w - width) // 2)
-            y = max(0, (screen_h - height) // 2)
-            self.geometry(f"{width}x{height}+{x}+{y}")
+            scale = window_dpi_scale(self)
+            logical_screen_w = int(self.winfo_screenwidth() / scale)
+            logical_screen_h = int(self.winfo_screenheight() / scale)
+            preferred_w = min(max(int(logical_screen_w * 0.82), 960), 1600)
+            preferred_h = min(max(int(logical_screen_h * 0.78), 640), 980)
+            fit_window_to_screen(self, preferred_w, preferred_h, 640, 440)
         except Exception:
             self.geometry("1180x760")
 
@@ -117,8 +133,9 @@ class OLEDModularApp(tk.Tk):
 
     def _apply_ui_scale(self) -> None:
         try:
-            width = max(int(self.winfo_width()), 1)
-            height = max(int(self.winfo_height()), 1)
+            dpi_scale = window_dpi_scale(self)
+            width = max(int(self.winfo_width() / dpi_scale), 1)
+            height = max(int(self.winfo_height() / dpi_scale), 1)
             scale = float(min(max(min(width / 1120.0, height / 760.0), 0.78), 1.03))
             if abs(scale - getattr(self, "_ui_scale", 1.0)) < 0.025:
                 return

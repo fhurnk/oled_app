@@ -28,6 +28,8 @@ SPECTRUM_SUMMARY_RAW_HEADERS = [
     "luminance_cd_m2",
     "integration_time_s",
     "status",
+    "peak_nm_raw",
+    "peak_intensity_raw_counts",
     "peak_nm",
     "peak_intensity_processed_counts",
     "fwhm_nm",

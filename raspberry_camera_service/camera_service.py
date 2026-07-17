@@ -60,6 +60,55 @@ VIDEO_CONFIG_LABELS = {
 VIDEO_CONFIG_PRIORITY = {name: index for index, name in enumerate(VIDEO_CONFIG_LABELS)}
 
 
+def safe_capture_stem(name: str) -> str:
+    """Normalize a requested JPEG name for Linux storage and Windows download."""
+
+    value = Path(str(name or "").strip()).name
+    value = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", value).strip(" .")
+    value = re.sub(r"\.(?:jpe?g)$", "", value, flags=re.IGNORECASE).strip(" ._")
+    return value[:100].rstrip(" ._")
+
+
+def normalize_center_crop(crop: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
+    """Validate a centered crop expressed as retained width/height percentages."""
+
+    value = crop or {}
+    if not isinstance(value, dict):
+        raise CameraServiceError("Некорректные параметры кадрирования.", "INVALID_CROP", status_code=400)
+    try:
+        width = float(str(value.get("width_percent", 100.0)).replace(",", "."))
+        height = float(str(value.get("height_percent", 100.0)).replace(",", "."))
+    except (TypeError, ValueError) as exc:
+        raise CameraServiceError(
+            "Ширина и высота кадрирования должны быть числами.",
+            "INVALID_CROP",
+            status_code=400,
+        ) from exc
+    if not 1.0 <= width <= 100.0 or not 1.0 <= height <= 100.0:
+        raise CameraServiceError(
+            "Ширина и высота кадрирования должны быть от 1 до 100%.",
+            "INVALID_CROP",
+            status_code=400,
+        )
+    return {"width_percent": round(width, 2), "height_percent": round(height, 2)}
+
+
+def center_crop_filter(crop: Optional[Dict[str, Any]] = None) -> str:
+    """Build an even-sized FFmpeg crop filter centered on the optical axis."""
+
+    normalized = normalize_center_crop(crop)
+    width = normalized["width_percent"]
+    height = normalized["height_percent"]
+    if width == 100.0 and height == 100.0:
+        return ""
+    width_ratio = width / 100.0
+    height_ratio = height / 100.0
+    return (
+        f"crop=trunc(iw*{width_ratio:.6f}/2)*2:"
+        f"trunc(ih*{height_ratio:.6f}/2)*2:(iw-ow)/2:(ih-oh)/2"
+    )
+
+
 def parse_gphoto_config(path: str, output: str) -> Dict[str, Any]:
     """Parse gphoto2 --get-config output without depending on its locale."""
 
@@ -221,8 +270,12 @@ class CameraController:
         self._last_frame_at: Optional[datetime] = None
         self._frame_times: deque[float] = deque(maxlen=120)
         self._latest_frame_dimensions: Optional[tuple[int, int]] = None
+        self._liveview_clients = 0
+        self._liveview_idle_timer: Optional[threading.Timer] = None
         self._photo_controls: Dict[str, Dict[str, Any]] = {}
         self._video_controls: Dict[str, Dict[str, Any]] = {}
+        self._viewfinder_control_path = ""
+        self._viewfinder_off_verified: Optional[bool] = None
 
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._ffmpeg_stderr: list[str] = []
@@ -233,6 +286,7 @@ class CameraController:
         self._recorded_frames = 0
         self._dropped_frames = 0
         self._recording_error: Optional[str] = None
+        self._recording_crop: Dict[str, float] = normalize_center_crop()
 
         self._files: Dict[str, MediaRecord] = {}
         self._index_existing_files()
@@ -263,7 +317,11 @@ class CameraController:
                 "camera_model": self.camera_model or None,
                 "state": self.state.value,
                 "liveview_active": stream_active,
+                "liveview_clients": self._liveview_clients,
+                "viewfinder_control": self._viewfinder_control_path or None,
+                "viewfinder_off_verified": self._viewfinder_off_verified,
                 "recording_active": recording_active,
+                "recording_crop": dict(self._recording_crop),
                 "last_frame_at": self._iso(self._last_frame_at),
                 "fps": round(fps, 2),
                 "frame_width": frame_width,
@@ -317,6 +375,7 @@ class CameraController:
                 self._photo_controls = {str(item["path"]): item for item in photo_controls}
                 self._video_controls = {str(item["path"]): item for item in video_controls}
                 self._latest_frame_dimensions = None
+                self._viewfinder_off_verified = None
                 self.state = CameraState.READY
                 self.last_error = None
             LOGGER.info("Camera initialized: %s", self.camera_model)
@@ -436,13 +495,18 @@ class CameraController:
         if result.returncode != 0:
             return []
         candidates: list[tuple[int, str, str]] = []
+        viewfinder_path = ""
         for raw_path in result.stdout.splitlines():
             path = raw_path.strip()
             if not path.startswith("/"):
                 continue
             basename = re.sub(r"[^a-z0-9]", "", path.rsplit("/", 1)[-1].lower())
+            if basename in {"viewfinder", "eosviewfinder"} and not viewfinder_path:
+                viewfinder_path = path
             if basename in VIDEO_CONFIG_LABELS:
                 candidates.append((VIDEO_CONFIG_PRIORITY[basename], path, basename))
+        with self._lock:
+            self._viewfinder_control_path = viewfinder_path
         controls: list[Dict[str, Any]] = []
         for _priority, path, basename in sorted(candidates):
             details = self._run_command(
@@ -546,6 +610,7 @@ class CameraController:
                 self._last_frame_at = None
                 self._frame_times.clear()
                 self.last_error = None
+                self._viewfinder_off_verified = False if self._viewfinder_control_path else None
                 command = [self.config.gphoto2_bin, "--stdout", "--capture-movie"]
                 LOGGER.info("Starting LiveView: %s", command)
                 try:
@@ -583,7 +648,13 @@ class CameraController:
             return self.status()
 
     def stop_stream(self, allow_recording: bool = False) -> Dict[str, Any]:
-        with self._lock:
+        process_was_running = False
+        should_disable_viewfinder = False
+        with self._frame_condition:
+            idle_timer = self._liveview_idle_timer
+            self._liveview_idle_timer = None
+            if idle_timer is not None and idle_timer is not threading.current_thread():
+                idle_timer.cancel()
             if self._process_running(self._ffmpeg) and not allow_recording:
                 raise CameraServiceError("Сначала остановите запись видео.", "CAMERA_BUSY")
             process = self._gphoto
@@ -591,32 +662,98 @@ class CameraController:
                 self._gphoto = None
                 if self.camera_connected and self.state not in {CameraState.CAPTURING_PHOTO, CameraState.STOPPING}:
                     self.state = CameraState.READY
-                return self.status()
-            self.state = CameraState.STOPPING
-            self._stream_stop_requested.set()
+                should_disable_viewfinder = self.camera_connected and bool(self._viewfinder_control_path)
+            else:
+                process_was_running = True
+                should_disable_viewfinder = self.camera_connected and bool(self._viewfinder_control_path)
+                self.state = CameraState.STOPPING
+                self._stream_stop_requested.set()
+                self._frame_condition.notify_all()
+        if not process_was_running:
+            if should_disable_viewfinder:
+                self._disable_camera_viewfinder()
+            return self.status()
         self._stop_process(process, "gphoto2")
         reader = self._reader_thread
+        stderr_reader = self._stderr_thread
         if reader and reader is not threading.current_thread():
             reader.join(timeout=2.0)
+        if stderr_reader and stderr_reader is not threading.current_thread():
+            stderr_reader.join(timeout=2.0)
+        for pipe in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+        if should_disable_viewfinder:
+            self._disable_camera_viewfinder()
         with self._lock:
             self._gphoto = None
             self._reader_thread = None
+            self._stderr_thread = None
             self._latest_frame = None
             self._frame_condition.notify_all()
             self.state = CameraState.READY if self.camera_connected else CameraState.DISCONNECTED
         return self.status()
 
-    def snapshot(self) -> MediaRecord:
+    def _disable_camera_viewfinder(self) -> Optional[bool]:
+        with self._lock:
+            path = self._viewfinder_control_path
+        if not path:
+            with self._lock:
+                self._viewfinder_off_verified = None
+            return None
+
+        timeout_s = min(max(float(self.config.command_timeout_s), 1.0), 5.0)
+        try:
+            applied = self._run_command(
+                [self.config.gphoto2_bin, "--set-config-value", f"{path}=0"],
+                timeout_s,
+                check=False,
+            )
+            verified = self._run_command(
+                [self.config.gphoto2_bin, "--get-config", path],
+                timeout_s,
+                check=False,
+            )
+        except Exception as exc:
+            with self._lock:
+                self._viewfinder_off_verified = False
+            LOGGER.warning("Could not switch off Canon viewfinder: %s", exc)
+            return False
+        current = ""
+        if verified.returncode == 0:
+            current = str(parse_gphoto_config(path, verified.stdout).get("current") or "").strip().lower()
+        is_off = verified.returncode == 0 and current in {"0", "off", "false", "no", "none", "выкл", "выключено"}
+        with self._lock:
+            self._viewfinder_off_verified = is_off
+        if not is_off:
+            details = (verified.stderr or verified.stdout or applied.stderr or applied.stdout).strip()
+            LOGGER.warning("Could not verify that Canon viewfinder is off: %s", details or path)
+        return is_off
+
+    def snapshot(self, file_name: str = "", crop: Optional[Dict[str, Any]] = None) -> MediaRecord:
         with self._operation("Камера уже выполняет другую операцию."):
             with self._lock:
                 frame = self._latest_frame
             if not frame:
                 raise CameraServiceError("Сначала запустите LiveView и дождитесь кадра.", "INVALID_STATE")
-            path = self.photos_dir / self._timestamped_name("camera_preview", ".jpg")
-            path.write_bytes(frame)
+            path = self._photo_output_path(file_name, "camera_preview")
+            try:
+                path.write_bytes(frame)
+                self._crop_image_in_place(path, crop)
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
             return self._register_file(path, "preview")
 
-    def capture_photo(self, photo_settings: Optional[Dict[str, str]] = None) -> MediaRecord:
+    def capture_photo(
+        self,
+        photo_settings: Optional[Dict[str, str]] = None,
+        file_name: str = "",
+        crop: Optional[Dict[str, Any]] = None,
+    ) -> MediaRecord:
         restart_stream = False
         record: Optional[MediaRecord] = None
         pending_error: Optional[Exception] = None
@@ -631,7 +768,7 @@ class CameraController:
                 if not self.camera_connected:
                     raise CameraServiceError("Камера не подключена.", "CAMERA_NOT_FOUND")
                 self.state = CameraState.CAPTURING_PHOTO
-            path = self.photos_dir / self._timestamped_name("camera_photo", ".jpg")
+            path = self._photo_output_path(file_name, "camera_photo")
             command = [
                 self.config.gphoto2_bin,
                 "--filename",
@@ -644,11 +781,13 @@ class CameraController:
                 if result.returncode != 0 or not path.exists() or path.stat().st_size == 0:
                     details = (result.stderr or result.stdout).strip()
                     raise CameraServiceError("Не удалось сделать фото камерой.", "PHOTO_CAPTURE_FAILED", details)
+                self._crop_image_in_place(path, crop)
                 record = self._register_file(path, "photo")
                 with self._lock:
                     self.state = CameraState.READY
                     self.last_error = None
             except Exception as exc:
+                path.unlink(missing_ok=True)
                 with self._lock:
                     self.state = CameraState.ERROR
                     self.last_error = str(exc)
@@ -666,8 +805,14 @@ class CameraController:
         assert record is not None
         return record
 
-    def start_recording(self, video_settings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def start_recording(
+        self,
+        video_settings: Optional[Dict[str, str]] = None,
+        crop: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         selected_crf = min(max(int(self.config.ffmpeg_crf), 0), 51)
+        normalized_crop = normalize_center_crop(crop)
+        crop_filter = center_crop_filter(normalized_crop)
         settings_changed = self._video_settings_require_change(video_settings)
         with self._lock:
             already_streaming = self._process_running(self._gphoto)
@@ -709,6 +854,8 @@ class CameraController:
                     "pipe:0",
                     "-an",
                 ]
+                if crop_filter:
+                    command.extend(["-vf", crop_filter])
                 command.extend([
                     "-c:v",
                     str(self.config.ffmpeg_codec),
@@ -738,6 +885,7 @@ class CameraController:
                 self._recorded_frames = 0
                 self._dropped_frames = 0
                 self._recording_error = None
+                self._recording_crop = normalized_crop
                 self._clear_record_queue()
                 self._record_stop_requested.clear()
                 process = self._ffmpeg
@@ -848,13 +996,57 @@ class CameraController:
     def wait_for_frame(self, previous_sequence: int, timeout_s: float = 5.0) -> tuple[Optional[bytes], int, bool]:
         deadline = time.monotonic() + timeout_s
         with self._frame_condition:
-            while self._frame_sequence == previous_sequence and self._process_running(self._gphoto):
+            while (
+                self._frame_sequence == previous_sequence
+                and self._process_running(self._gphoto)
+                and not self._stream_stop_requested.is_set()
+            ):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 self._frame_condition.wait(timeout=remaining)
             frame = self._latest_frame if self._frame_sequence != previous_sequence else None
-            return frame, self._frame_sequence, self._process_running(self._gphoto)
+            active = self._process_running(self._gphoto) and not self._stream_stop_requested.is_set()
+            return frame, self._frame_sequence, active
+
+    def liveview_client_connected(self) -> None:
+        with self._lock:
+            if self._liveview_idle_timer is not None:
+                self._liveview_idle_timer.cancel()
+                self._liveview_idle_timer = None
+            self._liveview_clients += 1
+
+    def liveview_client_disconnected(self) -> None:
+        with self._lock:
+            self._liveview_clients = max(0, self._liveview_clients - 1)
+            if (
+                self._liveview_clients == 0
+                and self._process_running(self._gphoto)
+                and not self._process_running(self._ffmpeg)
+            ):
+                if self._liveview_idle_timer is not None:
+                    self._liveview_idle_timer.cancel()
+                timer = threading.Timer(2.0, self._stop_liveview_if_idle)
+                timer.name = "liveview-idle-stop"
+                timer.daemon = True
+                self._liveview_idle_timer = timer
+                timer.start()
+
+    def _stop_liveview_if_idle(self) -> None:
+        with self._lock:
+            should_stop = (
+                self._liveview_clients == 0
+                and self._process_running(self._gphoto)
+                and not self._process_running(self._ffmpeg)
+            )
+            self._liveview_idle_timer = None
+        if not should_stop:
+            return
+        try:
+            LOGGER.info("Stopping idle LiveView after the last client disconnected")
+            self.stop_stream()
+        except Exception:
+            LOGGER.exception("Could not stop idle LiveView")
 
     def shutdown(self) -> None:
         LOGGER.info("Stopping camera service")
@@ -1193,6 +1385,60 @@ class CameraController:
         stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         return f"{prefix}_{stamp}{suffix}"
 
+    def _photo_output_path(self, requested_name: str, default_prefix: str) -> Path:
+        stem = safe_capture_stem(requested_name)
+        if str(requested_name or "").strip() and not stem:
+            raise CameraServiceError(
+                "Название снимка должно содержать буквы или цифры.",
+                "INVALID_FILE_NAME",
+                status_code=400,
+            )
+        name = f"{stem}.jpg" if stem else self._timestamped_name(default_prefix, ".jpg")
+        path = self.photos_dir / name
+        if not path.exists():
+            return path
+        index = 2
+        while True:
+            candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+            if not candidate.exists():
+                return candidate
+            index += 1
+
+    def _crop_image_in_place(self, path: Path, crop: Optional[Dict[str, Any]]) -> None:
+        crop_filter = center_crop_filter(crop)
+        if not crop_filter:
+            return
+        self._check_binary(self.config.ffmpeg_bin, "ffmpeg")
+        temporary = self.temporary_dir / f"{path.stem}_{uuid.uuid4().hex}.crop.jpg"
+        command = [
+            self.config.ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            crop_filter,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(temporary),
+        ]
+        try:
+            result = self._run_command(command, self.config.photo_timeout_s, check=False)
+            if result.returncode != 0 or not temporary.exists() or temporary.stat().st_size == 0:
+                details = (result.stderr or result.stdout).strip()
+                raise CameraServiceError(
+                    "Не удалось применить кадрирование к изображению.",
+                    "CROP_FAILED",
+                    details,
+                )
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     @staticmethod
     def _sha256(path: Path) -> str:
         digest = hashlib.sha256()
@@ -1280,46 +1526,56 @@ def create_app(config: ServiceConfig) -> FastAPI:
         return await run_in_threadpool(controller.stop_stream)
 
     @app.get("/api/liveview/stream")
-    async def liveview_stream():
+    async def liveview_stream(request: Request):
         boundary = b"frame"
 
         async def frames():
             sequence = -1
-            while True:
-                frame, sequence, active = await run_in_threadpool(controller.wait_for_frame, sequence, 5.0)
-                if frame is not None:
-                    yield (
-                        b"--" + boundary + b"\r\n"
-                        b"Content-Type: image/jpeg\r\n"
-                        + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
-                        + frame
-                        + b"\r\n"
-                    )
-                if not active:
-                    break
+            controller.liveview_client_connected()
+            try:
+                while not await request.is_disconnected():
+                    frame, sequence, active = await run_in_threadpool(controller.wait_for_frame, sequence, 1.0)
+                    if frame is not None:
+                        yield (
+                            b"--" + boundary + b"\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+                            + frame
+                            + b"\r\n"
+                        )
+                    if not active:
+                        break
+            finally:
+                controller.liveview_client_disconnected()
 
         return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
     @app.post("/api/liveview/snapshot")
-    async def snapshot():
-        record = await run_in_threadpool(controller.snapshot)
+    async def snapshot(payload: Optional[Dict[str, Any]] = Body(default=None)):
+        request_data = payload or {}
+        file_name = str(request_data.get("file_name") or "")
+        crop = normalize_center_crop(request_data.get("crop"))
+        record = await run_in_threadpool(controller.snapshot, file_name, crop)
         return {"success": True, "file": record.public(), "status": controller.status()}
 
     @app.post("/api/photo/capture")
     async def capture_photo(payload: Optional[Dict[str, Any]] = Body(default=None)):
         photo_settings = (payload or {}).get("photo_settings") or {}
+        file_name = str((payload or {}).get("file_name") or "")
+        crop = normalize_center_crop((payload or {}).get("crop"))
         if not isinstance(photo_settings, dict):
             raise CameraServiceError("Некорректные параметры качества фото.", "INVALID_REQUEST", status_code=400)
-        record = await run_in_threadpool(controller.capture_photo, photo_settings)
+        record = await run_in_threadpool(controller.capture_photo, photo_settings, file_name, crop)
         return {"success": True, "file": record.public(), "status": controller.status()}
 
     @app.post("/api/video/start")
     async def start_video(payload: Optional[Dict[str, Any]] = Body(default=None)):
         request_data = payload or {}
         video_settings = request_data.get("video_settings") or {}
+        crop = normalize_center_crop(request_data.get("crop"))
         if not isinstance(video_settings, dict):
             raise CameraServiceError("Некорректные параметры видео.", "INVALID_REQUEST", status_code=400)
-        return await run_in_threadpool(controller.start_recording, video_settings)
+        return await run_in_threadpool(controller.start_recording, video_settings, crop)
 
     @app.post("/api/video/stop")
     async def stop_video():

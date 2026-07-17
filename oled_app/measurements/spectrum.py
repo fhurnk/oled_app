@@ -42,10 +42,10 @@ class SpectrumParams:
     intensity_max: float = 55000.0
     saturation_level: float = 60000.0
     min_peak_width_nm: float = 15.0
-    max_peak_width_nm: float = 150.0
     t_int_initial_s: float = 0.01
     t_int_min_s: float = 0.001
     t_int_max_s: float = 10.0
+    reuse_previous_integration_time: bool = True
     discard_first_scan_after_tint_change: bool = True
     kp: float = 0.3
     ki: float = 0.05
@@ -71,9 +71,7 @@ class SpectrumHelper:
         self.params = params
         self.log = log
         self._last_integration_time_us: Optional[int] = None
-        self.last_optimization_started_saturated = False
-        self.last_optimization_started_saturated_at_10ms = False
-        self.adaptive_initial_time_enabled = False
+        self.next_integration_time_s = float(params.t_int_initial_s)
 
     def init_spectrometer(self):
         import seabreeze
@@ -280,41 +278,61 @@ class SpectrumHelper:
         p = self.params
         peak_wl, peak_int, fwhm = self.find_peak_region(wavelengths, intensities, mode)
         if peak_int is None:
-            return 0.0, 0.0, 0.0, False, True, False, False, "NO_PEAK"
+            return 0.0, 0.0, 0.0, False, True, False, "NO_PEAK"
         is_sat = bool(np.any(intensities >= p.saturation_level))
         is_weak = bool(peak_int < p.intensity_min)
-        is_wide = bool(fwhm > p.max_peak_width_nm)
         is_narrow = bool(fwhm < p.min_peak_width_nm)
         if is_sat:
             status = "SATURATED"
         elif is_weak:
             status = "TOO_WEAK"
-        elif is_wide:
-            status = "TOO_WIDE"
         elif is_narrow:
             status = "TOO_NARROW"
         elif p.intensity_min <= peak_int <= p.intensity_max:
             status = "GOOD"
         else:
             status = "OK"
-        return peak_int, peak_wl, fwhm, is_sat, is_weak, is_wide, is_narrow, status
+        return peak_int, peak_wl, fwhm, is_sat, is_weak, is_narrow, status
+
+    def next_initial_integration_time(self, integration_time_s: float, raw_peak_intensity: float) -> float:
+        """Choose the next point's starting exposure from the preceding raw spectrum."""
+
+        p = self.params
+        next_time = float(integration_time_s)
+        if np.isfinite(raw_peak_intensity) and raw_peak_intensity > p.target_intensity > 0:
+            next_time *= p.target_intensity / raw_peak_intensity
+        return float(np.clip(next_time, p.t_int_min_s, p.t_int_max_s))
+
+    def analyze_raw_quality(self, wavelengths, raw_intensities):
+        """Classify acquisition quality before baseline or dark correction."""
+
+        return self.analyze_quality(wavelengths, raw_intensities, self.params.led_type)
+
+    def processed_peak_metrics(self, wavelengths, processed_intensities):
+        """Return processed peak metrics in intensity, wavelength, FWHM order."""
+
+        peak_wl, peak_int, fwhm = self.find_peak_region(
+            wavelengths,
+            processed_intensities,
+            self.params.led_type,
+        )
+        return peak_int, peak_wl, fwhm
 
     def optimize_integration_time(self, spec):
         p = self.params
-        t_int = p.t_int_initial_s
+        t_int = self.next_integration_time_s if p.reuse_previous_integration_time else p.t_int_initial_s
         integral = 0.0
         best = None
         best_score = float("inf")
-        self.last_optimization_started_saturated = False
-        self.last_optimization_started_saturated_at_10ms = False
 
         self.log(f"  Подбор T_int: цель {p.target_intensity:.0f} counts, область {p.peak_search_mode_for_tint}")
         for iteration in range(1, p.max_iterations + 1):
             wl, inten, actual_t = self.get_spectrum(spec, t_int)
-            peak_int, peak_wl, fwhm, is_sat, is_weak, _, _, status = self.analyze_quality(wl, inten, p.peak_search_mode_for_tint)
-            if iteration == 1 and is_sat:
-                self.last_optimization_started_saturated = True
-                self.last_optimization_started_saturated_at_10ms = actual_t >= 0.0095
+            peak_int, peak_wl, fwhm, is_sat, is_weak, _, status = self.analyze_quality(
+                wl,
+                inten,
+                p.peak_search_mode_for_tint,
+            )
             if is_sat:
                 score = float("inf")
             elif is_weak:
@@ -488,26 +506,24 @@ def run_spectrum_measurement(
                         )
                         peaks = processed["peaks"]
 
-                        peak_int, peak_wl, fwhm, _, _, _, _, status = helper.analyze_quality(
-                            wavelengths,
-                            processed["baseline_corrected"],
-                            params.led_type,
+                        raw_peak_int, raw_peak_wl, _, _, _, _, status = helper.analyze_raw_quality(
+                            wavelengths, processed["raw"]
+                        )
+                        peak_int, peak_wl, fwhm = helper.processed_peak_metrics(
+                            wavelengths, processed["baseline_corrected"]
                         )
                         if peaks:
                             peak_int = peaks[0]["intensity"]
                             peak_wl = peaks[0]["wavelength_nm"]
                             fwhm = peaks[0]["fwhm_nm"]
-                        if status not in {"SATURATED", "FAILED", "NO_PEAK"} and (
-                            helper.adaptive_initial_time_enabled or helper.last_optimization_started_saturated_at_10ms
-                        ):
-                            previous_t = float(params.t_int_initial_s)
-                            params.t_int_initial_s = float(t_int)
-                            helper.adaptive_initial_time_enabled = True
-                            if helper.last_optimization_started_saturated_at_10ms:
-                                log(
-                                    f"  Первая проба на 10 мс была saturated; следующее начальное T_int: "
-                                    f"{params.t_int_initial_s*1000:.2f} мс вместо {previous_t*1000:.2f} мс"
-                                )
+                        if params.reuse_previous_integration_time and status not in {"FAILED", "NO_PEAK"}:
+                            previous_t = helper.next_integration_time_s
+                            helper.next_integration_time_s = helper.next_initial_integration_time(t_int, raw_peak_int)
+                            reason = "с уменьшением по интенсивности" if helper.next_integration_time_s < t_int else "по предыдущей точке"
+                            log(
+                                f"  Следующее начальное T_int: {helper.next_integration_time_s*1000:.2f} мс "
+                                f"({reason}; ранее {previous_t*1000:.2f} мс)"
+                            )
                         peaks_nm = ", ".join(f"{peak['wavelength_nm']:.1f}" for peak in peaks)
                         if peak_int and (
                             best_spectrum_metrics["spectrum_max_intensity"] is None
@@ -533,6 +549,8 @@ def run_spectrum_measurement(
                                 "luminance_cd_m2": lum,
                                 "integration_time_s": float(t_int),
                                 "status": status,
+                                "peak_nm_raw": float(raw_peak_wl) if raw_peak_wl else "",
+                                "peak_intensity_raw_counts": float(raw_peak_int) if raw_peak_int else "",
                                 "peak_nm": float(peak_wl) if peak_wl else "",
                                 "peak_intensity_processed_counts": float(peak_int) if peak_int else "",
                                 "fwhm_nm": float(fwhm) if fwhm else "",
@@ -563,7 +581,10 @@ def run_spectrum_measurement(
                         final_status = status
                         if progress_callback is not None:
                             progress_callback(idx, float(voltage), float(t_int), wavelengths, processed["raw"], spectrum_to_save, peaks, status)
-                        log(f"  Raw CSV: T_int={t_int*1000:.2f} мс, peak={peak_int:.0f} @ {peak_wl:.1f} нм, {status}")
+                        log(
+                            f"  Сохранено: T_int={t_int*1000:.2f} мс, "
+                            f"raw peak={raw_peak_int:.0f} @ {raw_peak_wl:.1f} нм, {status}"
+                        )
                 finally:
                     safe_shutdown_smu(smu)
 

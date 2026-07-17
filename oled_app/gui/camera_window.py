@@ -9,7 +9,6 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, Dict, Optional
 
 try:
@@ -18,12 +17,40 @@ except ImportError:  # Keep the rest of the OLED application launchable before d
     Image = None  # type: ignore[assignment]
     ImageTk = None  # type: ignore[assignment]
 
-from oled_app.camera import CameraClient, CameraClientError, RemoteFile, build_camera_service_url
+from oled_app.camera import (
+    CameraClient,
+    CameraClientError,
+    RemoteFile,
+    build_camera_service_url,
+    normalize_center_crop,
+    safe_capture_stem,
+)
 from oled_app.constants import SCRIPT_DIR
 from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
 
+from .widgets import create_scrollable_frame, fit_window_to_screen
 
-def decode_liveview_frame(frame: bytes, max_size: tuple[int, int]):
+
+def center_crop_dimensions(width: int, height: int, crop: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
+    """Return even centered output dimensions matching the Raspberry Pi FFmpeg filter."""
+
+    normalized = normalize_center_crop(crop)
+    crop_width = int(width)
+    crop_height = int(height)
+    if normalized["width_percent"] < 100.0:
+        crop_width = max(2, int(crop_width * normalized["width_percent"] / 100.0))
+        crop_width -= crop_width % 2
+    if normalized["height_percent"] < 100.0:
+        crop_height = max(2, int(crop_height * normalized["height_percent"] / 100.0))
+        crop_height -= crop_height % 2
+    return min(crop_width, int(width)), min(crop_height, int(height))
+
+
+def decode_liveview_frame(
+    frame: bytes,
+    max_size: tuple[int, int],
+    crop: Optional[Dict[str, Any]] = None,
+):
     """Fully decode and resize one JPEG before handing it to Tk."""
 
     if Image is None:
@@ -34,14 +61,20 @@ def decode_liveview_frame(frame: bytes, max_size: tuple[int, int]):
         with Image.open(stream) as source:
             source.load()
             image = source.convert("RGB")
-    if image.width <= width and image.height <= height:
+    crop_width, crop_height = center_crop_dimensions(image.width, image.height, crop)
+    if (crop_width, crop_height) != image.size:
+        left = (image.width - crop_width) // 2
+        top = (image.height - crop_height) // 2
+        image = image.crop((left, top, left + crop_width, top + crop_height))
+    scale = min(width / image.width, height / image.height)
+    target_width = max(1, min(width, int(image.width * scale + 0.5)))
+    target_height = max(1, min(height, int(image.height * scale + 0.5)))
+    if (target_width, target_height) == image.size:
         return image
-    original = image.copy()
     try:
-        image.thumbnail((width, height), Image.Resampling.LANCZOS)
+        image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
     except OSError:
-        image = original
-        image.thumbnail((width, height), Image.Resampling.BILINEAR)
+        image = image.resize((target_width, target_height), Image.Resampling.BILINEAR)
     return image
 
 
@@ -52,8 +85,7 @@ class CameraTestWindow(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Тест камеры Canon — v1.8 alpha")
-        self.geometry("1180x860")
-        self.minsize(900, 620)
+        fit_window_to_screen(self, 1280, 720, 800, 520, horizontal_margin=40, vertical_margin=70)
         self.transient(app)
 
         settings = app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
@@ -62,12 +94,29 @@ class CameraTestWindow(tk.Toplevel):
         self.state_var = tk.StringVar(value="Не подключено")
         self.model_var = tk.StringVar(value="—")
         self.fps_var = tk.StringVar(value="0.0 кадр/с")
+        self.clients_var = tk.StringVar(value="0")
+        self.viewfinder_var = tk.StringVar(value="контроль недоступен")
         self.disk_var = tk.StringVar(value="—")
         self.file_var = tk.StringVar(value="—")
         self.error_var = tk.StringVar(value="—")
-        self.video_source_var = tk.StringVar(value="LiveView: разрешение появится после первого кадра")
+        self.activity_var = tk.StringVar(value="Готово к подключению")
+        self.video_source_var = tk.StringVar(value="LiveView: ожидание первого кадра")
         self.video_quality_var = tk.StringVar(value="Камера не подключена")
         self.video_fps_var = tk.StringVar(value="Камера не подключена")
+        self.snapshot_name_var = tk.StringVar()
+        self.crop_width_var = tk.StringVar(value=str(settings.get("crop_width_percent", 100.0)))
+        self.crop_height_var = tk.StringVar(value=str(settings.get("crop_height_percent", 100.0)))
+        try:
+            self._active_crop = normalize_center_crop(
+                {
+                    "width_percent": self.crop_width_var.get(),
+                    "height_percent": self.crop_height_var.get(),
+                }
+            )
+        except ValueError:
+            self._active_crop = normalize_center_crop()
+            self.crop_width_var.set("100")
+            self.crop_height_var.set("100")
         self.keep_remote_var = tk.BooleanVar(value=bool(settings.get("keep_remote_files_after_download", True)))
 
         self.client: Optional[CameraClient] = None
@@ -94,6 +143,7 @@ class CameraTestWindow(tk.Toplevel):
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._close)
+        self.bind("<Destroy>", self._on_destroy, add="+")
         self._frame_after_id = self.after(50, self._consume_frames)
         self._update_buttons()
 
@@ -116,22 +166,31 @@ class CameraTestWindow(tk.Toplevel):
         ttk.Label(connection, text="IP / имя:").grid(row=0, column=0, sticky="w")
         ttk.Entry(connection, textvariable=self.host_var, width=28).grid(row=0, column=1, padx=(6, 12), sticky="we")
         ttk.Label(connection, text="Порт:").grid(row=0, column=2, sticky="w")
-        ttk.Entry(connection, textvariable=self.port_var, width=8).grid(row=0, column=3, padx=(6, 12))
+        ttk.Entry(connection, textvariable=self.port_var, width=8).grid(row=0, column=3, padx=(6, 0), sticky="w")
         self.connect_button = ttk.Button(connection, text="Подключиться", command=self.connect)
-        self.connect_button.grid(row=0, column=4, padx=(0, 8))
+        self.connect_button.grid(row=1, column=0, columnspan=2, padx=(0, 4), pady=(8, 0), sticky="ew")
         self.initialize_button = ttk.Button(connection, text="Переинициализировать камеру", command=self.initialize_camera)
-        self.initialize_button.grid(row=0, column=5)
+        self.initialize_button.grid(row=1, column=2, columnspan=2, padx=(4, 0), pady=(8, 0), sticky="ew")
         connection.columnconfigure(1, weight=1)
+        connection.columnconfigure(3, weight=1)
 
         content = ttk.Panedwindow(outer, orient="horizontal")
         content.pack(fill="both", expand=True)
 
-        preview_frame = ttk.LabelFrame(content, text="LiveView", padding=6)
-        controls_frame = ttk.Frame(content, padding=(10, 0, 0, 0))
-        content.add(preview_frame, weight=3)
-        content.add(controls_frame, weight=2)
+        left_pane = ttk.Panedwindow(content, orient="vertical")
+        preview_frame = ttk.LabelFrame(left_pane, text="LiveView", padding=4)
+        controls_outer, controls_frame = create_scrollable_frame(content, padding=8)
+        content.add(left_pane, weight=3)
+        content.add(controls_outer, weight=2)
+        left_pane.add(preview_frame, weight=4)
 
-        self.preview_canvas = tk.Canvas(preview_frame, background="#111111", highlightthickness=0)
+        self.preview_canvas = tk.Canvas(
+            preview_frame,
+            background="#111111",
+            highlightthickness=0,
+            width=640,
+            height=360,
+        )
         self.preview_canvas.pack(fill="both", expand=True)
         self.preview_canvas.create_text(
             320,
@@ -142,15 +201,38 @@ class CameraTestWindow(tk.Toplevel):
             tags=("placeholder",),
         )
 
+        files_box = ttk.LabelFrame(left_pane, text="Файлы на Raspberry Pi", padding=6)
+        left_pane.add(files_box, weight=1)
+        self.files_tree = ttk.Treeview(files_box, columns=("type", "size", "date"), show="tree headings", height=4)
+        self.files_tree.heading("#0", text="Имя")
+        self.files_tree.heading("type", text="Тип")
+        self.files_tree.heading("size", text="Размер")
+        self.files_tree.heading("date", text="Создан")
+        self.files_tree.column("#0", width=260, stretch=True)
+        self.files_tree.column("type", width=65, stretch=False)
+        self.files_tree.column("size", width=80, stretch=False)
+        self.files_tree.column("date", width=135, stretch=False)
+        self.files_tree.pack(fill="both", expand=True)
+        self.files_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_buttons())
+        file_buttons = ttk.Frame(files_box)
+        file_buttons.pack(fill="x", pady=(5, 0))
+        self.refresh_files_button = ttk.Button(file_buttons, text="Обновить список", command=self.refresh_files)
+        self.refresh_files_button.pack(side="left")
+        self.download_button = ttk.Button(file_buttons, text="Скачать выбранный", command=self.download_selected)
+        self.download_button.pack(side="left", padx=(6, 0))
+        ttk.Button(file_buttons, text="Открыть папку", command=self.open_download_folder).pack(side="right")
+
         status_box = ttk.LabelFrame(controls_frame, text="Состояние", padding=8)
         status_box.pack(fill="x")
         rows = [
             ("Состояние:", self.state_var),
             ("Модель:", self.model_var),
-            ("LiveView FPS:", self.fps_var),
+            ("Клиенты LiveView:", self.clients_var),
+            ("Viewfinder Canon:", self.viewfinder_var),
             ("Свободно на Pi:", self.disk_var),
             ("Текущий файл:", self.file_var),
             ("Последняя ошибка:", self.error_var),
+            ("Операция:", self.activity_var),
         ]
         for row, (label, variable) in enumerate(rows):
             ttk.Label(status_box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8), pady=2)
@@ -186,7 +268,7 @@ class CameraTestWindow(tk.Toplevel):
         )
         self.video_fps_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.video_fps_combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
-        ttk.Label(quality_box, textvariable=self.video_source_var, foreground="#555555", wraplength=360).pack(
+        ttk.Label(quality_box, textvariable=self.video_source_var, foreground="#333333", wraplength=360).pack(
             anchor="w", pady=(5, 0)
         )
         ttk.Checkbutton(
@@ -196,8 +278,50 @@ class CameraTestWindow(tk.Toplevel):
             command=self._save_quality_preferences,
         ).pack(anchor="w", pady=(6, 0))
 
+        crop_box = ttk.LabelFrame(controls_frame, text="Центральный кроп", padding=8)
+        crop_box.pack(fill="x", pady=(10, 0))
+        ttk.Label(crop_box, text="Оставить ширину:").grid(row=0, column=0, sticky="w")
+        self.crop_width_spinbox = ttk.Spinbox(
+            crop_box,
+            from_=1,
+            to=100,
+            increment=1,
+            textvariable=self.crop_width_var,
+            width=8,
+            command=self._crop_changed,
+        )
+        self.crop_width_spinbox.grid(row=0, column=1, sticky="w", padx=(8, 2))
+        ttk.Label(crop_box, text="%").grid(row=0, column=2, sticky="w")
+        ttk.Label(crop_box, text="Оставить высоту:").grid(row=1, column=0, sticky="w", pady=(5, 0))
+        self.crop_height_spinbox = ttk.Spinbox(
+            crop_box,
+            from_=1,
+            to=100,
+            increment=1,
+            textvariable=self.crop_height_var,
+            width=8,
+            command=self._crop_changed,
+        )
+        self.crop_height_spinbox.grid(row=1, column=1, sticky="w", padx=(8, 2), pady=(5, 0))
+        ttk.Label(crop_box, text="%").grid(row=1, column=2, sticky="w", pady=(5, 0))
+        self.reset_crop_button = ttk.Button(crop_box, text="Сбросить 100 × 100%", command=self._reset_crop)
+        self.reset_crop_button.grid(
+            row=0, column=3, rowspan=2, sticky="e", padx=(12, 0)
+        )
+        crop_box.columnconfigure(3, weight=1)
+        for widget in (self.crop_width_spinbox, self.crop_height_spinbox):
+            widget.bind("<Return>", self._crop_changed)
+            widget.bind("<FocusOut>", self._crop_changed)
+
         actions = ttk.LabelFrame(controls_frame, text="Ручная проверка функций", padding=8)
         actions.pack(fill="x", pady=(10, 0))
+        ttk.Label(actions, text="Название снимка:").grid(row=0, column=0, sticky="w", padx=4, pady=(0, 2))
+        ttk.Entry(actions, textvariable=self.snapshot_name_var).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=(0, 2)
+        )
+        ttk.Label(actions, text="без расширения; пусто — автоматическое имя", foreground="#555555").grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4)
+        )
         self.start_live_button = ttk.Button(actions, text="Запустить LiveView", command=self.start_liveview)
         self.stop_live_button = ttk.Button(actions, text="Остановить LiveView", command=self.stop_liveview)
         self.snapshot_button = ttk.Button(actions, text="Сохранить кадр LiveView", command=self.save_snapshot)
@@ -213,34 +337,11 @@ class CameraTestWindow(tk.Toplevel):
             self.stop_video_button,
         ]
         for index, button in enumerate(buttons):
-            button.grid(row=index // 2, column=index % 2, sticky="ew", padx=4, pady=4)
+            button.grid(row=index // 2 + 2, column=index % 2, sticky="ew", padx=4, pady=4)
         actions.columnconfigure(0, weight=1)
         actions.columnconfigure(1, weight=1)
 
-        files_box = ttk.LabelFrame(controls_frame, text="Файлы на Raspberry Pi", padding=8)
-        files_box.pack(fill="both", expand=True, pady=(10, 0))
-        self.files_tree = ttk.Treeview(files_box, columns=("type", "size", "date"), show="tree headings", height=7)
-        self.files_tree.heading("#0", text="Имя")
-        self.files_tree.heading("type", text="Тип")
-        self.files_tree.heading("size", text="Размер")
-        self.files_tree.heading("date", text="Создан")
-        self.files_tree.column("#0", width=190, stretch=True)
-        self.files_tree.column("type", width=65, stretch=False)
-        self.files_tree.column("size", width=80, stretch=False)
-        self.files_tree.column("date", width=135, stretch=False)
-        self.files_tree.pack(fill="both", expand=True)
-        self.files_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_buttons())
-        file_buttons = ttk.Frame(files_box)
-        file_buttons.pack(fill="x", pady=(6, 0))
-        self.refresh_files_button = ttk.Button(file_buttons, text="Обновить список", command=self.refresh_files)
-        self.refresh_files_button.pack(side="left")
-        self.download_button = ttk.Button(file_buttons, text="Скачать выбранный", command=self.download_selected)
-        self.download_button.pack(side="left", padx=(6, 0))
-        ttk.Button(file_buttons, text="Открыть папку", command=self.open_download_folder).pack(side="right")
-
-        self.log_widget = ScrolledText(outer, height=6, state="disabled")
-        self.log_widget.pack(fill="x", pady=(10, 0))
-        self._log("Окно камеры работает отдельно от измерений OLED.")
+        self._log("Ожидание подключения")
 
     def connect(self) -> None:
         try:
@@ -324,12 +425,29 @@ class CameraTestWindow(tk.Toplevel):
         client = self._require_client()
         if not client:
             return
+        entered_name = self.snapshot_name_var.get().strip()
+        requested_name = safe_capture_stem(entered_name)
+        if entered_name and not requested_name:
+            messagebox.showwarning(
+                "Название снимка",
+                "Введите название, содержащее буквы или цифры.",
+                parent=self,
+            )
+            return
         keep_remote = bool(self.keep_remote_var.get())
         photo_settings = self._selected_photo_settings()
+        crop = self._selected_crop(show_error=True)
+        if crop is None:
+            return
 
         def work():
-            remote = client.save_liveview_snapshot() if kind == "snapshot" else client.capture_photo(photo_settings)
-            local = client.download_file(remote, self._download_dir())
+            remote = (
+                client.save_liveview_snapshot(requested_name, crop)
+                if kind == "snapshot"
+                else client.capture_photo(photo_settings, requested_name, crop)
+            )
+            preferred_name = f"{requested_name}.jpg" if requested_name else ""
+            local = client.download_file(remote, self._download_dir(), preferred_name=preferred_name)
             deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
             return remote, local, deleted, delete_error, client.status()
 
@@ -349,7 +467,10 @@ class CameraTestWindow(tk.Toplevel):
         if not client:
             return
         video_settings = self._selected_video_settings()
-        self._run_async("Запуск записи", lambda: client.start_recording(video_settings), self._recording_started)
+        crop = self._selected_crop(show_error=True)
+        if crop is None:
+            return
+        self._run_async("Запуск записи", lambda: client.start_recording(video_settings, crop), self._recording_started)
 
     def _recording_started(self, status: Dict[str, Any]) -> None:
         self._apply_status(status)
@@ -525,6 +646,34 @@ class CameraTestWindow(tk.Toplevel):
             selected[self.video_fps_control_path] = fps
         return selected
 
+    def _selected_crop(self, show_error: bool = False) -> Optional[Dict[str, float]]:
+        try:
+            return normalize_center_crop(
+                {
+                    "width_percent": self.crop_width_var.get(),
+                    "height_percent": self.crop_height_var.get(),
+                }
+            )
+        except ValueError as exc:
+            if show_error:
+                messagebox.showwarning("Кадрирование", str(exc), parent=self)
+            return None
+
+    def _crop_changed(self, _event=None) -> None:
+        crop = self._selected_crop(show_error=False)
+        if crop is None:
+            return
+        self._active_crop = crop
+        self._save_quality_preferences()
+        self._update_video_source_text()
+        if self._last_frame is not None:
+            self._render_frame(self._last_frame)
+
+    def _reset_crop(self) -> None:
+        self.crop_width_var.set("100")
+        self.crop_height_var.set("100")
+        self._crop_changed()
+
     @staticmethod
     def _capabilities_or_legacy(client: CameraClient) -> Dict[str, Any]:
         try:
@@ -543,6 +692,10 @@ class CameraTestWindow(tk.Toplevel):
     def _save_quality_preferences(self, _event=None) -> None:
         settings = dict(self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"]))
         settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
+        crop = self._selected_crop(show_error=False)
+        if crop is not None:
+            settings["crop_width_percent"] = crop["width_percent"]
+            settings["crop_height_percent"] = crop["height_percent"]
         settings["video_camera_settings"] = self._selected_video_settings()
         if self.photo_quality_vars:
             settings["photo_quality_settings"] = self._selected_photo_settings()
@@ -574,15 +727,14 @@ class CameraTestWindow(tk.Toplevel):
         height = self.status.get("frame_height")
         fps = float(self.status.get("fps") or 0.0)
         if width and height:
+            output_width, output_height = center_crop_dimensions(int(width), int(height), self._active_crop)
             self.video_source_var.set(
-                f"Источник: LiveView {int(width)}×{int(height)}, сейчас {fps:.1f} кадр/с. "
-                "Доступны только варианты, которые сообщила камера; FFmpeg не подменяет её FPS."
+                f"LiveView: {int(width)}×{int(height)} · {fps:.1f} кадр/с\n"
+                f"После кропа: {output_width}×{output_height} "
+                f"({self._active_crop['width_percent']:g} × {self._active_crop['height_percent']:g}%)"
             )
         else:
-            self.video_source_var.set(
-                "Источник: LiveView; разрешение и фактический FPS появятся после первого кадра. "
-                "Выбор доступен только для параметров, которые сообщила камера."
-            )
+            self.video_source_var.set("LiveView: ожидание первого кадра · 0.0 кадр/с")
 
     def _start_local_stream(self) -> None:
         if not self.client:
@@ -652,9 +804,9 @@ class CameraTestWindow(tk.Toplevel):
 
     def _render_frame(self, frame: bytes) -> None:
         try:
-            width = max(self.preview_canvas.winfo_width() - 8, 200)
-            height = max(self.preview_canvas.winfo_height() - 8, 160)
-            image = decode_liveview_frame(frame, (width, height))
+            width = max(self.preview_canvas.winfo_width(), 200)
+            height = max(self.preview_canvas.winfo_height(), 160)
+            image = decode_liveview_frame(frame, (width, height), self._active_crop)
         except Exception as exc:
             self._report_render_error("декодирование JPEG", exc)
             return
@@ -710,6 +862,15 @@ class CameraTestWindow(tk.Toplevel):
         self.state_var.set(str(status.get("state") or "UNKNOWN"))
         self.model_var.set(str(status.get("camera_model") or "—"))
         self.fps_var.set(f"{float(status.get('fps') or 0.0):.1f} кадр/с")
+        self.clients_var.set(str(int(status.get("liveview_clients") or 0)))
+        if status.get("liveview_active"):
+            self.viewfinder_var.set("активен")
+        elif status.get("viewfinder_off_verified") is True:
+            self.viewfinder_var.set("выключен (проверено)")
+        elif status.get("viewfinder_control"):
+            self.viewfinder_var.set("выключение не подтверждено")
+        else:
+            self.viewfinder_var.set("контроль недоступен")
         self.disk_var.set(f"{int(status.get('free_disk_mb') or 0)} МБ")
         self.file_var.set(str(status.get("current_file") or "—"))
         self.error_var.set(str(status.get("last_error") or "—"))
@@ -721,7 +882,7 @@ class CameraTestWindow(tk.Toplevel):
         self._update_buttons()
 
     def _schedule_status_poll(self) -> None:
-        if self._closed:
+        if self._closed or not self.client:
             return
         if self._poll_after_id is not None:
             try:
@@ -743,17 +904,44 @@ class CameraTestWindow(tk.Toplevel):
             try:
                 status = client.status()
                 if not self._closed:
-                    self.after(0, lambda: self._apply_status(status))
+                    self.after(0, lambda value=status, expected=client: self._status_received(expected, value))
             except Exception as exc:
                 if not self._closed:
-                    self.after(0, lambda: self.error_var.set(str(exc)))
+                    self.after(0, lambda error=exc, expected=client: self._connection_lost(expected, error))
             finally:
                 if not self._closed:
-                    self.after(0, self._status_poll_finished)
+                    self.after(0, lambda expected=client: self._status_poll_finished(expected))
 
         threading.Thread(target=work, name="camera-status", daemon=True).start()
 
-    def _status_poll_finished(self) -> None:
+    def _status_received(self, client: CameraClient, status: Dict[str, Any]) -> None:
+        if client is self.client:
+            self._apply_status(status)
+
+    def _connection_lost(self, client: CameraClient, exc: Exception) -> None:
+        if client is not self.client:
+            return
+        self._stop_local_stream()
+        self.client = None
+        self.status = {}
+        self.capability_data = {}
+        self.state_var.set("Связь потеряна")
+        self.model_var.set("—")
+        self.fps_var.set("0.0 кадр/с")
+        self.clients_var.set("0")
+        self.viewfinder_var.set("контроль недоступен")
+        self.disk_var.set("—")
+        self.file_var.set("—")
+        self.error_var.set(str(exc))
+        self.video_quality_combo.configure(values=(), state="disabled")
+        self.video_fps_combo.configure(values=(), state="disabled")
+        self.video_quality_var.set("Нет связи с Raspberry Pi")
+        self.video_fps_var.set("Нет связи с Raspberry Pi")
+        self._show_placeholder("Связь с Raspberry Pi потеряна\nНажмите «Подключиться» для повтора")
+        self._log(f"Связь с Raspberry Pi потеряна: {exc}")
+        self._update_buttons()
+
+    def _status_poll_finished(self, _client: CameraClient) -> None:
         self._status_request_running = False
         self._schedule_status_poll()
 
@@ -815,6 +1003,10 @@ class CameraTestWindow(tk.Toplevel):
         self.photo_button.configure(state="normal" if camera_connected and not recording and not self._busy else "disabled")
         self.start_video_button.configure(state="normal" if camera_connected and not recording and not self._busy else "disabled")
         self.stop_video_button.configure(state="normal" if recording and not self._busy else "disabled")
+        crop_state = "disabled" if recording or self._busy else "normal"
+        self.crop_width_spinbox.configure(state=crop_state)
+        self.crop_height_spinbox.configure(state=crop_state)
+        self.reset_crop_button.configure(state=crop_state)
         self.refresh_files_button.configure(state="normal" if service_connected and not self._busy else "disabled")
         self.download_button.configure(
             state="normal" if service_connected and bool(self.files_tree.selection()) and not self._busy else "disabled"
@@ -840,6 +1032,11 @@ class CameraTestWindow(tk.Toplevel):
         settings["host"] = self.host_var.get().strip() or "192.168.4.1"
         settings["port"] = int(self.port_var.get().strip())
         settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
+        crop = self._selected_crop(show_error=False)
+        if crop is None:
+            raise ValueError("Исправьте параметры кадрирования.")
+        settings["crop_width_percent"] = crop["width_percent"]
+        settings["crop_height_percent"] = crop["height_percent"]
         settings["video_camera_settings"] = self._selected_video_settings()
         if self.photo_quality_vars:
             settings["photo_quality_settings"] = self._selected_photo_settings()
@@ -858,12 +1055,30 @@ class CameraTestWindow(tk.Toplevel):
         return None
 
     def _close(self) -> None:
+        self.shutdown_for_app_close()
+
+    def shutdown_for_app_close(self) -> bool:
+        """Stop local camera activity before either this window or the root closes."""
+
+        if self._closed:
+            return True
         if self.status.get("recording_active"):
             messagebox.showwarning(
                 "Камера",
                 "Сначала остановите запись видео, чтобы MP4 был корректно закрыт.",
                 parent=self,
             )
+            self.lift()
+            return False
+        self._shutdown_window(destroy_window=True)
+        return True
+
+    def _on_destroy(self, event) -> None:
+        if event.widget is self and not self._closed:
+            self._shutdown_window(destroy_window=False)
+
+    def _shutdown_window(self, destroy_window: bool) -> None:
+        if self._closed:
             return
         self._closed = True
         self._stop_local_stream()
@@ -878,9 +1093,15 @@ class CameraTestWindow(tk.Toplevel):
             except tk.TclError:
                 pass
         client = self.client
-        if client and self.status.get("liveview_active"):
+        if client:
             threading.Thread(target=self._stop_remote_quietly, args=(client,), daemon=True).start()
-        self.destroy()
+        if getattr(self.app, "_camera_test_window", None) is self:
+            self.app._camera_test_window = None
+        if destroy_window:
+            try:
+                self.destroy()
+            except tk.TclError:
+                pass
 
     @staticmethod
     def _stop_remote_quietly(client: CameraClient) -> None:
@@ -890,10 +1111,7 @@ class CameraTestWindow(tk.Toplevel):
             pass
 
     def _log(self, text: str) -> None:
-        self.log_widget.configure(state="normal")
-        self.log_widget.insert("end", str(text) + "\n")
-        self.log_widget.see("end")
-        self.log_widget.configure(state="disabled")
+        self.activity_var.set(str(text))
 
     @staticmethod
     def _format_size(size: int) -> str:

@@ -131,16 +131,52 @@ GET  /api/camera/capabilities
 POST /api/liveview/start             # JSON: video_settings по данным capabilities
 GET  /api/liveview/stream
 POST /api/liveview/stop
-POST /api/liveview/snapshot
-POST /api/photo/capture              # JSON: photo_settings по данным capabilities
-POST /api/video/start                # JSON: video_settings по данным capabilities
+POST /api/liveview/snapshot           # JSON: file_name и crop
+POST /api/photo/capture               # JSON: photo_settings, file_name и crop
+POST /api/video/start                 # JSON: video_settings и crop
 POST /api/video/stop
 GET  /api/files
 GET  /api/files/{file_id}
 DELETE /api/files/{file_id}
 ```
 
+Для `snapshot` и `photo/capture` поле `file_name` необязательно. Сервис очищает недопустимые символы, сам добавляет `.jpg` и при совпадении создаёт имя с суффиксом `_2`, `_3` и далее вместо перезаписи файла.
+
+Необязательный объект `crop` задаёт сохраняемую центральную область в процентах от полного кадра:
+
+```json
+{
+  "crop": {
+    "width_percent": 70,
+    "height_percent": 100
+  }
+}
+```
+
+Допустимы значения от `1` до `100`. `70 × 100%` убирает по 15% ширины с каждой стороны. Для JPEG сервис выполняет кроп через FFmpeg после получения снимка, а для MP4 добавляет тот же центральный фильтр непосредственно в запись. Значение `100 × 100%` не меняет исходный кадр.
+
 Swagger-документация доступна по адресу `http://<raspberry-pi>:8765/docs`.
+
+Поле `liveview_clients` в `/api/camera/status` показывает число активных HTTP-клиентов потока. Нормальные значения: `1` во время просмотра из одного окна и `0` после остановки. Если значение долго остаётся больше `1`, проверьте, не запущен ли второй экземпляр Windows-приложения.
+
+После остановки LiveView сервис ищет реальный параметр камеры с именем `viewfinder` или `eosviewfinder`, задаёт ему `0` и читает значение обратно. В `/api/camera/status` поле `viewfinder_control` содержит найденный путь, а `viewfinder_off_verified` принимает `true`, если выключение подтверждено. Если камера не предоставляет такой параметр, оба значения остаются пустыми и окно показывает `контроль недоступен`. Щелчок затвора или зеркала зависит от модели и не заменяет эту проверку.
+
+Проверить результат после выключения LiveView можно так:
+
+```bash
+curl -s http://127.0.0.1:8765/api/camera/status | python3 -m json.tool
+```
+
+Ожидаемые значения: `"liveview_active": false`, `"liveview_clients": 0` и, для поддерживаемой камеры, `"viewfinder_off_verified": true`.
+
+Когда последний клиент отключается без команды остановки (например, процесс Windows был завершён принудительно), сервис автоматически останавливает LiveView через две секунды. Если за это время подключился новый клиент или идёт запись видео, автоматическая остановка отменяется.
+
+После обновления сервиса обязательно перезапустите его:
+
+```bash
+sudo systemctl restart oled-camera
+sudo systemctl status oled-camera
+```
 
 ## 8. Ограничения alpha
 

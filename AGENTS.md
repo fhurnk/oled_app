@@ -49,3 +49,58 @@ Do not leave a code change without a matching version/changelog entry unless the
 - Commit is pushed.
 - Tag is pushed.
 - GitHub Release exists for the tag.
+
+## GitHub Authentication For Future Agents
+
+Перед публикацией сначала проверьте авторизацию GitHub CLI:
+
+```powershell
+gh auth status
+```
+
+Если `gh` не установлен, попросите пользователя выполнить в обычном PowerShell вне Codex:
+
+```powershell
+winget install --id Git.Git
+winget install --id GitHub.cli
+```
+
+Первоначальную авторизацию также следует выполнять в обычном PowerShell вне Codex, чтобы GitHub CLI мог сохранить сессию в `%APPDATA%`:
+
+```powershell
+gh auth login --hostname github.com --git-protocol https --web
+gh auth setup-git
+gh auth status
+gh repo view fhurnk/oled_app
+```
+
+Пользователь вводит показанный одноразовый код на странице `https://github.com/login/device`. Не просите пользователя передавать токен в чат и не сохраняйте токены в репозитории.
+
+Если GitHub CLI сообщает `Access is denied` при записи конфигурации, попросите пользователя выполнить в обычном PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:APPDATA\GitHub CLI"
+gh auth login --hostname github.com --git-protocol https --web
+```
+
+Если появляется падение `git-remote-https.exe` с сообщением `Память не может быть read`, не продолжайте использовать Git из комплекта Visual Studio. Проверьте активный Git:
+
+```powershell
+where.exe git
+```
+
+Предпочтительный путь после установки Git for Windows:
+
+```text
+C:\Program Files\Git\cmd\git.exe
+```
+
+После установки или изменения авторизации нужно открыть новое окно PowerShell. Для этого репозитория также учитывайте `.git-local`:
+
+```powershell
+$env:GIT_DIR = "$PWD\.git-local"
+$env:GIT_WORK_TREE = $PWD
+git status -sb
+```
+
+Если среда Codex не разрешает запись в `%APPDATA%`, не запускайте повторяющиеся device-login циклы. Остановитесь и попросите пользователя один раз выполнить постоянную авторизацию в обычном PowerShell. Временный `GH_CONFIG_DIR` допустим только как крайний вариант для текущей публикации; после завершения обязательно выполните `gh auth logout` для этого временного каталога и не оставляйте `hosts.yml` с токеном на диске.

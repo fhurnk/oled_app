@@ -13,12 +13,21 @@ from oled_app.camera.client import (
     available_path,
     build_camera_service_url,
     extract_jpeg_frames,
+    normalize_center_crop,
     safe_local_filename,
+    safe_capture_stem,
 )
-from oled_app.gui.camera_window import decode_liveview_frame
+from oled_app.gui.camera_window import center_crop_dimensions, decode_liveview_frame
+from oled_app.gui.widgets import calculate_window_geometry
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_window_geometry_is_clamped_to_small_screen(self) -> None:
+        width, height, x, y = calculate_window_geometry(1280, 720, 1600, 1000, 900, 620)
+
+        self.assertEqual((width, height), (1220, 640))
+        self.assertEqual((x, y), (30, 40))
+
     def test_extracts_multiple_jpegs_and_keeps_partial_tail(self) -> None:
         first = b"\xff\xd8" + b"a" * 128 + b"\xff\xd9"
         second = b"\xff\xd8" + b"b" * 128 + b"\xff\xd9"
@@ -34,6 +43,11 @@ class CameraClientHelpersTests(unittest.TestCase):
     def test_filename_is_reduced_to_safe_basename(self) -> None:
         self.assertEqual(safe_local_filename("../bad:name?.jpg"), "bad_name_.jpg")
 
+    def test_custom_capture_name_is_safe_and_extensionless(self) -> None:
+        self.assertEqual(safe_capture_stem("  Образец: 12?.JPG  "), "Образец_ 12")
+        self.assertEqual(safe_capture_stem(""), "")
+        self.assertEqual(safe_capture_stem("/"), "")
+
     def test_liveview_frame_is_fully_loaded_and_resized(self) -> None:
         source = Image.new("RGB", (1024, 680), "red")
         encoded = BytesIO()
@@ -44,6 +58,32 @@ class CameraClientHelpersTests(unittest.TestCase):
         self.assertEqual(decoded.mode, "RGB")
         self.assertEqual(decoded.size, (320, 213))
         self.assertIsNone(getattr(decoded, "fp", None))
+
+    def test_liveview_frame_is_center_cropped_before_resize(self) -> None:
+        source = Image.new("RGB", (1024, 680), "red")
+        encoded = BytesIO()
+        source.save(encoded, format="JPEG")
+
+        crop = {"width_percent": 50, "height_percent": 75}
+        decoded = decode_liveview_frame(encoded.getvalue(), (1024, 680), crop)
+
+        self.assertEqual(center_crop_dimensions(1024, 680, crop), (512, 510))
+        self.assertEqual(decoded.size, (683, 680))
+        self.assertEqual(normalize_center_crop(crop), {"width_percent": 50.0, "height_percent": 75.0})
+        self.assertEqual(center_crop_dimensions(1023, 679), (1023, 679))
+        self.assertEqual(
+            normalize_center_crop({"width_percent": "70,5", "height_percent": "99,5"}),
+            {"width_percent": 70.5, "height_percent": 99.5},
+        )
+
+    def test_liveview_frame_upscales_until_one_side_fills_canvas(self) -> None:
+        source = Image.new("RGB", (818, 544), "red")
+        encoded = BytesIO()
+        source.save(encoded, format="JPEG")
+
+        decoded = decode_liveview_frame(encoded.getvalue(), (1080, 900))
+
+        self.assertEqual(decoded.size, (1080, 718))
 
     def test_active_liveview_response_can_be_closed_from_another_thread(self) -> None:
         response = BlockingResponse()
@@ -88,11 +128,67 @@ class CameraClientHelpersTests(unittest.TestCase):
         self.assertEqual(remote.file_id, "abc 123")
         self.assertEqual(
             request.call_args_list[0].args,
-            ("POST", "/api/photo/capture", {"photo_settings": {"/main/imgsettings/imageformat": "Large Fine JPEG"}}),
+            (
+                "POST",
+                "/api/photo/capture",
+                {
+                    "photo_settings": {"/main/imgsettings/imageformat": "Large Fine JPEG"},
+                    "crop": {"width_percent": 100.0, "height_percent": 100.0},
+                },
+            ),
         )
         self.assertEqual(request.call_args_list[1].args, ("POST", "/api/liveview/start", {"video_settings": video_settings}))
-        self.assertEqual(request.call_args_list[2].args, ("POST", "/api/video/start", {"video_settings": video_settings}))
+        self.assertEqual(
+            request.call_args_list[2].args,
+            (
+                "POST",
+                "/api/video/start",
+                {
+                    "video_settings": video_settings,
+                    "crop": {"width_percent": 100.0, "height_percent": 100.0},
+                },
+            ),
+        )
         self.assertEqual(request.call_args_list[3].args, ("DELETE", "/api/files/abc%20123"))
+
+    def test_liveview_stop_uses_timeout_longer_than_server_shutdown(self) -> None:
+        client = CameraClient("http://camera.test:8765", timeout_s=8.0, stream_timeout_s=12.0)
+        with patch.object(client, "_json_request", return_value={"success": True}) as request:
+            client.stop_liveview()
+
+        self.assertEqual(request.call_args.args, ("POST", "/api/liveview/stop"))
+        self.assertGreaterEqual(request.call_args.kwargs["timeout_s"], 30.0)
+
+    def test_custom_name_is_sent_for_preview_and_photo(self) -> None:
+        client = CameraClient("http://camera.test:8765")
+        payload = {"file": {"file_id": "1", "name": "sample.jpg", "kind": "photo", "size": 10}}
+        with patch.object(client, "_json_request", return_value=payload) as request:
+            client.save_liveview_snapshot("sample")
+            client.capture_photo({}, "sample")
+
+        self.assertEqual(
+            request.call_args_list[0].args,
+            (
+                "POST",
+                "/api/liveview/snapshot",
+                {
+                    "file_name": "sample",
+                    "crop": {"width_percent": 100.0, "height_percent": 100.0},
+                },
+            ),
+        )
+        self.assertEqual(
+            request.call_args_list[1].args,
+            (
+                "POST",
+                "/api/photo/capture",
+                {
+                    "photo_settings": {},
+                    "file_name": "sample",
+                    "crop": {"width_percent": 100.0, "height_percent": 100.0},
+                },
+            ),
+        )
 
 
 class BlockingResponse:
