@@ -50,12 +50,15 @@ def read_report_spectrum_voltages(path: Path) -> List[float]:
         wb.close()
 
 
-def collect_report_spectrum_candidates(app, date_filter: Optional[str] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+def collect_report_spectrum_candidates(
+    app,
+    date_filter: Optional[str] = None,
+) -> Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]:
     assert app.series is not None
     spectra_root = app.series.series_folder / "measurements" / MEASUREMENT_FOLDER_NAMES["SPECTRUM"]
     if not spectra_root.exists():
         return {}
-    latest_by_pixel: Dict[str, Tuple[float, str, Path]] = {}
+    latest_by_pixel: Dict[str, Tuple[float, str, str, Path]] = {}
     for path in spectra_root.rglob("SPECTRUM_*.xlsx"):
         try:
             rel = path.relative_to(spectra_root)
@@ -66,18 +69,22 @@ def collect_report_spectrum_candidates(app, date_filter: Optional[str] = None) -
             continue
         if date_filter and parts[0] != date_filter:
             continue
-        subseries = parts[2]
+        series = parts[1]
+        substrate = parts[2]
         pixel = parts[3]
         mtime = path.stat().st_mtime
         prev = latest_by_pixel.get(pixel)
         if prev is None or mtime > prev[0]:
-            latest_by_pixel[pixel] = (mtime, subseries, path)
+            latest_by_pixel[pixel] = (mtime, series, substrate, path)
 
-    candidates: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    for pixel, (_mtime, subseries, path) in latest_by_pixel.items():
+    candidates: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
+    for pixel, (_mtime, series, substrate, path) in latest_by_pixel.items():
         voltages = read_report_spectrum_voltages(path)
         if voltages:
-            candidates.setdefault(subseries, {})[pixel] = {"file": path, "voltages": voltages}
+            candidates.setdefault(series, {}).setdefault(substrate, {})[pixel] = {
+                "file": path,
+                "voltages": voltages,
+            }
     return candidates
 
 
@@ -90,15 +97,18 @@ def measurement_dates_for_report(app, measurement_type: str) -> List[str]:
 
 
 def selected_report_candidates(
-    candidates: Dict[str, Dict[str, Dict[str, Any]]],
-    selection_vars: Dict[str, tk.StringVar],
+    candidates: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]],
+    substrate_selection_vars: Dict[str, tk.StringVar],
+    pixel_selection_vars: Dict[str, tk.StringVar],
 ) -> Dict[str, Dict[str, Any]]:
     selected: Dict[str, Dict[str, Any]] = {}
-    for subseries, var in selection_vars.items():
-        pixel = var.get().strip()
-        info = candidates.get(subseries, {}).get(pixel)
+    for series, substrate_var in substrate_selection_vars.items():
+        substrate = substrate_var.get().strip()
+        pixel_var = pixel_selection_vars.get(series)
+        pixel = pixel_var.get().strip() if pixel_var is not None else ""
+        info = candidates.get(series, {}).get(substrate, {}).get(pixel)
         if info:
-            selected[pixel] = {"subseries": subseries, **info}
+            selected[pixel] = {"series": series, "subseries": substrate, **info}
     return selected
 
 
@@ -158,31 +168,68 @@ def open_report_window(app) -> None:
     ttk.Combobox(date_frame, values=spectrum_dates, textvariable=spectrum_date_var, state="readonly", width=14).grid(row=0, column=3, sticky="w", padx=(0, 8), pady=6)
 
     ttk.Label(main, text="Выбор спектров для отчета", font=("Segoe UI", 12, "bold")).pack(anchor="w")
-    selection_frame = ttk.LabelFrame(main, text="Пиксель на подсерии")
+    selection_frame = ttk.LabelFrame(main, text="Подложка и пиксель на подсерии")
     selection_frame.pack(fill="x", pady=(8, 10))
-    selection_vars: Dict[str, tk.StringVar] = {}
+    substrate_selection_vars: Dict[str, tk.StringVar] = {}
+    pixel_selection_vars: Dict[str, tk.StringVar] = {}
 
     def rebuild_selection() -> None:
         for widget in selection_frame.winfo_children():
             widget.destroy()
-        selection_vars.clear()
+        substrate_selection_vars.clear()
+        pixel_selection_vars.clear()
         if not candidates:
             ttk.Label(selection_frame, text="За выбранную дату спектры не найдены.", foreground="#555555").grid(row=0, column=0, sticky="w", padx=8, pady=6)
             return
-        for row, subseries in enumerate(sorted(candidates)):
-            pixels = sorted(candidates[subseries])
-            selection_vars[subseries] = tk.StringVar(value=pixels[0])
-            selection_vars[subseries].trace_add("write", refresh_defaults)
-            ttk.Label(selection_frame, text=subseries + ":").grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
-            ttk.Combobox(
+
+        for column, header in enumerate(("Подсерия", "Подложка", "Пиксель", "")):
+            ttk.Label(selection_frame, text=header, font=("Segoe UI", 9, "bold")).grid(
+                row=0,
+                column=column,
+                sticky="w",
+                padx=(8, 6),
+                pady=(5, 3),
+            )
+
+        for row, series in enumerate(sorted(candidates), start=1):
+            substrates = sorted(candidates[series])
+            substrate_selection_vars[series] = tk.StringVar(value=substrates[0])
+            pixels = sorted(candidates[series][substrates[0]])
+            pixel_selection_vars[series] = tk.StringVar(value=pixels[0])
+            pixel_selection_vars[series].trace_add("write", refresh_defaults)
+
+            ttk.Label(selection_frame, text=series + ":").grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
+            substrate_combo = ttk.Combobox(
+                selection_frame,
+                values=substrates,
+                textvariable=substrate_selection_vars[series],
+                state="readonly",
+                width=18,
+            )
+            substrate_combo.grid(row=row, column=1, sticky="w", padx=(0, 8), pady=3)
+            pixel_combo = ttk.Combobox(
                 selection_frame,
                 values=pixels,
-                textvariable=selection_vars[subseries],
+                textvariable=pixel_selection_vars[series],
                 state="readonly",
-                width=28,
-            ).grid(row=row, column=1, sticky="w", padx=(0, 8), pady=3)
-            note = "несколько спектральных пикселей" if len(pixels) > 1 else "выбран автоматически"
-            ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
+                width=18,
+            )
+            pixel_combo.grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
+
+            def update_pixels(_event=None, *, selected_series=series, combo=pixel_combo) -> None:
+                substrate = substrate_selection_vars[selected_series].get()
+                available_pixels = sorted(candidates.get(selected_series, {}).get(substrate, {}))
+                combo.configure(values=available_pixels)
+                pixel_selection_vars[selected_series].set(available_pixels[0] if available_pixels else "")
+
+            substrate_combo.bind("<<ComboboxSelected>>", update_pixels)
+            if len(substrates) > 1:
+                note = "несколько снятых подложек — выберите одну"
+            elif len(pixels) > 1:
+                note = "выберите пиксель"
+            else:
+                note = "выбрано автоматически"
+            ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=3, sticky="w", padx=(0, 8), pady=3)
 
     output_manual = {"value": False}
     output_var = tk.StringVar(value=str(app.series.series_folder / report_output_name(ivl_date_var.get(), spectrum_date_var.get())))
@@ -244,7 +291,7 @@ def open_report_window(app) -> None:
     same_grid_var.trace_add("write", update_per_pixel_visibility)
 
     def refresh_defaults(*_args) -> None:
-        selected = selected_report_candidates(candidates, selection_vars)
+        selected = selected_report_candidates(candidates, substrate_selection_vars, pixel_selection_vars)
         common = common_report_voltages(selected)
         if common:
             global_vars["start"].set(format_voltage(common[0]))
@@ -292,7 +339,7 @@ def open_report_window(app) -> None:
     refresh_defaults()
 
     def build_command() -> List[str]:
-        selected = selected_report_candidates(candidates, selection_vars)
+        selected = selected_report_candidates(candidates, substrate_selection_vars, pixel_selection_vars)
         if not selected:
             raise ValueError("Не выбран ни один спектральный пиксель")
         output_text = output_var.get().strip()
@@ -315,7 +362,7 @@ def open_report_window(app) -> None:
             "--strict",
         ]
         for pixel, info in sorted(selected.items()):
-            cmd.extend(["--spectrum-pixel", f"{info['subseries']}={pixel}"])
+            cmd.extend(["--spectrum-series-pixel", f"{info['series']}={pixel}"])
 
         if same_grid_var.get():
             start = parse_float(global_vars["start"].get(), "Начало напряжения")

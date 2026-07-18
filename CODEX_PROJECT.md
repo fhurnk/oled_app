@@ -43,7 +43,7 @@ During modularization, do not edit `oled_measurement_app_v2_5.py` unless the use
 - IVL / ВАЯХ: modular workflow is in `oled_app/measurements/ivl.py` and the modular GUI window is in `oled_app/gui/ivl_window.py`; it writes raw CSV during measurement and builds the compatible final XLSX through `oled_app/processing/ivl_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; it writes raw summary/spectra CSV during measurement and builds the compatible final XLSX through `oled_app/processing/spectrum_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
 - Stability: modular workflow is in `oled_app/measurements/stability.py` and the modular GUI window is in `oled_app/gui/stability_window.py`; beta supports mutable constant-current and ramped constant-voltage targets and records both target and applied values in raw CSV/XLSX.
-- Report: report builder logic is in `oled_app/reports/origin_report.py`, and the modular GUI window is in `oled_app/gui/report_window.py`; it continues to run `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with selectable spectrum pixels and voltage grids.
+- Report: report builder logic is in `oled_app/reports/origin_report.py`, and the modular GUI window is in `oled_app/gui/report_window.py`; it continues to run `scripts/build_report_origin_workbook.py` for Origin `.opju` reports with one selected substrate and spectrum pixel per series plus selectable voltage grids.
 - Series journal: `series_journal.xlsx` inside each series folder.
 
 Generated measurement data belongs in `OLED_series/` and must not be committed.

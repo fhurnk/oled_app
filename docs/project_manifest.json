@@ -66,7 +66,7 @@
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "beta",
     "current_prerelease": "v1.8.0-beta",
-    "beta_scope": "Dynamic current/voltage stability control and series/pixel-bound camera capture with measurement-time video synchronization.",
+    "beta_scope": "Dynamic current/voltage stability control, series/pixel-bound camera capture with measurement-time video synchronization, and substrate-first spectrum selection for reports.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

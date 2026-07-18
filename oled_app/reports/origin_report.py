@@ -357,7 +357,7 @@ def parse_spectrum_pixels(values: Iterable[str]) -> dict[str, str]:
     result: dict[str, str] = {}
     for value in values:
         if "=" not in value:
-            raise ValueError(f"Expected SUBSERIES=PIXEL, got {value!r}")
+            raise ValueError(f"Expected GROUP=PIXEL, got {value!r}")
         subseries, pixel = value.split("=", 1)
         result[subseries.strip()] = pixel.strip()
     return result
@@ -370,7 +370,46 @@ def collect_spectrum_records(
     require_explicit_selection: bool,
     warnings: list[str],
     date_filter: str | None = None,
+    explicit_series_pixels: dict[str, str] | None = None,
 ) -> list[SpectrumRecord]:
+    explicit_series_pixels = explicit_series_pixels or {}
+    if explicit_series_pixels:
+        candidates_by_series: dict[str, list[MeasurementPath]] = {}
+        for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
+            candidates_by_series.setdefault(meta.series, []).append(meta)
+
+        selected_by_series: dict[str, MeasurementPath] = {}
+        for series, candidates in candidates_by_series.items():
+            selected_pixel = explicit_series_pixels.get(series)
+            if selected_pixel:
+                matching = [item for item in candidates if item.pixel == selected_pixel]
+                if not matching:
+                    warnings.append(f"Selected spectrum pixel not found for series {series}: {selected_pixel}")
+                    continue
+                selected_by_series[series] = sorted(matching, key=lambda item: item.timestamp)[-1]
+                continue
+
+            pixels = sorted({item.pixel for item in candidates}, key=pixel_position_key)
+            if require_explicit_selection:
+                warnings.append(
+                    f"Spectrum series {series} requires explicit substrate and pixel selection; "
+                    f"available pixels: {pixels}"
+                )
+                continue
+            if len(pixels) > 1:
+                warnings.append(
+                    f"Spectrum series {series} has multiple pixels {pixels}; "
+                    "using the latest file because no explicit selection was passed."
+                )
+            selected_by_series[series] = sorted(candidates, key=lambda item: item.timestamp)[-1]
+
+        records: list[SpectrumRecord] = []
+        for meta in selected_by_series.values():
+            record = read_spectrum_record(meta, sheet_name, warnings)
+            if record is not None:
+                records.append(record)
+        return sorted(records, key=measurement_sort_key)
+
     latest: dict[str, MeasurementPath] = {}
     candidates_by_subseries: dict[str, list[MeasurementPath]] = {}
     for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
@@ -1032,6 +1071,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
 
     iv_records = collect_iv_records(iv_root, warnings, args.ivl_date) if iv_root.exists() else []
     explicit_pixels = parse_spectrum_pixels(args.spectrum_pixel or [])
+    explicit_series_pixels = parse_spectrum_pixels(getattr(args, "spectrum_series_pixel", None) or [])
     spectrum_records = (
         collect_spectrum_records(
             spectra_root,
@@ -1040,6 +1080,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
             args.require_spectrum_pixel_selection,
             warnings,
             args.spectrum_date,
+            explicit_series_pixels,
         )
         if spectra_root.exists()
         else []
@@ -1668,6 +1709,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Explicit spectrum pixel selection in SUBSERIES=PIXEL form. Can be passed multiple times.",
     )
     parser.add_argument(
+        "--spectrum-series-pixel",
+        action="append",
+        default=[],
+        help=(
+            "Explicit one-pixel selection in SERIES=PIXEL form. This selects one substrate through its pixel "
+            "when a series contains spectra from multiple substrates. Can be passed multiple times."
+        ),
+    )
+    parser.add_argument(
         "--spectrum-voltage-grid",
         action="append",
         default=[],
@@ -1676,7 +1726,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--require-spectrum-pixel-selection",
         action="store_true",
-        help="Skip spectrum subseries without an explicit --spectrum-pixel selection.",
+        help="Skip spectrum groups without an explicit pixel selection.",
     )
     parser.add_argument("--voltage-start", type=float, default=None)
     parser.add_argument("--voltage-stop", type=float, default=None)
