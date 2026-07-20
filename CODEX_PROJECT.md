@@ -67,6 +67,8 @@ For each release:
 
 The release script uses `gh` when available, otherwise GitHub REST API with `GITHUB_TOKEN` or `GH_TOKEN`.
 
+Run every network publication command outside the restricted Codex sandbox: `gh auth status`, branch and tag pushes, and GitHub Release creation or editing. From Codex, request unsandboxed/escalated execution so the process can use the real `%APPDATA%`, Windows Credential Manager, and keyring. A failed authentication check inside the sandbox is not authoritative; repeat it outside the sandbox before asking the user to log in again.
+
 ## Local Git Notes
 
 The repository may use `.git-local` instead of a normal `.git` directory. If Git cannot find the repo, set:

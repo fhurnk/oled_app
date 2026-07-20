@@ -77,6 +77,7 @@
       "docs/versions/vX.Y.Z[-PRERELEASE].md"
     ],
     "release_command": ".\\env\\Scripts\\python.exe .\\scripts\\create_github_release.py vX.Y.Z[-PRERELEASE] --prerelease --latest false",
+    "publication_execution": "Run gh authentication checks, branch/tag pushes, and GitHub Release create/edit outside the restricted Codex sandbox with access to the system keyring.",
     "tag_required": true,
     "github_release_required": true
   },

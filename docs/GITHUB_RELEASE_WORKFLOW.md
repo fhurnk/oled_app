@@ -5,7 +5,7 @@ This project treats every meaningful change as a versioned release.
 ## Required Steps
 
 1. Choose the next version in the `vMAJOR.MIDDLE.MINOR` format.
-2. Update `APP_VERSION` in `oled_measurement_app_v2_5.py`.
+2. Update `APP_VERSION` in `oled_app/constants.py`.
 3. Add a top entry to `CHANGELOG.md`.
 4. Add a version note at `docs/versions/vX.Y.Z.md`.
 5. Update `README.md` and `PROJECT_OVERVIEW.md`.
@@ -40,6 +40,18 @@ Useful options:
 .\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --repo fhurnk/oled_app
 .\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --dry-run
 ```
+
+## Codex Execution Environment
+
+Run all network publication operations outside the restricted Codex sandbox. This includes:
+
+- `gh auth status`;
+- pushing branches and tags;
+- creating or editing a GitHub Release with `gh` or `scripts/create_github_release.py`.
+
+When publishing from Codex, request unsandboxed/escalated command execution so GitHub CLI can read the real `%APPDATA%`, Windows Credential Manager, and system keyring. If this execution mode is unavailable, run the publication commands in a normal PowerShell window.
+
+Do not treat an authentication error seen only inside the sandbox as proof that the user is logged out. Repeat `gh auth status` outside the sandbox before requesting a new login. Local checks, diffs, commits, and tag preparation may remain inside the restricted environment.
 
 ## Local Git Note
 

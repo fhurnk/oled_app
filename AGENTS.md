@@ -52,6 +52,10 @@ Do not leave a code change without a matching version/changelog entry unless the
 
 ## GitHub Authentication For Future Agents
 
+Все сетевые этапы публикации необходимо выполнять вне ограниченного окружения Codex: проверку `gh auth status`, `git push`, отправку и обновление тегов, а также `gh release create/edit` или `scripts/create_github_release.py`. При работе из Codex для этих команд следует запрашивать выполнение вне sandbox с доступом к системным `%APPDATA%`, Windows Credential Manager и keyring; если такой режим недоступен, команды должен выполнить пользователь в обычном PowerShell.
+
+Ошибка авторизации `gh auth status`, полученная внутри ограниченного sandbox, не означает, что системная авторизация отсутствует. Перед просьбой о повторном входе обязательно повторите проверку вне sandbox. Локальные проверки, diff, commit и подготовку тега можно выполнять в ограниченном окружении; сетевую публикацию — нельзя.
+
 Перед публикацией сначала проверьте авторизацию GitHub CLI:
 
 ```powershell
