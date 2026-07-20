@@ -6,7 +6,7 @@ import tkinter as tk
 import traceback
 from dataclasses import replace
 from tkinter import messagebox, simpledialog, ttk
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from oled_app.hardware import effective_com_port
 from oled_app.measurements.stability import (
@@ -29,7 +29,13 @@ MODE_LABELS = {
 }
 
 
-def open_stability_window(app) -> None:
+def open_stability_window(
+    app,
+    initial_pixel: Optional[str] = None,
+    parent=None,
+    locked_pixel: bool = False,
+    measurement_runner=None,
+) -> None:
     if app.series is None:
         return
     pixels = app.pixel_ids()
@@ -37,18 +43,27 @@ def open_stability_window(app) -> None:
         messagebox.showwarning("Стабильность", "В журнале серии нет пикселей.", parent=app)
         return
 
-    win = tk.Toplevel(app)
+    owner = parent or app
+    win = tk.Toplevel(owner)
     win.title("Стабильность по току или напряжению")
     win.geometry("660x650")
-    win.transient(app)
+    win.transient(owner)
     frame = ttk.Frame(win, padding=14)
     frame.pack(fill="both", expand=True)
 
-    ttk.Label(frame, text="Пиксель:").grid(row=0, column=0, sticky="e", pady=5)
-    pixel_var = tk.StringVar(value=pixels[0])
-    ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=28).grid(
-        row=0, column=1, sticky="w", pady=5
+    selected_pixel = initial_pixel if initial_pixel in pixels else pixels[0]
+    pixel_var = tk.StringVar(value=selected_pixel)
+    ttk.Label(frame, text="Пиксель камеры:" if locked_pixel else "Пиксель:").grid(
+        row=0, column=0, sticky="e", pady=5
     )
+    if locked_pixel:
+        ttk.Label(frame, text=selected_pixel, font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=1, sticky="w", pady=5
+        )
+    else:
+        ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=28).grid(
+            row=0, column=1, sticky="w", pady=5
+        )
 
     saved = app.measurement_defaults("stability")
     mode_var = tk.StringVar(value=str(saved.get("control_mode", "current")))
@@ -93,8 +108,8 @@ def open_stability_window(app) -> None:
             for widget in voltage_widgets:
                 widget.grid()
             hint_var.set(
-                "Напряжение задаётся напрямую. Во время измерения его можно менять кнопкой «Установить» "
-                "или плавно увеличивать на +0.1, +0.25, +0.5 и +1 В."
+                "Напряжение задаётся напрямую и при изменении сразу подаётся на SMU. "
+                "Цель можно ввести или изменить кнопками ±0.1, ±0.25, ±0.5 и ±1 В."
             )
         else:
             for widget in voltage_widgets:
@@ -103,14 +118,13 @@ def open_stability_window(app) -> None:
                 widget.grid()
             hint_var.set(
                 "Стартовое напряжение рассчитывается как 0.9 × V(ВАЯХ) для заданного тока. "
-                "Уставку тока также можно менять во время измерения."
+                "Уставку тока также можно увеличивать или уменьшать во время измерения."
             )
 
     mode_var.trace_add("write", refresh_mode)
     refresh_mode()
 
     def start() -> None:
-        progress: Optional[StabilityProgressWindow] = None
         try:
             pid = pixel_var.get()
             mode = mode_var.get()
@@ -145,47 +159,23 @@ def open_stability_window(app) -> None:
                     "autosave_interval_s": vars_["Autosave interval, s"].get(),
                 },
             )
-            output_dir = ensure_measurement_folder(
-                app.series.series_folder,
-                "STABILITY",
-                pid,
-                app.series.journal.get_pixel(pid),
-            )
-            win.withdraw()
-            progress = StabilityProgressWindow(app, pid, controller)
-            measurement_session = app.begin_measurement_session("STABILITY", pid)
-            try:
-                result = run_stability_measurement(
+            if measurement_runner is not None:
+                win.destroy()
+                measurement_runner(
+                    "stability",
                     pid,
-                    output_dir,
-                    params,
-                    app.log,
-                    app.app_settings,
-                    control=controller,
-                    progress=progress.update,
-                    measurement_started_monotonic=measurement_session["started_monotonic"],
+                    lambda: measure_one_stability(app, pid, params, controller, return_to_menu=False),
                 )
-                measurement_session["events"] = list(result.get("events") or [])
-            finally:
-                app.end_measurement_session(measurement_session)
-            progress.close()
-            notes = "Остановлено пользователем" if result.get("stopped_by_user") else ""
-            journal_params = params.as_dict()
-            journal_params["final_setpoint"] = result.get("final_setpoint")
-            app.series.journal.update_after_measurement(
-                "STABILITY", pid, result["status"], result["file"], journal_params, notes=notes
-            )
-            app.log(f"Стабильность завершена: {pid}, файл {result['file'].name}")
-            app.refresh_pixel_table()
-            app.show_measurement_menu()
-            win.destroy()
-        except Exception as exc:
-            if progress is not None:
-                progress.close()
-            try:
+                return
+
+            win.withdraw()
+            result = measure_one_stability(app, pid, params, controller, return_to_menu=False)
+            if result is None:
                 win.deiconify()
-            except tk.TclError:
-                pass
+                return
+            win.destroy()
+            app.show_measurement_menu()
+        except Exception as exc:
             app.log(traceback.format_exc())
             messagebox.showerror("Ошибка стабильности", str(exc), parent=win)
 
@@ -196,6 +186,60 @@ def open_stability_window(app) -> None:
         row=11, column=1, sticky="w", pady=18
     )
     fit_toplevel_to_content(win, 720, 760)
+
+
+def measure_one_stability(
+    app,
+    pixel_id: str,
+    params: StabilityParams,
+    controller: StabilitySetpointController,
+    return_to_menu: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Run one stability measurement and update the journal."""
+
+    assert app.series is not None
+    output_dir = ensure_measurement_folder(
+        app.series.series_folder,
+        "STABILITY",
+        pixel_id,
+        app.series.journal.get_pixel(pixel_id),
+    )
+    progress: Optional[StabilityProgressWindow] = None
+    measurement_session = None
+    try:
+        progress = StabilityProgressWindow(app, pixel_id, controller)
+        measurement_session = app.begin_measurement_session("STABILITY", pixel_id)
+        result = run_stability_measurement(
+            pixel_id,
+            output_dir,
+            params,
+            app.log,
+            app.app_settings,
+            control=controller,
+            progress=progress.update,
+            measurement_started_monotonic=measurement_session["started_monotonic"],
+        )
+        measurement_session["events"] = list(result.get("events") or [])
+        notes = "Остановлено пользователем" if result.get("stopped_by_user") else ""
+        journal_params = params.as_dict()
+        journal_params["final_setpoint"] = result.get("final_setpoint")
+        app.series.journal.update_after_measurement(
+            "STABILITY", pixel_id, result["status"], result["file"], journal_params, notes=notes
+        )
+        app.log(f"Стабильность завершена: {pixel_id}, файл {result['file'].name}")
+        app.refresh_pixel_table()
+        if return_to_menu:
+            app.show_measurement_menu()
+        return result
+    except Exception as exc:
+        app.log(traceback.format_exc())
+        messagebox.showerror("Ошибка стабильности", str(exc), parent=app)
+        return None
+    finally:
+        if measurement_session is not None:
+            app.end_measurement_session(measurement_session)
+        if progress is not None:
+            progress.close()
 
 
 def resolve_stability_start_voltage(app, pixel_id: str, target_current_mA: float) -> Optional[float]:

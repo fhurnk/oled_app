@@ -157,6 +157,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
             "current_limit_mA": "10",
         },
         "spectrum": {
+            "voltage_start_V": "2.0",
             "voltage_end_V": "5",
             "voltage_step_V": "0.1",
             "current_limit_mA": "6",

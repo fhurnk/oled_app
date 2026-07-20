@@ -1447,8 +1447,8 @@ def create_origin_iv_book(op, records: list[IvRecord]):
         origin_write_column(sheet_jl, jl_base, density_values, "j", "mA/cm^2", "X", comments=series)
         origin_write_column(sheet_jl, jl_base + 1, luminance_values, "I\\-(lum)", "cd/m^2", comments=series)
         try:
-            sheet_jl.set_formula(jl_base, f"Sheet1!col({origin_col_name(base + 1)})")
-            sheet_jl.set_formula(jl_base + 1, f"Sheet1!col({origin_col_name(base + 2)})")
+            sheet_jl.set_formula(jl_base, f"Sheet1!{origin_col_name(base + 1)}")
+            sheet_jl.set_formula(jl_base + 1, f"Sheet1!{origin_col_name(base + 2)}")
         except Exception:
             pass
     return {"book": book, "iv": sheet_iv, "jl": sheet_jl}

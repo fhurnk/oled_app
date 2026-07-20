@@ -16,7 +16,7 @@ from .metadata import (
     quarter_description,
     quarter_led_color,
 )
-from .paths import ensure_day_folder, ensure_measurement_folder
+from .paths import ensure_camera_session_folder, ensure_day_folder, ensure_measurement_folder
 from .statuses import ivl_status_marker, pixel_status_color
 
 __all__ = [
@@ -28,6 +28,7 @@ __all__ = [
     "SeriesJournal",
     "SeriesManager",
     "build_holder_layout",
+    "ensure_camera_session_folder",
     "ensure_day_folder",
     "ensure_measurement_folder",
     "generate_pixels",

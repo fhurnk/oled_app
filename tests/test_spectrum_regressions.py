@@ -7,7 +7,13 @@ from unittest.mock import patch
 import numpy as np
 
 from oled_app.hardware.probe import probe_spectrometer
-from oled_app.measurements.spectrum import SpectrumHelper, SpectrumParams
+from oled_app.gui.spectrum_window import initial_spectrum_start_value
+from oled_app.measurements.spectrum import (
+    SpectrumHelper,
+    SpectrumMeasurementController,
+    SpectrumMeasurementStopped,
+    SpectrumParams,
+)
 
 
 class SpectrometerProbeTests(unittest.TestCase):
@@ -30,6 +36,9 @@ class SpectrometerProbeTests(unittest.TestCase):
 
 
 class SpectrumQualityTests(unittest.TestCase):
+    def test_last_manual_start_voltage_is_kept_in_next_window(self):
+        self.assertEqual(initial_spectrum_start_value({"voltage_start_V": "2.75"}, 2.1), "2.75")
+
     def test_status_uses_raw_counts_before_baseline_subtraction(self):
         params = SpectrumParams(led_type="visible")
         helper = SpectrumHelper(params, lambda _message: None)
@@ -103,6 +112,62 @@ class SpectrumQualityTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(spectrometer.intensity_reads, 1)
+
+    def test_integration_optimization_previews_every_trial(self):
+        params = SpectrumParams(
+            discard_first_scan_after_tint_change=False,
+            settle_time_spectrum_s=0.0,
+            max_iterations=2,
+        )
+        helper = SpectrumHelper(params, lambda _message: None)
+        previews = []
+
+        class FakeSpectrometer:
+            def integration_time_micros(self, _value):
+                return None
+
+            def wavelengths(self):
+                return np.linspace(380.0, 780.0, 401)
+
+            def intensities(self):
+                return np.full(401, 30000.0)
+
+        helper.optimize_integration_time(
+            FakeSpectrometer(),
+            preview_callback=lambda iteration, t_int, wavelengths, intensities, status: previews.append(
+                (iteration, t_int, len(wavelengths), len(intensities), status)
+            ),
+        )
+
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(previews[0][0], 1)
+        self.assertEqual(previews[0][2:4], (401, 401))
+
+    def test_integration_optimization_honors_stop_after_preview(self):
+        params = SpectrumParams(
+            discard_first_scan_after_tint_change=False,
+            settle_time_spectrum_s=0.0,
+            max_iterations=3,
+        )
+        helper = SpectrumHelper(params, lambda _message: None)
+        controller = SpectrumMeasurementController()
+
+        class FakeSpectrometer:
+            def integration_time_micros(self, _value):
+                return None
+
+            def wavelengths(self):
+                return np.linspace(380.0, 780.0, 401)
+
+            def intensities(self):
+                return np.full(401, 1000.0)
+
+        with self.assertRaises(SpectrumMeasurementStopped):
+            helper.optimize_integration_time(
+                FakeSpectrometer(),
+                preview_callback=lambda *_args: controller.request_stop(),
+                stop_requested=controller.stop_requested,
+            )
 
 
 if __name__ == "__main__":

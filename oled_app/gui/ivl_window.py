@@ -18,25 +18,42 @@ from .progress import IVLProgressWindow
 from .widgets import fit_toplevel_to_content
 
 
-def open_ivl_window(app) -> None:
+def open_ivl_window(
+    app,
+    initial_pixel: Optional[str] = None,
+    parent=None,
+    locked_pixel: bool = False,
+    measurement_runner=None,
+) -> None:
     if app.series is None:
         return
-    win = tk.Toplevel(app)
+    owner = parent or app
+    win = tk.Toplevel(owner)
     win.title("ВАЯХ")
     win.geometry("560x520")
-    win.transient(app)
+    win.transient(owner)
     frame = ttk.Frame(win, padding=14)
     frame.pack(fill="both", expand=True)
 
-    mode_var = tk.StringVar(value="single")
-    ttk.Radiobutton(frame, text="Конкретный пиксель", variable=mode_var, value="single").grid(row=0, column=0, sticky="w", pady=4)
-    ttk.Radiobutton(frame, text="Вся серия последовательно", variable=mode_var, value="series").grid(row=0, column=1, sticky="w", pady=4)
-
     pixel_values = app.pixel_ids()
-    ttk.Label(frame, text="Пиксель:").grid(row=1, column=0, sticky="e", pady=5)
-    pixel_var = tk.StringVar(value=pixel_values[0] if pixel_values else "")
-    pixel_combo = ttk.Combobox(frame, textvariable=pixel_var, values=pixel_values, width=24, state="readonly")
-    pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
+    selected_pixel = initial_pixel if initial_pixel in pixel_values else (pixel_values[0] if pixel_values else "")
+    pixel_var = tk.StringVar(value=selected_pixel)
+    mode_var = tk.StringVar(value="single")
+    if locked_pixel:
+        ttk.Label(frame, text="Пиксель камеры:").grid(row=0, column=0, sticky="e", pady=5)
+        ttk.Label(frame, text=selected_pixel, font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=1, sticky="w", pady=5
+        )
+    else:
+        ttk.Radiobutton(frame, text="Конкретный пиксель", variable=mode_var, value="single").grid(
+            row=0, column=0, sticky="w", pady=4
+        )
+        ttk.Radiobutton(frame, text="Вся серия последовательно", variable=mode_var, value="series").grid(
+            row=0, column=1, sticky="w", pady=4
+        )
+        ttk.Label(frame, text="Пиксель:").grid(row=1, column=0, sticky="e", pady=5)
+        pixel_combo = ttk.Combobox(frame, textvariable=pixel_var, values=pixel_values, width=24, state="readonly")
+        pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
 
     saved_ivl = app.measurement_defaults("ivl")
     fields = [
@@ -68,10 +85,18 @@ def open_ivl_window(app) -> None:
                 "current_limit_mA": vars_["Current limit, mA"].get(),
             })
             selected_pixel = pixel_var.get()
-            win.destroy()
-            if mode_var.get() == "single":
+            if measurement_runner is not None:
+                win.destroy()
+                measurement_runner(
+                    "ivl",
+                    selected_pixel,
+                    lambda: measure_one_ivl(app, selected_pixel, params, return_to_menu=False),
+                )
+            elif mode_var.get() == "single":
+                win.destroy()
                 measure_one_ivl(app, selected_pixel, params)
             else:
+                win.destroy()
                 measure_series_ivl(app, params, start_pixel=selected_pixel)
         except Exception as exc:
             messagebox.showerror("Ошибка параметров", str(exc), parent=win)

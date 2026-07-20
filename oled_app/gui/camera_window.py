@@ -29,11 +29,13 @@ from oled_app.camera import (
     normalize_center_crop,
     safe_capture_stem,
 )
-from oled_app.constants import SCRIPT_DIR
-from oled_app.series import ensure_measurement_folder
+from oled_app.constants import APP_VERSION, SCRIPT_DIR
+from oled_app.series import ensure_camera_session_folder
 from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
 from oled_app.utils import safe_filename, timestamp_for_file
 
+from .ivl_window import open_ivl_window
+from .stability_window import open_stability_window
 from .widgets import create_scrollable_frame, fit_window_to_screen
 
 
@@ -46,6 +48,8 @@ SERIES_CAMERA_STATIONS = {
     },
 }
 
+STABILITY_CURRENT_LIMIT_POSTROLL_S = 5.0
+
 
 def camera_station_key(value: str) -> str:
     normalized = str(value or "").strip()
@@ -55,6 +59,68 @@ def camera_station_key(value: str) -> str:
         if station["label"] == normalized:
             return key
     return "ivl"
+
+
+def stability_current_limit_reached(result: Optional[Dict[str, Any]]) -> bool:
+    """Return whether stability stopped because the measured current crossed its limit."""
+
+    return any(
+        str(event.get("event") or "") == "current_limit_or_breakdown"
+        for event in (result or {}).get("events", [])
+    )
+
+
+def stability_postroll_remaining_s(
+    result: Optional[Dict[str, Any]],
+    measurement_session: Optional[Dict[str, Any]],
+    now_monotonic: Optional[float] = None,
+) -> float:
+    """Return camera post-roll still needed five seconds after the current-limit event."""
+
+    event = next(
+        (
+            item
+            for item in (result or {}).get("events", [])
+            if str(item.get("event") or "") == "current_limit_or_breakdown"
+        ),
+        None,
+    )
+    if event is None:
+        return 0.0
+    if not measurement_session or measurement_session.get("started_monotonic") is None:
+        return STABILITY_CURRENT_LIMIT_POSTROLL_S
+    event_monotonic = float(measurement_session["started_monotonic"]) + float(
+        event.get("measurement_time_s") or 0.0
+    )
+    elapsed_after_event = (time.monotonic() if now_monotonic is None else now_monotonic) - event_monotonic
+    return max(0.0, STABILITY_CURRENT_LIMIT_POSTROLL_S - elapsed_after_event)
+
+
+def ask_workflow_continue(parent, title: str, message: str) -> bool:
+    """Show the guided camera workflow gate with explicit Next and Cancel actions."""
+
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.resizable(False, False)
+    result = {"continue": False}
+    frame = ttk.Frame(dialog, padding=18)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text=message, wraplength=460, justify="left").pack(anchor="w")
+    buttons = ttk.Frame(frame)
+    buttons.pack(fill="x", pady=(16, 0))
+
+    def close(should_continue: bool) -> None:
+        result["continue"] = should_continue
+        dialog.destroy()
+
+    ttk.Button(buttons, text="Отмена", command=lambda: close(False)).pack(side="right")
+    ttk.Button(buttons, text="Далее", command=lambda: close(True)).pack(side="right", padx=(0, 8))
+    dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
+    dialog.grab_set()
+    fit_window_to_screen(dialog, 520, 190, 420, 150, horizontal_margin=40, vertical_margin=70)
+    parent.wait_window(dialog)
+    return bool(result["continue"])
 
 
 def build_series_capture_stem(
@@ -130,7 +196,9 @@ class CameraTestWindow(tk.Toplevel):
         self.app = app
         self.camera_context = "series" if context == "series" else "free"
         self.series_bound = self.camera_context == "series"
-        self.title("Камера серии — v1.8 beta" if self.series_bound else "Свободная камера — v1.8 beta")
+        self.title(
+            f"Камера серии — v{APP_VERSION}" if self.series_bound else f"Свободная камера — v{APP_VERSION}"
+        )
         fit_window_to_screen(self, 1280, 720, 800, 520, horizontal_margin=40, vertical_margin=70)
         self.transient(app)
 
@@ -193,8 +261,12 @@ class CameraTestWindow(tk.Toplevel):
         self._recording_started_monotonic: Optional[float] = None
         self._recording_stop_requested_monotonic: Optional[float] = None
         self._recording_context: Dict[str, Any] = {}
+        self._guided_measurement_active = False
+        self._series_capture_dir: Optional[Path] = None
+        self._series_capture_context: Optional[tuple[str, str, str]] = None
         self.station_combo = None
         self.pixel_combo = None
+        self.measurement_launch_button = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -263,6 +335,23 @@ class CameraTestWindow(tk.Toplevel):
             ttk.Label(context_box, textvariable=self.series_target_var, foreground="#555555", wraplength=980).grid(
                 row=1, column=0, columnspan=4, sticky="w", pady=(6, 0)
             )
+            self.measurement_launch_button = ttk.Button(
+                context_box,
+                command=self.open_selected_measurement,
+            )
+            self.measurement_launch_button.grid(
+                row=2, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            )
+            ttk.Label(
+                context_box,
+                text=(
+                    "Пиксель фиксируется камерой. После параметров приложение выполнит "
+                    "фото до, видео с измерением и фото после."
+                ),
+                foreground="#555555",
+                wraplength=700,
+                justify="left",
+            ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=(8, 0))
             context_box.columnconfigure(3, weight=1)
             self._series_context_changed()
 
@@ -527,9 +616,18 @@ class CameraTestWindow(tk.Toplevel):
         self._stop_local_stream()
         self._create_and_download("Полноразмерная фотография", "Фото камеры сохранено", "photo")
 
-    def _create_and_download(self, operation_label: str, success_label: str, kind: str) -> None:
+    def _create_and_download(
+        self,
+        operation_label: str,
+        success_label: str,
+        kind: str,
+        after_complete: Optional[Callable[[Path], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
         client = self._require_client()
         if not client:
+            if on_error is not None:
+                on_error(RuntimeError("Нет подключения к камере."))
             return
         entered_name = self.snapshot_name_var.get().strip()
         requested_name = self._capture_stem(kind) if self.series_bound else safe_capture_stem(entered_name)
@@ -539,12 +637,17 @@ class CameraTestWindow(tk.Toplevel):
                 "Введите название, содержащее буквы или цифры.",
                 parent=self,
             )
+            if on_error is not None:
+                on_error(ValueError("Некорректный суффикс имени файла."))
             return
         keep_remote = bool(self.keep_remote_var.get())
         photo_settings = self._selected_photo_settings()
         crop = self._selected_crop(show_error=True)
         if crop is None:
+            if on_error is not None:
+                on_error(ValueError("Некорректные параметры кадрирования."))
             return
+        download_dir = self._download_dir()
 
         def work():
             remote = (
@@ -553,29 +656,43 @@ class CameraTestWindow(tk.Toplevel):
                 else client.capture_photo(photo_settings, requested_name, crop)
             )
             preferred_name = f"{requested_name}.jpg" if requested_name else ""
-            local = client.download_file(remote, self._download_dir(), preferred_name=preferred_name)
+            local = client.download_file(remote, download_dir, preferred_name=preferred_name)
             deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
             return remote, local, deleted, delete_error, client.status()
 
         def complete(result) -> None:
             remote, local, deleted, delete_error, status = result
             self._apply_status(status)
-            if status.get("liveview_active"):
+            hold_captured_photo = after_complete is not None and kind.startswith("photo")
+            if status.get("liveview_active") and not hold_captured_photo:
                 self._start_local_stream()
             self._log(f"{success_label}: {local}")
             self._record_series_camera_file(local, kind, remote)
             self._log_remote_cleanup(deleted, delete_error)
-            self.refresh_files(silent=True)
+            if kind != "snapshot":
+                self._show_local_photo(Path(local))
+            if after_complete is None:
+                self.refresh_files(silent=True)
+            else:
+                after_complete(Path(local))
 
-        self._run_async(operation_label, work, complete)
+        self._run_async(operation_label, work, complete, failed=on_error)
 
-    def start_recording(self) -> None:
+    def start_recording(
+        self,
+        after_started: Optional[Callable[[], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
         client = self._require_client()
         if not client:
+            if on_error is not None:
+                on_error(RuntimeError("Нет подключения к камере."))
             return
         video_settings = self._selected_video_settings()
         crop = self._selected_crop(show_error=True)
         if crop is None:
+            if on_error is not None:
+                on_error(ValueError("Некорректные параметры кадрирования."))
             return
         self._recording_capture_stem = self._capture_stem("video") if self.series_bound else ""
         if self.series_bound:
@@ -584,18 +701,35 @@ class CameraTestWindow(tk.Toplevel):
                 "station_key": camera_station_key(self.station_var.get()),
                 "download_dir": self._download_dir(),
             }
-        self._run_async("Запуск записи", lambda: client.start_recording(video_settings, crop), self._recording_started)
+        self._run_async(
+            "Запуск записи",
+            lambda: client.start_recording(video_settings, crop),
+            lambda status: self._recording_started(status, after_started),
+            failed=on_error,
+        )
 
-    def _recording_started(self, status: Dict[str, Any]) -> None:
+    def _recording_started(
+        self,
+        status: Dict[str, Any],
+        after_started: Optional[Callable[[], None]] = None,
+    ) -> None:
         self._recording_started_monotonic = time.monotonic()
         self._recording_stop_requested_monotonic = None
         self._apply_status(status)
         self._start_local_stream()
         self._log("Запись видео началась; LiveView продолжает работать из того же потока.")
+        if after_started is not None:
+            after_started()
 
-    def stop_recording(self) -> None:
+    def stop_recording(
+        self,
+        after_stopped: Optional[Callable[[Path], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
         client = self._require_client()
         if not client:
+            if on_error is not None:
+                on_error(RuntimeError("Нет подключения к камере."))
             return
         keep_remote = bool(self.keep_remote_var.get())
         self._recording_stop_requested_monotonic = time.monotonic()
@@ -625,9 +759,12 @@ class CameraTestWindow(tk.Toplevel):
             self._recording_stop_requested_monotonic = None
             self._recording_context = {}
             self._log_remote_cleanup(deleted, delete_error)
-            self.refresh_files(silent=True)
+            if after_stopped is None:
+                self.refresh_files(silent=True)
+            else:
+                after_stopped(Path(local))
 
-        self._run_async("Остановка записи", work, complete)
+        self._run_async("Остановка записи", work, complete, failed=on_error)
 
     def refresh_files(self, silent: bool = False) -> None:
         client = self._require_client(show_error=not silent)
@@ -662,13 +799,14 @@ class CameraTestWindow(tk.Toplevel):
         if not remote:
             return
         keep_remote = bool(self.keep_remote_var.get())
+        download_dir = self._download_dir()
 
         def work():
             preferred_name = ""
             if self.series_bound:
                 extension = Path(remote.name).suffix or (".mp4" if remote.kind == "video" else ".jpg")
                 preferred_name = f"{self._capture_stem('import')}{extension}"
-            local = client.download_file(remote, self._download_dir(), preferred_name=preferred_name)
+            local = client.download_file(remote, download_dir, preferred_name=preferred_name)
             deleted, delete_error = self._delete_remote_after_download(client, remote, keep_remote)
             return local, deleted, delete_error
 
@@ -964,6 +1102,40 @@ class CameraTestWindow(tk.Toplevel):
         except Exception as exc:
             self._report_render_error("отрисовка Tk", exc)
 
+    def _show_local_photo(self, path: Path) -> None:
+        """Show the downloaded full-resolution photo while the workflow gate is open."""
+
+        if Image is None or ImageTk is None:
+            return
+        try:
+            with Image.open(path) as source:
+                source.load()
+                image = source.convert("RGB")
+            width = max(self.preview_canvas.winfo_width(), 200)
+            height = max(self.preview_canvas.winfo_height(), 160)
+            scale = min(width / image.width, height / image.height)
+            target = (
+                max(1, min(width, int(image.width * scale + 0.5))),
+                max(1, min(height, int(image.height * scale + 0.5))),
+            )
+            if target != image.size:
+                try:
+                    image = image.resize(target, Image.Resampling.LANCZOS)
+                except OSError:
+                    image = image.resize(target, Image.Resampling.BILINEAR)
+            photo = ImageTk.PhotoImage(image=image, master=self.preview_canvas)
+            self._canvas_image = photo
+            self._last_frame = None
+            self.preview_canvas.delete("all")
+            self.preview_canvas.create_image(
+                self.preview_canvas.winfo_width() // 2,
+                self.preview_canvas.winfo_height() // 2,
+                image=photo,
+                anchor="center",
+            )
+        except Exception as exc:
+            self._log(f"Фото сохранено, но не удалось показать его в окне: {exc}")
+
     def _report_render_error(self, stage: str, exc: Exception) -> None:
         signature = f"{stage}: {type(exc).__name__}: {exc}"
         if signature == self._last_render_error:
@@ -1087,6 +1259,7 @@ class CameraTestWindow(tk.Toplevel):
         work: Callable[[], Any],
         complete: Callable[[Any], None],
         quiet: bool = False,
+        failed: Optional[Callable[[Exception], None]] = None,
     ) -> None:
         if self._busy:
             if not quiet:
@@ -1102,7 +1275,7 @@ class CameraTestWindow(tk.Toplevel):
                 result = work()
             except Exception as exc:
                 if not self._closed:
-                    self.after(0, lambda error=exc: self._operation_failed(label, error, quiet))
+                    self.after(0, lambda error=exc: self._operation_failed(label, error, quiet, failed))
             else:
                 if not self._closed:
                     self.after(0, lambda value=result: self._operation_completed(complete, value))
@@ -1116,13 +1289,21 @@ class CameraTestWindow(tk.Toplevel):
         finally:
             self._update_buttons()
 
-    def _operation_failed(self, label: str, exc: Exception, quiet: bool) -> None:
+    def _operation_failed(
+        self,
+        label: str,
+        exc: Exception,
+        quiet: bool,
+        failed: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
         self._busy = False
         details = exc.details if isinstance(exc, CameraClientError) else ""
         self.error_var.set(str(exc))
         self._log(f"{label}: {exc}" + (f" | {details}" if details else ""))
         if not quiet:
             messagebox.showerror("Камера", str(exc), parent=self)
+        if failed is not None:
+            failed(exc)
         self._update_buttons()
 
     def _update_buttons(self) -> None:
@@ -1130,29 +1311,58 @@ class CameraTestWindow(tk.Toplevel):
         camera_connected = bool(self.status.get("camera_connected"))
         live = bool(self.status.get("liveview_active"))
         recording = bool(self.status.get("recording_active"))
-        normal = "normal" if not self._busy else "disabled"
+        guided = bool(self._guided_measurement_active)
+        normal = "normal" if not self._busy and not guided else "disabled"
         self.connect_button.configure(state=normal)
-        self.initialize_button.configure(state="normal" if service_connected and not recording and not self._busy else "disabled")
-        self.start_live_button.configure(state="normal" if camera_connected and not live and not self._busy else "disabled")
-        self.stop_live_button.configure(state="normal" if live and not recording and not self._busy else "disabled")
-        self.snapshot_button.configure(state="normal" if live and not self._busy else "disabled")
-        self.photo_button.configure(state="normal" if camera_connected and not recording and not self._busy else "disabled")
-        self.start_video_button.configure(state="normal" if camera_connected and not recording and not self._busy else "disabled")
-        self.stop_video_button.configure(state="normal" if recording and not self._busy else "disabled")
-        crop_state = "disabled" if recording or self._busy else "normal"
+        self.initialize_button.configure(
+            state="normal" if service_connected and not recording and not self._busy and not guided else "disabled"
+        )
+        self.start_live_button.configure(
+            state="normal" if camera_connected and not live and not self._busy and not guided else "disabled"
+        )
+        self.stop_live_button.configure(
+            state="normal" if live and not recording and not self._busy and not guided else "disabled"
+        )
+        self.snapshot_button.configure(state="normal" if live and not self._busy and not guided else "disabled")
+        self.photo_button.configure(
+            state="normal" if camera_connected and not recording and not self._busy and not guided else "disabled"
+        )
+        self.start_video_button.configure(
+            state="normal" if camera_connected and not recording and not self._busy and not guided else "disabled"
+        )
+        self.stop_video_button.configure(state="normal" if recording and not self._busy and not guided else "disabled")
+        crop_state = "disabled" if recording or self._busy or guided else "normal"
         self.crop_width_spinbox.configure(state=crop_state)
         self.crop_height_spinbox.configure(state=crop_state)
         self.reset_crop_button.configure(state=crop_state)
-        self.refresh_files_button.configure(state="normal" if service_connected and not self._busy else "disabled")
+        self.refresh_files_button.configure(
+            state="normal" if service_connected and not self._busy and not guided else "disabled"
+        )
         self.download_button.configure(
-            state="normal" if service_connected and bool(self.files_tree.selection()) and not self._busy else "disabled"
+            state=(
+                "normal"
+                if service_connected and bool(self.files_tree.selection()) and not self._busy and not guided
+                else "disabled"
+            )
         )
         if self.series_bound:
-            context_state = "disabled" if recording or self._busy else "readonly"
+            context_state = "disabled" if recording or self._busy or guided else "readonly"
             if self.station_combo is not None:
                 self.station_combo.configure(state=context_state)
             if self.pixel_combo is not None:
                 self.pixel_combo.configure(state=context_state)
+            if self.measurement_launch_button is not None:
+                self.measurement_launch_button.configure(
+                    state=(
+                        "normal"
+                        if bool(self.pixel_var.get().strip())
+                        and camera_connected
+                        and not recording
+                        and not self._busy
+                        and not guided
+                        else "disabled"
+                    )
+                )
 
     def _make_client(self) -> CameraClient:
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
@@ -1192,16 +1402,19 @@ class CameraTestWindow(tk.Toplevel):
             pixel_id = self.pixel_var.get().strip()
             if not pixel_id:
                 raise ValueError("Выберите пиксель для съёмки.")
-            station = SERIES_CAMERA_STATIONS[camera_station_key(self.station_var.get())]
-            output_dir = ensure_measurement_folder(
-                self.app.series.series_folder,
-                station["measurement_type"],
+            context = (
+                str(self.app.series.series_folder),
                 pixel_id,
-                self.app.series.journal.get_pixel(pixel_id),
+                camera_station_key(self.station_var.get()),
             )
-            camera_dir = output_dir / "camera"
-            camera_dir.mkdir(parents=True, exist_ok=True)
-            return camera_dir
+            if self._series_capture_dir is None or self._series_capture_context != context:
+                self._series_capture_dir = ensure_camera_session_folder(
+                    self.app.series.series_folder,
+                    pixel_id,
+                    self.app.series.journal.get_pixel(pixel_id),
+                )
+                self._series_capture_context = context
+            return self._series_capture_dir
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
         return Path(str(settings.get("download_dir") or SCRIPT_DIR / "camera_downloads")).expanduser()
 
@@ -1224,10 +1437,207 @@ class CameraTestWindow(tk.Toplevel):
         station_key = camera_station_key(self.station_var.get())
         station = SERIES_CAMERA_STATIONS[station_key]
         pixel_id = self.pixel_var.get().strip() or "—"
+        context = (
+            str(self.app.series.series_folder),
+            pixel_id,
+            station_key,
+        ) if self.app.series is not None else None
+        if self._series_capture_context is not None and self._series_capture_context != context:
+            self._series_capture_dir = None
+            self._series_capture_context = None
         self.series_target_var.set(
             f"{station['label']} · пиксель {pixel_id}. "
-            "Файлы будут названы по пикселю и записаны в его папку camera."
+            "Файлы будут записаны в отдельную нумерованную папку измерения камеры."
         )
+        if self.measurement_launch_button is not None:
+            self.measurement_launch_button.configure(text=f"Параметры и запуск: {station['label']}")
+
+    def open_selected_measurement(self) -> None:
+        """Open the selected station setup with the camera-bound pixel preselected."""
+
+        if not self.series_bound or self.app.series is None:
+            return
+        if self._guided_measurement_active or self._busy:
+            messagebox.showwarning("Камера серии", "Дождитесь завершения текущей операции.", parent=self)
+            return
+        if not self.client or not self.status.get("camera_connected"):
+            messagebox.showwarning(
+                "Камера серии",
+                "Сначала подключите и инициализируйте камеру.",
+                parent=self,
+            )
+            return
+        if self.status.get("recording_active"):
+            messagebox.showwarning(
+                "Камера серии",
+                "Перед автоматическим запуском остановите текущую запись видео.",
+                parent=self,
+            )
+            return
+        pixel_id = self.pixel_var.get().strip()
+        if not pixel_id:
+            messagebox.showwarning("Камера серии", "Выберите пиксель для измерения.", parent=self)
+            return
+        station_key = camera_station_key(self.station_var.get())
+        if station_key == "stability":
+            open_stability_window(
+                self.app,
+                initial_pixel=pixel_id,
+                parent=self,
+                locked_pixel=True,
+                measurement_runner=self.run_guided_measurement,
+            )
+        else:
+            open_ivl_window(
+                self.app,
+                initial_pixel=pixel_id,
+                parent=self,
+                locked_pixel=True,
+                measurement_runner=self.run_guided_measurement,
+            )
+
+    def run_guided_measurement(
+        self,
+        station_key: str,
+        pixel_id: str,
+        measurement: Callable[[], Optional[Dict[str, Any]]],
+    ) -> None:
+        """Run before-photo, video+measurement, post-roll, and after-photo in order."""
+
+        if self._guided_measurement_active:
+            return
+        self.station_var.set(SERIES_CAMERA_STATIONS[camera_station_key(station_key)]["label"])
+        self.pixel_var.set(pixel_id)
+        self._series_capture_dir = None
+        self._series_capture_context = None
+        camera_session_dir = self._download_dir()
+        self._guided_measurement_active = True
+        self.activity_var.set(
+            f"Подготовка {self.station_var.get()} · {pixel_id}: "
+            f"фото до измерения (камера {camera_session_dir.name})"
+        )
+        self._update_buttons()
+        self._stop_local_stream()
+        self._create_and_download(
+            "Фото до измерения",
+            "Фото до измерения сохранено",
+            "photo_before",
+            after_complete=lambda _path: self._guided_before_photo_complete(
+                station_key, pixel_id, measurement
+            ),
+            on_error=self._guided_measurement_failed,
+        )
+
+    def _guided_before_photo_complete(
+        self,
+        station_key: str,
+        pixel_id: str,
+        measurement: Callable[[], Optional[Dict[str, Any]]],
+    ) -> None:
+        station = SERIES_CAMERA_STATIONS[camera_station_key(station_key)]
+        should_continue = ask_workflow_continue(
+            self,
+            f"{station['label']} · {pixel_id}",
+            "Фото до измерения сохранено. Проверьте положение образца и изображение.\n\n"
+            "Нажмите «Далее», чтобы автоматически начать видео и измерение, "
+            "или «Отмена», чтобы завершить сценарий.",
+        )
+        if not should_continue:
+            self._finish_guided_measurement("Автоматический запуск отменён после начального фото.")
+            return
+        self.activity_var.set(f"Запуск видео · {station['label']} · {pixel_id}")
+        self.start_recording(
+            after_started=lambda: self._guided_recording_started(station_key, pixel_id, measurement),
+            on_error=self._guided_measurement_failed,
+        )
+
+    def _guided_recording_started(
+        self,
+        station_key: str,
+        pixel_id: str,
+        measurement: Callable[[], Optional[Dict[str, Any]]],
+    ) -> None:
+        station = SERIES_CAMERA_STATIONS[camera_station_key(station_key)]
+        self.activity_var.set(f"Идёт измерение {station['label']} · {pixel_id}")
+        try:
+            result = measurement()
+        except Exception as exc:
+            self.app.log(f"Ошибка автоматического измерения: {exc}")
+            messagebox.showerror("Измерение", str(exc), parent=self)
+            result = None
+        if result is None:
+            self._log("Измерение не завершено; автоматическая запись будет остановлена.")
+        if camera_station_key(station_key) == "stability" and stability_current_limit_reached(result):
+            now_monotonic = time.monotonic()
+            session = self.app.measurement_session_for_interval(
+                "STABILITY",
+                pixel_id,
+                self._recording_started_monotonic or now_monotonic,
+                now_monotonic,
+            )
+            postroll_s = stability_postroll_remaining_s(result, session, now_monotonic)
+            self.activity_var.set(
+                f"Лимит тока: видеозапись ещё {postroll_s:.1f} с"
+            )
+            self._log(
+                f"Стабильность достигла лимита тока; до пятисекундной отметки post-roll "
+                f"осталось {postroll_s:.1f} с."
+            )
+            if postroll_s > 0:
+                self.after(
+                    max(1, int(round(postroll_s * 1000))),
+                    lambda: self._guided_stop_recording(result),
+                )
+            else:
+                self._guided_stop_recording(result)
+        else:
+            self._guided_stop_recording(result)
+
+    def _guided_stop_recording(self, measurement_result: Optional[Dict[str, Any]]) -> None:
+        if self._closed or not self._guided_measurement_active:
+            return
+        self.activity_var.set("Остановка и скачивание видео")
+        self.stop_recording(
+            after_stopped=lambda _path: self._guided_video_complete(measurement_result),
+            on_error=self._guided_measurement_failed,
+        )
+
+    def _guided_video_complete(self, measurement_result: Optional[Dict[str, Any]]) -> None:
+        station = SERIES_CAMERA_STATIONS[camera_station_key(self.station_var.get())]
+        pixel_id = self.pixel_var.get().strip()
+        should_continue = ask_workflow_continue(
+            self,
+            f"{station['label']} завершена · {pixel_id}",
+            "Измерение завершено, видео остановлено и скачано.\n\n"
+            "Нажмите «Далее», чтобы сделать контрольное фото после измерения, "
+            "или «Отмена», чтобы завершить без финального фото.",
+        )
+        if not should_continue:
+            self._finish_guided_measurement("Сценарий завершён без финального фото.")
+            return
+        self.activity_var.set(f"Контрольное фото после {station['label']} · {pixel_id}")
+        self._stop_local_stream()
+        self._create_and_download(
+            "Фото после измерения",
+            "Фото после измерения сохранено",
+            "photo_after",
+            after_complete=lambda _path: self._finish_guided_measurement(
+                "Автоматический сценарий камеры и измерения завершён."
+            ),
+            on_error=self._guided_measurement_failed,
+        )
+
+    def _guided_measurement_failed(self, exc: Exception) -> None:
+        self._finish_guided_measurement(f"Автоматический сценарий остановлен: {exc}")
+
+    def _finish_guided_measurement(self, message: str) -> None:
+        self._guided_measurement_active = False
+        self.activity_var.set("Готово")
+        self._log(message)
+        self._update_buttons()
+        self.refresh_files(silent=True)
+        self._series_capture_dir = None
+        self._series_capture_context = None
 
     def _record_series_camera_file(
         self,

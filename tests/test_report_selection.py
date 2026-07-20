@@ -12,9 +12,11 @@ from oled_app.gui.report_window import (
     selected_report_candidates,
 )
 from oled_app.reports.origin_report import (
+    IvRecord,
     MeasurementPath,
     SpectrumRecord,
     collect_spectrum_records,
+    create_origin_iv_book,
     parse_args,
 )
 
@@ -25,6 +27,40 @@ class _Var:
 
     def get(self) -> str:
         return self.value
+
+
+class _OriginSheet:
+    def __init__(self):
+        self.name = ""
+        self.formulas = {}
+
+    def from_list(self, *_args, **_kwargs):
+        pass
+
+    def set_formula(self, column: int, formula: str):
+        self.formulas[column] = formula
+
+
+class _OriginBook:
+    def __init__(self):
+        self.sheets = [_OriginSheet()]
+
+    def __getitem__(self, index: int):
+        return self.sheets[index]
+
+    def add_sheet(self, name=""):
+        sheet = _OriginSheet()
+        sheet.name = name
+        self.sheets.append(sheet)
+        return sheet
+
+
+class _OriginApp:
+    def __init__(self):
+        self.book = _OriginBook()
+
+    def find_book(self, *_args):
+        return self.book
 
 
 def _write_spectrum(path: Path, voltage: float = 2.0) -> None:
@@ -72,6 +108,27 @@ class ReportWindowSelectionTests(unittest.TestCase):
 
 
 class ReportBuilderSelectionTests(unittest.TestCase):
+    def test_jl_columns_use_direct_origin_column_references(self):
+        records = [
+            IvRecord(
+                Path("ivl.xlsx"),
+                "2026-07-19",
+                "CG1",
+                "CG1_1",
+                "CG1_1_1",
+                "Cycle_1",
+                "WORKING",
+                [{"voltage": 2.0, "density": 1.5, "luminance": 100.0}],
+            )
+        ]
+
+        with patch("oled_app.reports.origin_report.origin_set_folder"), patch(
+            "oled_app.reports.origin_report.origin_move_page_to_folder"
+        ):
+            result = create_origin_iv_book(_OriginApp(), records)
+
+        self.assertEqual(result["jl"].formulas, {0: "Sheet1!B", 1: "Sheet1!C"})
+
     def test_series_selection_keeps_one_substrate_and_pixel(self):
         timestamp = datetime(2026, 7, 18, 12, 0, 0)
         paths = {

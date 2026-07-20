@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import threading
+import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
@@ -17,11 +20,122 @@ from oled_app.camera.client import (
     safe_local_filename,
     safe_capture_stem,
 )
-from oled_app.gui.camera_window import build_series_capture_stem, center_crop_dimensions, decode_liveview_frame
+from oled_app.gui.camera_window import (
+    CameraTestWindow,
+    build_series_capture_stem,
+    center_crop_dimensions,
+    decode_liveview_frame,
+    stability_current_limit_reached,
+    stability_postroll_remaining_s,
+)
 from oled_app.gui.widgets import calculate_window_geometry
+from oled_app.series.paths import ensure_camera_session_folder
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_camera_sessions_use_separate_numbered_measurement_folder(self) -> None:
+        pixel_row = {
+            "Quarter number": 1,
+            "Quarter code": "CG",
+            "Substrate number": 1,
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            first = ensure_camera_session_folder(Path(folder), "CG1_1_1", pixel_row)
+            second = ensure_camera_session_folder(Path(folder), "CG1_1_1", pixel_row)
+
+        self.assertEqual(first.parts[-7], "04_CAMERA")
+        self.assertEqual(first.parts[-5:-1], ("CG1", "CG1_1", "CG1_1_1", "camera"))
+        self.assertEqual(first.name, "1")
+        self.assertEqual(second.name, "2")
+    def test_series_camera_opens_selected_measurement_with_selected_pixel(self) -> None:
+        class Value:
+            def __init__(self, value: str):
+                self.value = value
+
+            def get(self) -> str:
+                return self.value
+
+        app = SimpleNamespace(series=object())
+        camera = SimpleNamespace(
+            series_bound=True,
+            app=app,
+            client=object(),
+            status={"camera_connected": True, "recording_active": False},
+            _busy=False,
+            _guided_measurement_active=False,
+            pixel_var=Value("CR1_2_3"),
+            station_var=Value("ВАЯХ"),
+            run_guided_measurement=lambda *_args: None,
+        )
+
+        with patch("oled_app.gui.camera_window.open_ivl_window") as open_ivl:
+            CameraTestWindow.open_selected_measurement(camera)
+        open_ivl.assert_called_once_with(
+            app,
+            initial_pixel="CR1_2_3",
+            parent=camera,
+            locked_pixel=True,
+            measurement_runner=camera.run_guided_measurement,
+        )
+
+        camera.station_var = Value("Стабильность")
+        with patch("oled_app.gui.camera_window.open_stability_window") as open_stability:
+            CameraTestWindow.open_selected_measurement(camera)
+        open_stability.assert_called_once_with(
+            app,
+            initial_pixel="CR1_2_3",
+            parent=camera,
+            locked_pixel=True,
+            measurement_runner=camera.run_guided_measurement,
+        )
+
+    def test_stability_current_limit_event_enables_camera_postroll(self) -> None:
+        self.assertTrue(
+            stability_current_limit_reached(
+                {"events": [{"event": "current_limit_or_breakdown", "measurement_time_s": 2.0}]}
+            )
+        )
+        self.assertFalse(stability_current_limit_reached({"events": []}))
+
+    def test_guided_stability_waits_five_seconds_before_stopping_video(self) -> None:
+        scheduled = []
+        stopped = []
+        camera = SimpleNamespace(
+            activity_var=SimpleNamespace(set=lambda value: None),
+            app=SimpleNamespace(
+                log=lambda _message: None,
+                measurement_session_for_interval=lambda *_args: None,
+            ),
+            _recording_started_monotonic=100.0,
+            _log=lambda _message: None,
+            after=lambda delay, callback: scheduled.append((delay, callback)),
+            _guided_stop_recording=lambda result: stopped.append(result),
+        )
+        result = {"events": [{"event": "current_limit_or_breakdown"}]}
+
+        CameraTestWindow._guided_recording_started(
+            camera,
+            "stability",
+            "CR1_2_3",
+            lambda: result,
+        )
+
+        self.assertEqual(stopped, [])
+        self.assertEqual(scheduled[0][0], 5000)
+        scheduled[0][1]()
+        self.assertEqual(stopped, [result])
+
+    def test_stability_postroll_is_measured_from_limit_event(self) -> None:
+        result = {
+            "events": [
+                {"event": "current_limit_or_breakdown", "measurement_time_s": 12.0}
+            ]
+        }
+        session = {"started_monotonic": 100.0}
+
+        self.assertEqual(stability_postroll_remaining_s(result, session, 114.0), 3.0)
+        self.assertEqual(stability_postroll_remaining_s(result, session, 118.0), 0.0)
+
     def test_series_capture_name_starts_with_pixel_and_contains_station(self) -> None:
         stem = build_series_capture_stem("CR1_2_3", "stability", "video", "пробой", "20260717_120000")
 

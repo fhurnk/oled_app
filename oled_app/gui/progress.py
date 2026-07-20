@@ -230,24 +230,66 @@ class IVLProgressWindow:
 
 
 class SpectrumProgressWindow:
-    def __init__(self, parent: tk.Misc, pixel_id: str):
+    def __init__(self, parent: tk.Misc, pixel_id: str, controller: Any):
         self.closed = False
         self.pixel_id = pixel_id
+        self.controller = controller
         self.last: Optional[Dict[str, Any]] = None
         self.win = tk.Toplevel(parent)
         self.win.title(f"Спектр: {pixel_id}")
         self.win.geometry("980x700")
         self.win.minsize(680, 460)
-        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.protocol("WM_DELETE_WINDOW", self.request_stop)
 
         main = ttk.Frame(self.win, padding=10)
         main.pack(fill="both", expand=True)
         self.status_var = tk.StringVar(value=f"Пиксель {pixel_id}: ожидание спектра")
         ttk.Label(main, textvariable=self.status_var, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+        ttk.Button(
+            main,
+            text="Остановить съёмку спектров и поставить 0 В",
+            command=self.request_stop,
+        ).pack(anchor="w", pady=(0, 8))
         self.canvas = tk.Canvas(main, width=820, height=360, bg="white", highlightthickness=1, highlightbackground="#BFBFBF")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _event: self._redraw())
         fit_toplevel_to_content(self.win, 980, 700)
+
+    def request_stop(self) -> None:
+        if self.closed:
+            return
+        self.controller.request_stop()
+        self.status_var.set("Остановка запрошена: текущее считывание завершится, затем SMU перейдёт на 0 В.")
+        try:
+            self.win.update_idletasks()
+        except tk.TclError:
+            self.closed = True
+
+    def update_optimization_preview(
+        self,
+        point: int,
+        voltage: float,
+        iteration: int,
+        t_int: float,
+        wavelengths: np.ndarray,
+        raw: np.ndarray,
+        status: str,
+    ) -> None:
+        """Draw every trial spectrum while integration time is being selected."""
+
+        self.update_spectrum(point, voltage, t_int, wavelengths, raw, raw, [], status)
+        if self.closed:
+            return
+        self.status_var.set(
+            f"Подбор T_int · точка {point}, V={voltage:.3f} В · "
+            f"проба {iteration}, T_int={t_int*1000:.2f} мс · {status}"
+        )
+        try:
+            self.win.update_idletasks()
+            self.win.update()
+        except tk.TclError:
+            self.controller.request_stop()
+            self.closed = True
 
     def close(self) -> None:
         if self.closed:
@@ -403,13 +445,15 @@ class StabilityProgressWindow:
         ttk.Label(target_box, text=self.unit).grid(row=0, column=1, sticky="w", padx=(5, 10))
         ttk.Button(target_box, text="Установить", command=self.set_target).grid(row=0, column=2, sticky="ew")
         increments = (0.1, 0.25, 0.5, 1.0)
-        for index, increment in enumerate(increments):
-            ttk.Button(
-                target_box,
-                text=f"+{increment:g} {self.unit}",
-                command=lambda value=increment: self.add_target(value),
-            ).grid(row=1, column=index, sticky="ew", padx=(0 if index == 0 else 5, 0), pady=(8, 0))
-            target_box.columnconfigure(index, weight=1)
+        for row, sign in ((1, -1.0), (2, 1.0)):
+            for index, increment in enumerate(increments):
+                delta = sign * increment
+                ttk.Button(
+                    target_box,
+                    text=f"{delta:+g} {self.unit}",
+                    command=lambda value=delta: self.add_target(value),
+                ).grid(row=row, column=index, sticky="ew", padx=(0 if index == 0 else 5, 0), pady=(8, 0))
+                target_box.columnconfigure(index, weight=1)
 
         self.readout_var = tk.StringVar(value="Ожидание первой точки…")
         ttk.Label(frame, textvariable=self.readout_var, font=("Consolas", 10), justify="left").pack(
@@ -418,7 +462,7 @@ class StabilityProgressWindow:
         ttk.Label(
             frame,
             text=(
-                "Новая цель напряжения достигается плавно с ограничением шага из расширенных настроек."
+                "Новая цель напряжения подаётся на SMU сразу, без пропорционального регулятора."
                 if controller.mode == "voltage"
                 else "Регулятор плавно меняет напряжение, чтобы удерживать новую уставку тока."
             ),
@@ -447,7 +491,7 @@ class StabilityProgressWindow:
             self.status_var.set(f"Не удалось изменить уставку: {exc}")
             return
         self.target_var.set(f"{applied:g}")
-        self.status_var.set(f"Цель увеличена до {applied:g} {self.unit}")
+        self.status_var.set(f"Цель изменена до {applied:g} {self.unit}")
 
     def request_stop(self) -> None:
         self.controller.request_stop()

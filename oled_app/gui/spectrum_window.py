@@ -6,10 +6,14 @@ import tkinter as tk
 import traceback
 from dataclasses import replace
 from tkinter import messagebox, ttk
-from typing import Dict
+from typing import Any, Dict, List, Optional
 
 from oled_app.hardware import effective_com_port
-from oled_app.measurements.spectrum import SpectrumParams, run_spectrum_measurement
+from oled_app.measurements.spectrum import (
+    SpectrumMeasurementController,
+    SpectrumParams,
+    run_spectrum_measurement,
+)
 from oled_app.series import ensure_measurement_folder, quarter_led_color
 from oled_app.settings import DEFAULT_APP_SETTINGS
 from oled_app.utils import as_float_or_none, parse_float
@@ -28,15 +32,40 @@ def open_spectrum_window(app) -> None:
 
     win = tk.Toplevel(app)
     win.title("Спектры")
-    win.geometry("560x560")
+    win.geometry("620x650")
     win.transient(app)
     frame = ttk.Frame(win, padding=14)
     frame.pack(fill="both", expand=True)
 
-    ttk.Label(frame, text="Пиксель:").grid(row=0, column=0, sticky="e", pady=5)
+    mode_var = tk.StringVar(value="single")
+    ttk.Radiobutton(frame, text="Конкретный пиксель", variable=mode_var, value="single").grid(
+        row=0, column=0, sticky="w", pady=4
+    )
+    ttk.Radiobutton(frame, text="Вся подложка последовательно", variable=mode_var, value="substrate").grid(
+        row=0, column=1, sticky="w", pady=4
+    )
+
+    ttk.Label(frame, text="Пиксель:").grid(row=1, column=0, sticky="e", pady=5)
     pixel_var = tk.StringVar(value=pixels[0])
-    pixel_combo = ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=26)
-    pixel_combo.grid(row=0, column=1, sticky="w", pady=5)
+    pixel_combo = ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=28)
+    pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
+
+    substrate_groups = group_pixels_by_substrate(app, pixels)
+    substrate_values = list(substrate_groups)
+    ttk.Label(frame, text="Подложка:").grid(row=2, column=0, sticky="e", pady=5)
+    substrate_var = tk.StringVar(value=substrate_values[0] if substrate_values else "")
+    substrate_combo = ttk.Combobox(
+        frame,
+        values=substrate_values,
+        textvariable=substrate_var,
+        state="readonly",
+        width=28,
+    )
+    substrate_combo.grid(row=2, column=1, sticky="w", pady=5)
+    substrate_info_var = tk.StringVar()
+    ttk.Label(frame, textvariable=substrate_info_var, foreground="#555555", wraplength=570).grid(
+        row=3, column=0, columnspan=2, sticky="w", pady=(0, 4)
+    )
 
     first_pixel = app.series.journal.get_pixel(pixels[0])
     first_opening = as_float_or_none(first_pixel.get("Opening voltage (V)")) if first_pixel else None
@@ -46,28 +75,28 @@ def open_spectrum_window(app) -> None:
 
     fields = [
         ("COM port", str(app.app_settings.get("com_port", "COM3"))),
-        ("Voltage start, V", f"{first_opening:.3f}" if first_opening is not None else "2.0"),
+        ("Voltage start, V", initial_spectrum_start_value(saved_spectrum, first_opening)),
         ("Voltage end, V", str(saved_spectrum.get("voltage_end_V", "5"))),
         ("Voltage step, V", str(saved_spectrum.get("voltage_step_V", "0.1"))),
         ("Current limit, mA", str(saved_spectrum.get("current_limit_mA", "6"))),
         ("LED type", str(saved_spectrum.get("led_type", "auto"))),
     ]
     vars_: Dict[str, tk.StringVar] = {}
-    for row_idx, (label, default) in enumerate(fields, start=1):
+    for row_idx, (label, default) in enumerate(fields, start=4):
         ttk.Label(frame, text=label + ":").grid(row=row_idx, column=0, sticky="e", pady=3, padx=(0, 8))
         var = tk.StringVar(value=default)
         vars_[label] = var
         ttk.Entry(frame, textvariable=var, width=18).grid(row=row_idx, column=1, sticky="w", pady=3)
 
     ttk.Checkbutton(frame, text="Стартовать от V открытия из журнала", variable=use_opening_var).grid(
-        row=len(fields) + 1,
+        row=len(fields) + 4,
         column=0,
         columnspan=2,
         sticky="w",
         pady=(8, 2),
     )
     ttk.Label(frame, textvariable=opening_info_var, foreground="#555555").grid(
-        row=len(fields) + 2,
+        row=len(fields) + 5,
         column=0,
         columnspan=2,
         sticky="w",
@@ -78,83 +107,199 @@ def open_spectrum_window(app) -> None:
         pixel = app.series.journal.get_pixel(pixel_var.get()) if app.series is not None else None
         opening = as_float_or_none(pixel.get("Opening voltage (V)")) if pixel else None
         opening_info_var.set(f"V открытия: {opening:.3f} В" if opening is not None else "V открытия: нет")
-        if opening is not None and use_opening_var.get():
-            vars_["Voltage start, V"].set(f"{opening:.3f}")
+
+    def update_substrate_info(_event=None) -> None:
+        selected = substrate_groups.get(substrate_var.get(), [])
+        substrate_info_var.set(
+            "Пиксели подложки, доступные для спектров: "
+            + (", ".join(selected) if selected else "нет доступных пикселей")
+        )
 
     pixel_combo.bind("<<ComboboxSelected>>", update_opening_info)
+    substrate_combo.bind("<<ComboboxSelected>>", update_substrate_info)
+    update_substrate_info()
 
     def start() -> None:
-        progress = None
         try:
-            pid = pixel_var.get()
-            pixel = app.series.journal.get_pixel(pid)
+            selected_mode = mode_var.get()
+            if selected_mode == "single":
+                selected_pixels = [pixel_var.get()]
+            else:
+                selected_pixels = substrate_groups.get(substrate_var.get(), [])
+            if not selected_pixels:
+                raise ValueError("Для выбранной подложки нет доступных пикселей")
+
+            first_id = selected_pixels[0]
+            pixel = app.series.journal.get_pixel(first_id)
             opening = as_float_or_none(pixel.get("Opening voltage (V)")) if pixel else None
             if opening is None:
-                raise ValueError("Для выбранного пикселя нет напряжения открытия")
+                raise ValueError(f"Для пикселя {first_id} нет напряжения открытия")
             params = build_spectrum_params(app, vars_, opening, bool(use_opening_var.get()))
-            params = params_for_pixel(app, pid, params)
-            app.save_measurement_defaults("spectrum", {
-                "voltage_end_V": vars_["Voltage end, V"].get(),
-                "voltage_step_V": vars_["Voltage step, V"].get(),
-                "current_limit_mA": vars_["Current limit, mA"].get(),
-                "led_type": vars_["LED type"].get(),
-                "use_opening_voltage": bool(use_opening_var.get()),
-            })
-            output_dir = ensure_measurement_folder(
-                app.series.series_folder,
-                "SPECTRUM",
-                pid,
-                app.series.journal.get_pixel(pid),
+            app.save_measurement_defaults(
+                "spectrum",
+                {
+                    "voltage_start_V": vars_["Voltage start, V"].get(),
+                    "voltage_end_V": vars_["Voltage end, V"].get(),
+                    "voltage_step_V": vars_["Voltage step, V"].get(),
+                    "current_limit_mA": vars_["Current limit, mA"].get(),
+                    "led_type": vars_["LED type"].get(),
+                    "use_opening_voltage": bool(use_opening_var.get()),
+                },
             )
-            progress = SpectrumProgressWindow(app, pid)
-            result = run_spectrum_measurement(
-                pid,
-                output_dir,
-                params,
-                app.log,
-                app.app_settings,
-                progress_callback=progress.update_spectrum,
-            )
-            progress.close()
-            app.series.journal.update_after_measurement(
-                "SPECTRUM",
-                pid,
-                result["status"],
-                result["file"],
-                params.as_dict(),
-                spectrum_peak_count=result.get("spectrum_peak_count"),
-                spectrum_peaks_nm=result.get("spectrum_peaks_nm", ""),
-                spectrum_max_intensity=result.get("spectrum_max_intensity"),
-            )
-            app.log(f"Спектры завершены: {pid}, файл {result['file'].name}")
-            app.refresh_pixel_table()
-            app.show_measurement_menu()
-            win.destroy()
         except Exception as exc:
-            if progress is not None:
-                progress.close()
-            app.log(traceback.format_exc())
-            messagebox.showerror("Ошибка спектров", str(exc), parent=win)
+            messagebox.showerror("Ошибка параметров спектров", str(exc), parent=win)
+            return
+
+        win.destroy()
+        if selected_mode == "single":
+            measure_one_spectrum(app, first_id, params)
+        else:
+            measure_substrate_spectra(app, selected_pixels, params)
 
     ttk.Label(
         frame,
-        text="V открытия остается в журнале. Для спектра можно временно выбрать другое стартовое напряжение.",
+        text=(
+            "При съёмке всей подложки V открытия подставляется отдельно для каждого пикселя. "
+            "При ручном старте одно введённое напряжение применяется ко всем её пикселям."
+        ),
         foreground="#555555",
-        wraplength=500,
-    ).grid(row=len(fields) + 3, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        wraplength=570,
+    ).grid(row=len(fields) + 6, column=0, columnspan=2, sticky="w", pady=(8, 2))
     ttk.Button(frame, text="Открыть настройки", command=app.open_settings_window).grid(
-        row=len(fields) + 4,
+        row=len(fields) + 7,
         column=0,
         sticky="w",
         pady=16,
     )
-    ttk.Button(frame, text="Начать съемку спектров", command=start).grid(
-        row=len(fields) + 4,
+    ttk.Button(frame, text="Начать съёмку спектров", command=start).grid(
+        row=len(fields) + 7,
         column=1,
         sticky="w",
         pady=16,
     )
-    fit_toplevel_to_content(win, 620, 650)
+    fit_toplevel_to_content(win, 680, 760)
+
+
+def initial_spectrum_start_value(saved: Dict[str, Any], opening: Optional[float]) -> str:
+    """Keep the user's last entered start voltage independent of journal opening voltage."""
+
+    saved_value = as_float_or_none(saved.get("voltage_start_V"))
+    if saved_value is not None:
+        return f"{saved_value:g}"
+    if opening is not None:
+        return f"{float(opening):.3f}"
+    return "2.0"
+
+
+def group_pixels_by_substrate(app, pixels: List[str]) -> Dict[str, List[str]]:
+    """Return eligible pixels grouped in physical substrate order."""
+
+    groups: Dict[str, List[tuple[int, str]]] = {}
+    for pixel_id in pixels:
+        row = app.series.journal.get_pixel(pixel_id) if app.series is not None else None
+        if not row:
+            continue
+        substrate_id = str(pixel_id).rsplit("_", 1)[0]
+        try:
+            pixel_number = int(row.get("Pixel number") or str(pixel_id).rsplit("_", 1)[1])
+        except (TypeError, ValueError, IndexError):
+            pixel_number = 9999
+        groups.setdefault(substrate_id, []).append((pixel_number, pixel_id))
+    return {
+        substrate_id: [pixel_id for _number, pixel_id in sorted(items)]
+        for substrate_id, items in groups.items()
+    }
+
+
+def params_for_pixel_opening(app, pixel_id: str, params: SpectrumParams) -> SpectrumParams:
+    row = app.series.journal.get_pixel(pixel_id) if app.series is not None else None
+    opening = as_float_or_none(row.get("Opening voltage (V)")) if row else None
+    if opening is None:
+        raise ValueError(f"Для пикселя {pixel_id} нет напряжения открытия")
+    pixel_params = replace(params, opening_voltage=float(opening))
+    if params.voltage_start_source == "opening":
+        pixel_params = replace(pixel_params, voltage_start=float(opening))
+    return params_for_pixel(app, pixel_id, pixel_params)
+
+
+def measure_one_spectrum(
+    app,
+    pixel_id: str,
+    params: SpectrumParams,
+    return_to_menu: bool = True,
+) -> Optional[Dict[str, Any]]:
+    assert app.series is not None
+    progress = None
+    controller = SpectrumMeasurementController()
+    try:
+        pixel_params = params_for_pixel_opening(app, pixel_id, params)
+        output_dir = ensure_measurement_folder(
+            app.series.series_folder,
+            "SPECTRUM",
+            pixel_id,
+            app.series.journal.get_pixel(pixel_id),
+        )
+        progress = SpectrumProgressWindow(app, pixel_id, controller)
+        result = run_spectrum_measurement(
+            pixel_id,
+            output_dir,
+            pixel_params,
+            app.log,
+            app.app_settings,
+            progress_callback=progress.update_spectrum,
+            optimization_preview_callback=progress.update_optimization_preview,
+            control=controller,
+        )
+        progress.close()
+        app.series.journal.update_after_measurement(
+            "SPECTRUM",
+            pixel_id,
+            result["status"],
+            result["file"],
+            pixel_params.as_dict(),
+            notes="Остановлено пользователем" if result.get("stopped_by_user") else "",
+            spectrum_peak_count=result.get("spectrum_peak_count"),
+            spectrum_peaks_nm=result.get("spectrum_peaks_nm", ""),
+            spectrum_max_intensity=result.get("spectrum_max_intensity"),
+        )
+        app.log(f"Спектры завершены: {pixel_id}, файл {result['file'].name}")
+        app.refresh_pixel_table()
+        if return_to_menu:
+            app.show_measurement_menu()
+        return result
+    except Exception as exc:
+        if progress is not None:
+            progress.close()
+        app.log(traceback.format_exc())
+        messagebox.showerror("Ошибка спектров", str(exc), parent=app)
+        if return_to_menu:
+            app.show_measurement_menu()
+        return None
+
+
+def measure_substrate_spectra(app, pixels: List[str], params: SpectrumParams) -> None:
+    measured: List[str] = []
+    for pixel_id in pixels:
+        choice = messagebox.askyesnocancel(
+            "Спектры всей подложки",
+            f"Следующий пиксель: {pixel_id}\n\n"
+            f"Измерены: {', '.join(measured) if measured else 'пока нет'}\n\n"
+            "Да — снять следующий.\nНет — пропустить этот пиксель.\nОтмена — остановить подложку.",
+            parent=app,
+        )
+        if choice is None:
+            app.log("Съёмка спектров всей подложки остановлена пользователем.")
+            break
+        if choice is False:
+            app.log(f"Спектры {pixel_id} пропущены пользователем.")
+            continue
+        result = measure_one_spectrum(app, pixel_id, params, return_to_menu=False)
+        if result is not None:
+            measured.append(pixel_id)
+            if result.get("stopped_by_user"):
+                app.log("Очередь спектров подложки остановлена вместе с текущей съёмкой.")
+                break
+    app.show_measurement_menu()
 
 
 def build_spectrum_params(app, vars_: Dict[str, tk.StringVar], opening: float, use_opening: bool) -> SpectrumParams:

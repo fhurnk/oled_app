@@ -12,6 +12,8 @@ from .ivl import (
 )
 from .spectrum import (
     SpectrumHelper,
+    SpectrumMeasurementController,
+    SpectrumMeasurementStopped,
     SpectrumParams,
     create_spectrum_workbook,
     run_spectrum_measurement,
@@ -32,6 +34,8 @@ __all__ = [
     "IVLParams",
     "MeasurementStopped",
     "SpectrumHelper",
+    "SpectrumMeasurementController",
+    "SpectrumMeasurementStopped",
     "SpectrumParams",
     "StabilityParams",
     "StabilitySetpointController",

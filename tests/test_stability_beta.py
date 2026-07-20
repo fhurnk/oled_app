@@ -23,6 +23,7 @@ class StabilitySetpointTests(unittest.TestCase):
 
         self.assertEqual(controller.add(0.25), 3.25)
         self.assertEqual(controller.add(10.0), 5.0)
+        self.assertEqual(controller.add(-0.5), 4.5)
         self.assertEqual(controller.set_target(2.5), 2.5)
         controller.request_stop()
 
@@ -31,12 +32,12 @@ class StabilitySetpointTests(unittest.TestCase):
         self.assertGreaterEqual(revision, 3)
         self.assertTrue(stopped)
 
-    def test_voltage_mode_ramps_without_treating_target_as_limit(self) -> None:
+    def test_voltage_mode_applies_target_immediately(self) -> None:
         params = StabilityParams(control_mode="voltage", voltage_step_max=0.25, voltage_limit=5.0)
 
         next_voltage, limit_reached = next_stability_voltage("voltage", 3.0, 4.0, 2.0, params)
 
-        self.assertEqual(next_voltage, 3.25)
+        self.assertEqual(next_voltage, 4.0)
         self.assertFalse(limit_reached)
 
     def test_current_mode_keeps_software_feedback(self) -> None:

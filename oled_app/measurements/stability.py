@@ -126,14 +126,7 @@ def next_stability_voltage(
         return min(next_voltage, params.voltage_limit), limit_reached
     if control_mode == "voltage":
         desired = min(max(0.0, float(target_setpoint)), params.voltage_limit)
-        delta = float(
-            np.clip(
-                desired - float(voltage_set_V),
-                -params.voltage_step_max,
-                params.voltage_step_max,
-            )
-        )
-        return min(max(0.0, float(voltage_set_V) + delta), params.voltage_limit), False
+        return desired, False
     raise ValueError("Неизвестный режим стабильности.")
 
 

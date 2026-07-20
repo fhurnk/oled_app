@@ -66,7 +66,7 @@
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "beta",
     "current_prerelease": "v1.8.0-beta",
-    "beta_scope": "Dynamic current/voltage stability control, series/pixel-bound camera capture with measurement-time video synchronization, and substrate-first spectrum selection for reports.",
+    "beta_scope": "Immediate voltage-mode stability targets with symmetric setpoint buttons, guided camera capture in numbered camera-only sessions with captured-photo confirmation, live integration-time trial spectra, persistent manual spectrum start voltage, safe spectrum stopping, sequential substrate spectra, and substrate-first report selection.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -82,8 +82,8 @@
   },
   "measurement_workflows": {
     "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing.",
-    "SPECTRUM": "Spectral measurement after known opening voltage, with integration-time optimization; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
-    "STABILITY": "Mutable constant-current or ramped constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
+    "SPECTRUM": "Spectral measurement with live integration-time trial previews, persistent manual start voltage, and safe stop; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
+    "STABILITY": "Mutable constant-current feedback or immediate constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
   },
   "git": {
     "primary_remote": "oled_app",

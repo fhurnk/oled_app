@@ -46,3 +46,35 @@ def ensure_measurement_folder(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def ensure_camera_session_folder(
+    series_folder: Path,
+    pixel_id: str,
+    pixel_row: Optional[Dict[str, Any]] = None,
+) -> Path:
+    """Create a numbered camera session independent of IVL/stability folders."""
+
+    camera_root = ensure_measurement_folder(
+        series_folder,
+        "CAMERA",
+        pixel_id,
+        pixel_row,
+    ) / "camera"
+    camera_root.mkdir(parents=True, exist_ok=True)
+    session_number = max(
+        (
+            int(item.name)
+            for item in camera_root.iterdir()
+            if item.is_dir() and item.name.isdigit()
+        ),
+        default=0,
+    ) + 1
+    while True:
+        session_dir = camera_root / str(session_number)
+        try:
+            session_dir.mkdir()
+        except FileExistsError:
+            session_number += 1
+            continue
+        return session_dir

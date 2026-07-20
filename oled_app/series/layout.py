@@ -11,8 +11,8 @@ def build_holder_layout(width: int = 930, height: int = 620) -> Dict[int, Dict[s
     box_w = 86
     box_h = 52
 
-    left_x1, left_x2, left_x3 = 170, 305, 238
-    right_x1, right_x2, right_x3 = width - 390, width - 255, width - 322
+    left_outer_x, left_inner_x = 170, 305
+    right_inner_x, right_outer_x = width - 390, width - 255
     top_y1, top_y3 = 145, 235
     bottom_y1, bottom_y3 = 320, 405
 
@@ -21,25 +21,25 @@ def build_holder_layout(width: int = 930, height: int = 620) -> Dict[int, Dict[s
             "number_xy": (48, 92),
             "name_xy": (92, 36),
             "entry_xy": (78, 62),
-            "substrates": [(left_x1, top_y1), (left_x2, top_y1), (left_x3, top_y3)],
+            "substrates": [(left_inner_x, top_y1), (left_inner_x, top_y3), (left_outer_x, top_y3)],
         },
         1: {
             "number_xy": (width - 48, 92),
             "name_xy": (width - 248, 36),
             "entry_xy": (width - 230, 62),
-            "substrates": [(right_x1, top_y1), (right_x2, top_y1), (right_x3, top_y3)],
+            "substrates": [(right_inner_x, top_y1), (right_inner_x, top_y3), (right_outer_x, top_y3)],
         },
         3: {
             "number_xy": (48, height - 118),
             "name_xy": (92, height - 155),
             "entry_xy": (78, height - 130),
-            "substrates": [(left_x1, bottom_y1), (left_x2, bottom_y1), (left_x3, bottom_y3)],
+            "substrates": [(left_inner_x, bottom_y3), (left_inner_x, bottom_y1), (left_outer_x, bottom_y1)],
         },
         4: {
             "number_xy": (width - 48, height - 118),
             "name_xy": (width - 248, height - 155),
             "entry_xy": (width - 230, height - 130),
-            "substrates": [(right_x1, bottom_y1), (right_x2, bottom_y1), (right_x3, bottom_y3)],
+            "substrates": [(right_inner_x, bottom_y3), (right_inner_x, bottom_y1), (right_outer_x, bottom_y1)],
         },
     }
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -64,6 +65,23 @@ class SpectrumParams:
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
+
+
+class SpectrumMeasurementStopped(Exception):
+    """Raised after the user requests a safe spectrum stop."""
+
+
+class SpectrumMeasurementController:
+    """Thread-safe stop signal shared by the spectrum workflow and GUI."""
+
+    def __init__(self) -> None:
+        self._stop_event = threading.Event()
+
+    def request_stop(self) -> None:
+        self._stop_event.set()
+
+    def stop_requested(self) -> bool:
+        return self._stop_event.is_set()
 
 
 class SpectrumHelper:
@@ -318,7 +336,14 @@ class SpectrumHelper:
         )
         return peak_int, peak_wl, fwhm
 
-    def optimize_integration_time(self, spec):
+    def optimize_integration_time(
+        self,
+        spec,
+        preview_callback: Optional[
+            Callable[[int, float, np.ndarray, np.ndarray, str], None]
+        ] = None,
+        stop_requested: Optional[Callable[[], bool]] = None,
+    ):
         p = self.params
         t_int = self.next_integration_time_s if p.reuse_previous_integration_time else p.t_int_initial_s
         integral = 0.0
@@ -327,6 +352,8 @@ class SpectrumHelper:
 
         self.log(f"  Подбор T_int: цель {p.target_intensity:.0f} counts, область {p.peak_search_mode_for_tint}")
         for iteration in range(1, p.max_iterations + 1):
+            if stop_requested is not None and stop_requested():
+                raise SpectrumMeasurementStopped("Съёмка спектра остановлена пользователем.")
             wl, inten, actual_t = self.get_spectrum(spec, t_int)
             peak_int, peak_wl, fwhm, is_sat, is_weak, _, status = self.analyze_quality(
                 wl,
@@ -344,6 +371,10 @@ class SpectrumHelper:
                 best = (actual_t, wl.copy(), inten.copy(), peak_int, peak_wl, fwhm, status)
 
             self.log(f"    {iteration}: T={actual_t*1000:.2f} мс, peak={peak_int:.0f} @ {peak_wl:.1f} нм, {status}")
+            if preview_callback is not None:
+                preview_callback(iteration, actual_t, wl, inten, status)
+            if stop_requested is not None and stop_requested():
+                raise SpectrumMeasurementStopped("Съёмка спектра остановлена пользователем.")
 
             if status == "GOOD" or (status == "OK" and abs(peak_int - p.target_intensity) / p.target_intensity < p.tolerance):
                 best = (actual_t, wl.copy(), inten.copy(), peak_int, peak_wl, fwhm, status)
@@ -396,11 +427,16 @@ def run_spectrum_measurement(
     progress_callback: Optional[
         Callable[[int, float, float, np.ndarray, np.ndarray, np.ndarray, List[Dict[str, float]], str], None]
     ] = None,
+    optimization_preview_callback: Optional[
+        Callable[[int, float, int, float, np.ndarray, np.ndarray, str], None]
+    ] = None,
+    control: Optional[SpectrumMeasurementController] = None,
 ) -> Dict[str, Any]:
     prepare_hardware_environment(pixel_id, app_settings, log)
     import xtralien
 
     helper = SpectrumHelper(params, log)
+    control = control or SpectrumMeasurementController()
     spec = helper.init_spectrometer()
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -414,6 +450,7 @@ def run_spectrum_measurement(
     log(f"Raw CSV спектров: {summary_raw_file.name}, {spectra_raw_file.name}")
 
     final_status = "FAILED"
+    stopped_by_user = False
     best_spectrum_metrics = {
         "spectrum_peak_count": None,
         "spectrum_peaks_nm": "",
@@ -435,6 +472,11 @@ def run_spectrum_measurement(
                     time.sleep(0.3)
 
                     for idx, voltage in enumerate(voltage_array, start=1):
+                        if control.stop_requested():
+                            stopped_by_user = True
+                            final_status = "STOPPED" if final_status == "FAILED" else final_status
+                            log("Съёмка спектров остановлена пользователем.")
+                            break
                         log(f"\nСпектр {pixel_id}: точка {idx}/{len(voltage_array)}, V={voltage:.3f} В")
                         smu.smu1.set.voltage(float(voltage), response=0)
                         smu.smu2.set.voltage(params.photodiode_bias_V, response=0)
@@ -470,7 +512,32 @@ def run_spectrum_measurement(
                             final_status = status
                             break
 
-                        opt = helper.optimize_integration_time(spec)
+                        try:
+                            opt = helper.optimize_integration_time(
+                                spec,
+                                preview_callback=(
+                                    (
+                                        lambda iteration, actual_t, wavelengths, intensities, preview_status,
+                                        point=idx, point_voltage=float(voltage): optimization_preview_callback(
+                                            point,
+                                            point_voltage,
+                                            iteration,
+                                            actual_t,
+                                            wavelengths,
+                                            intensities,
+                                            preview_status,
+                                        )
+                                    )
+                                    if optimization_preview_callback is not None
+                                    else None
+                                ),
+                                stop_requested=control.stop_requested,
+                            )
+                        except SpectrumMeasurementStopped:
+                            stopped_by_user = True
+                            final_status = "STOPPED" if final_status == "FAILED" else final_status
+                            log("Съёмка спектров остановлена пользователем.")
+                            break
                         if opt is None:
                             status = "FAILED"
                             summary_writer.writerow(
@@ -594,5 +661,6 @@ def run_spectrum_measurement(
         "file": filename,
         "raw_files": kept_raw_files,
         "status": final_status,
+        "stopped_by_user": stopped_by_user,
         **best_spectrum_metrics,
     }

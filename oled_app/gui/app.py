@@ -205,17 +205,26 @@ class OLEDModularApp(tk.Tk):
             pass
 
     def clear(self) -> None:
+        self.log_widget = None
         for child in self.winfo_children():
             child.destroy()
 
     def log(self, text: str) -> None:
         print(text)
-        if self.log_widget is not None:
-            self.log_widget.configure(state="normal")
-            self.log_widget.insert("end", str(text) + "\n")
-            self.log_widget.see("end")
-            self.log_widget.configure(state="disabled")
+        widget = self.log_widget
+        if widget is None:
+            return
+        try:
+            if not widget.winfo_exists():
+                self.log_widget = None
+                return
+            widget.configure(state="normal")
+            widget.insert("end", str(text) + "\n")
+            widget.see("end")
+            widget.configure(state="disabled")
             self.update_idletasks()
+        except tk.TclError:
+            self.log_widget = None
 
     def show_start_screen(self) -> None:
         show_start_screen(self)
