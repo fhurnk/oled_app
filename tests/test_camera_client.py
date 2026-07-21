@@ -4,6 +4,7 @@ import queue
 import threading
 import tempfile
 import unittest
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ from oled_app.gui.camera_window import (
     build_series_capture_stem,
     center_crop_dimensions,
     decode_liveview_frame,
+    free_camera_date_folder,
     load_local_photo_preview,
     stability_current_limit_reached,
     stability_postroll_remaining_s,
@@ -35,6 +37,10 @@ from oled_app.series.paths import ensure_camera_session_folder
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_free_camera_downloads_are_grouped_by_capture_date(self) -> None:
+        folder = free_camera_date_folder(Path("camera_downloads"), date(2026, 7, 21))
+        self.assertEqual(folder, Path("camera_downloads") / "2026-07-21")
+
     def test_downloaded_photo_preview_is_loaded_and_fitted(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "captured.jpg"

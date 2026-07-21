@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.1",
+    "current_version": "v1.8.2",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.1.md"
+    "docs/versions/v1.8.2.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -65,9 +65,9 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "stable",
-    "current_release": "v1.8.1",
+    "current_release": "v1.8.2",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Stable v1.8 workflows with the physical two-by-two substrate pixel map corrected to 1 2 / 4 3 in setup and measurement status views.",
+    "release_scope": "Selectable full, IVL-only, or spectra-only reports; context-sensitive spectrum selectors; and date-grouped free-camera downloads.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -84,7 +84,7 @@
   },
   "measurement_workflows": {
     "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing.",
-    "SPECTRUM": "Spectral measurement with live integration-time trial previews, persistent manual start voltage, and safe stop; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
+    "SPECTRUM": "Spectral measurement with context-sensitive pixel/substrate selection, live integration-time trial previews, persistent manual start voltage, and safe stop; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
     "STABILITY": "Mutable constant-current feedback or immediate constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
   },
   "git": {

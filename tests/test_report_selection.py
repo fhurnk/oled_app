@@ -9,12 +9,20 @@ from openpyxl import Workbook
 
 from oled_app.gui.report_window import (
     collect_report_spectrum_candidates,
+    report_output_name,
     selected_report_candidates,
 )
+from oled_app.gui.spectrum_window import spectrum_selection_visibility
 from oled_app.reports.origin_report import (
     IvRecord,
     MeasurementPath,
+    REPORT_MODE_FULL,
+    REPORT_MODE_IVL,
+    REPORT_MODE_SPECTRA,
+    ReportData,
     SpectrumRecord,
+    build_workbook,
+    collect_report_data,
     collect_spectrum_records,
     create_origin_iv_book,
     parse_args,
@@ -74,6 +82,21 @@ def _write_spectrum(path: Path, voltage: float = 2.0) -> None:
 
 
 class ReportWindowSelectionTests(unittest.TestCase):
+    def test_output_name_reflects_selected_report_mode(self):
+        self.assertEqual(report_output_name("2026-07-20", "", report_mode=REPORT_MODE_IVL), "report_IVL_2026-07-20.opju")
+        self.assertEqual(
+            report_output_name("", "2026-07-21", report_mode=REPORT_MODE_SPECTRA),
+            "report_Spctr_2026-07-21.opju",
+        )
+        self.assertEqual(
+            report_output_name("2026-07-21", "2026-07-21", report_mode=REPORT_MODE_FULL),
+            "report_2026-07-21.opju",
+        )
+
+    def test_spectrum_mode_hides_irrelevant_selector(self):
+        self.assertEqual(spectrum_selection_visibility("single"), (True, False))
+        self.assertEqual(spectrum_selection_visibility("substrate"), (False, True))
+
     def test_candidates_are_grouped_by_series_then_substrate(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             series_folder = Path(temp_dir)
@@ -108,6 +131,42 @@ class ReportWindowSelectionTests(unittest.TestCase):
 
 
 class ReportBuilderSelectionTests(unittest.TestCase):
+    def test_cli_accepts_each_report_mode(self):
+        for mode in (REPORT_MODE_FULL, REPORT_MODE_IVL, REPORT_MODE_SPECTRA):
+            with self.subTest(mode=mode):
+                self.assertEqual(parse_args(["--report-mode", mode]).report_mode, mode)
+
+    def test_excluded_measurement_root_is_not_required_in_strict_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            measurements = Path(temp_dir)
+            (measurements / "01_IVL_VAH").mkdir()
+            ivl_args = parse_args(
+                ["--measurements-dir", str(measurements), "--report-mode", REPORT_MODE_IVL, "--strict"]
+            )
+            self.assertEqual(collect_report_data(ivl_args).warnings, [])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            measurements = Path(temp_dir)
+            (measurements / "02_SPECTRA").mkdir()
+            spectra_args = parse_args(
+                ["--measurements-dir", str(measurements), "--report-mode", REPORT_MODE_SPECTRA, "--strict"]
+            )
+            self.assertEqual(collect_report_data(spectra_args).warnings, [])
+
+    def test_workbook_contains_only_requested_sections(self):
+        data = ReportData([], [], None, [])
+        cases = {
+            REPORT_MODE_FULL: ({"IVL_U_I_PD", "Spectra_by_voltage"}, set()),
+            REPORT_MODE_IVL: ({"IVL_U_I_PD"}, {"Spectra_by_voltage", "Spectra_max_common"}),
+            REPORT_MODE_SPECTRA: ({"Spectra_by_voltage"}, {"IVL_U_I_PD", "IVL_I_PD"}),
+        }
+        for mode, (included, excluded) in cases.items():
+            with self.subTest(mode=mode):
+                args = parse_args(["--report-mode", mode, "--format", "xlsx", "--no-charts"])
+                workbook, _warnings = build_workbook(args, data)
+                self.assertTrue(included.issubset(workbook.sheetnames))
+                self.assertTrue(excluded.isdisjoint(workbook.sheetnames))
+
     def test_jl_columns_use_direct_origin_column_references(self):
         records = [
             IvRecord(

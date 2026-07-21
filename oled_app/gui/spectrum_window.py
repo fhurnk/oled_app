@@ -22,6 +22,12 @@ from .progress import SpectrumProgressWindow
 from .widgets import fit_toplevel_to_content
 
 
+def spectrum_selection_visibility(mode: str) -> tuple[bool, bool]:
+    """Return visibility of the pixel and substrate selectors for a capture mode."""
+
+    return mode == "single", mode == "substrate"
+
+
 def open_spectrum_window(app) -> None:
     if app.series is None:
         return
@@ -45,14 +51,16 @@ def open_spectrum_window(app) -> None:
         row=0, column=1, sticky="w", pady=4
     )
 
-    ttk.Label(frame, text="Пиксель:").grid(row=1, column=0, sticky="e", pady=5)
+    pixel_label = ttk.Label(frame, text="Пиксель:")
+    pixel_label.grid(row=1, column=0, sticky="e", pady=5)
     pixel_var = tk.StringVar(value=pixels[0])
     pixel_combo = ttk.Combobox(frame, values=pixels, textvariable=pixel_var, state="readonly", width=28)
     pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
 
     substrate_groups = group_pixels_by_substrate(app, pixels)
     substrate_values = list(substrate_groups)
-    ttk.Label(frame, text="Подложка:").grid(row=2, column=0, sticky="e", pady=5)
+    substrate_label = ttk.Label(frame, text="Подложка:")
+    substrate_label.grid(row=2, column=0, sticky="e", pady=5)
     substrate_var = tk.StringVar(value=substrate_values[0] if substrate_values else "")
     substrate_combo = ttk.Combobox(
         frame,
@@ -63,7 +71,8 @@ def open_spectrum_window(app) -> None:
     )
     substrate_combo.grid(row=2, column=1, sticky="w", pady=5)
     substrate_info_var = tk.StringVar()
-    ttk.Label(frame, textvariable=substrate_info_var, foreground="#555555", wraplength=570).grid(
+    substrate_info_label = ttk.Label(frame, textvariable=substrate_info_var, foreground="#555555", wraplength=570)
+    substrate_info_label.grid(
         row=3, column=0, columnspan=2, sticky="w", pady=(0, 4)
     )
 
@@ -118,6 +127,26 @@ def open_spectrum_window(app) -> None:
     pixel_combo.bind("<<ComboboxSelected>>", update_opening_info)
     substrate_combo.bind("<<ComboboxSelected>>", update_substrate_info)
     update_substrate_info()
+
+    def update_selection_visibility(*_args) -> None:
+        show_pixel, show_substrate = spectrum_selection_visibility(mode_var.get())
+        for widget in (pixel_label, pixel_combo):
+            widget.grid() if show_pixel else widget.grid_remove()
+        for widget in (substrate_label, substrate_combo, substrate_info_label):
+            widget.grid() if show_substrate else widget.grid_remove()
+        if show_pixel:
+            update_opening_info()
+        else:
+            selected = substrate_groups.get(substrate_var.get(), [])
+            if selected:
+                pixel = app.series.journal.get_pixel(selected[0]) if app.series is not None else None
+                opening = as_float_or_none(pixel.get("Opening voltage (V)")) if pixel else None
+                opening_info_var.set(
+                    f"V открытия первого пикселя: {opening:.3f} В" if opening is not None else "V открытия первого пикселя: нет"
+                )
+
+    mode_var.trace_add("write", update_selection_visibility)
+    update_selection_visibility()
 
     def start() -> None:
         try:

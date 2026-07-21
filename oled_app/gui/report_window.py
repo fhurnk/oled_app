@@ -13,6 +13,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from openpyxl import load_workbook
 
 from oled_app.constants import MEASUREMENT_FOLDER_NAMES, SCRIPT_DIR
+from oled_app.reports.origin_report import (
+    REPORT_MODE_FULL,
+    REPORT_MODE_IVL,
+    REPORT_MODE_SPECTRA,
+)
 from oled_app.utils import (
     build_report_voltage_grid,
     format_voltage,
@@ -126,7 +131,16 @@ def common_report_voltages(selected: Dict[str, Dict[str, Any]]) -> List[float]:
     return sorted(common or [])
 
 
-def report_output_name(ivl_date: str, spectrum_date: str, suffix: str = ".opju") -> str:
+def report_output_name(
+    ivl_date: str,
+    spectrum_date: str,
+    suffix: str = ".opju",
+    report_mode: str = REPORT_MODE_FULL,
+) -> str:
+    if report_mode == REPORT_MODE_IVL:
+        return f"report_IVL_{ivl_date}{suffix}"
+    if report_mode == REPORT_MODE_SPECTRA:
+        return f"report_Spctr_{spectrum_date}{suffix}"
     if ivl_date == spectrum_date:
         stem = ivl_date
     else:
@@ -139,19 +153,21 @@ def open_report_window(app) -> None:
         return
     ivl_dates = measurement_dates_for_report(app, "IVL")
     spectrum_dates = measurement_dates_for_report(app, "SPECTRUM")
-    if not ivl_dates:
-        messagebox.showwarning("Отчет", "В серии не найдены ВАЯХ для отчета.", parent=app)
-        return
-    if not spectrum_dates:
-        messagebox.showwarning("Отчет", "В серии не найдены спектры для отчета.", parent=app)
+    if not ivl_dates and not spectrum_dates:
+        messagebox.showwarning("Отчет", "В серии не найдены ВАЯХ и спектры для отчета.", parent=app)
         return
 
-    ivl_date_var = tk.StringVar(value=ivl_dates[-1])
-    spectrum_date_var = tk.StringVar(value=spectrum_dates[-1])
-    candidates = collect_report_spectrum_candidates(app, spectrum_date_var.get())
-    if not candidates:
-        messagebox.showwarning("Отчет", f"За {spectrum_date_var.get()} не найдены спектры для отчета.", parent=app)
-        return
+    available_modes = []
+    if ivl_dates and spectrum_dates:
+        available_modes.append(REPORT_MODE_FULL)
+    if ivl_dates:
+        available_modes.append(REPORT_MODE_IVL)
+    if spectrum_dates:
+        available_modes.append(REPORT_MODE_SPECTRA)
+    report_mode_var = tk.StringVar(value=available_modes[0])
+    ivl_date_var = tk.StringVar(value=ivl_dates[-1] if ivl_dates else "")
+    spectrum_date_var = tk.StringVar(value=spectrum_dates[-1] if spectrum_dates else "")
+    candidates = collect_report_spectrum_candidates(app, spectrum_date_var.get()) if spectrum_dates else {}
 
     win = tk.Toplevel(app)
     win.title("Составить отчет")
@@ -160,15 +176,36 @@ def open_report_window(app) -> None:
     main = ttk.Frame(win, padding=14)
     main.pack(fill="both", expand=True)
 
+    mode_frame = ttk.LabelFrame(main, text="Состав отчета")
+    mode_frame.pack(fill="x", pady=(0, 10))
+    for column, (value, label) in enumerate(
+        (
+            (REPORT_MODE_FULL, "Полный отчет"),
+            (REPORT_MODE_IVL, "Только ВАЯХ"),
+            (REPORT_MODE_SPECTRA, "Только спектры"),
+        )
+    ):
+        ttk.Radiobutton(
+            mode_frame,
+            text=label,
+            variable=report_mode_var,
+            value=value,
+            state="normal" if value in available_modes else "disabled",
+        ).grid(row=0, column=column, sticky="w", padx=10, pady=6)
+
     date_frame = ttk.LabelFrame(main, text="Даты измерений")
     date_frame.pack(fill="x", pady=(0, 10))
     ttk.Label(date_frame, text="ВАЯХ:").grid(row=0, column=0, sticky="e", padx=(8, 4), pady=6)
-    ttk.Combobox(date_frame, values=ivl_dates, textvariable=ivl_date_var, state="readonly", width=14).grid(row=0, column=1, sticky="w", padx=(0, 16), pady=6)
+    ivl_date_combo = ttk.Combobox(date_frame, values=ivl_dates, textvariable=ivl_date_var, state="readonly", width=14)
+    ivl_date_combo.grid(row=0, column=1, sticky="w", padx=(0, 16), pady=6)
     ttk.Label(date_frame, text="Спектры:").grid(row=0, column=2, sticky="e", padx=(8, 4), pady=6)
-    ttk.Combobox(date_frame, values=spectrum_dates, textvariable=spectrum_date_var, state="readonly", width=14).grid(row=0, column=3, sticky="w", padx=(0, 8), pady=6)
+    spectrum_date_combo = ttk.Combobox(date_frame, values=spectrum_dates, textvariable=spectrum_date_var, state="readonly", width=14)
+    spectrum_date_combo.grid(row=0, column=3, sticky="w", padx=(0, 8), pady=6)
 
-    ttk.Label(main, text="Выбор спектров для отчета", font=("Segoe UI", 12, "bold")).pack(anchor="w")
-    selection_frame = ttk.LabelFrame(main, text="Подложка и пиксель на подсерии")
+    spectrum_options_frame = ttk.Frame(main)
+    spectrum_options_frame.pack(fill="both", expand=True)
+    ttk.Label(spectrum_options_frame, text="Выбор спектров для отчета", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+    selection_frame = ttk.LabelFrame(spectrum_options_frame, text="Подложка и пиксель на подсерии")
     selection_frame.pack(fill="x", pady=(8, 10))
     substrate_selection_vars: Dict[str, tk.StringVar] = {}
     pixel_selection_vars: Dict[str, tk.StringVar] = {}
@@ -232,14 +269,29 @@ def open_report_window(app) -> None:
             ttk.Label(selection_frame, text=note, foreground="#555555").grid(row=row, column=3, sticky="w", padx=(0, 8), pady=3)
 
     output_manual = {"value": False}
-    output_var = tk.StringVar(value=str(app.series.series_folder / report_output_name(ivl_date_var.get(), spectrum_date_var.get())))
+    output_var = tk.StringVar(
+        value=str(
+            app.series.series_folder
+            / report_output_name(ivl_date_var.get(), spectrum_date_var.get(), report_mode=report_mode_var.get())
+        )
+    )
 
     def refresh_output_name(force: bool = False) -> None:
         if output_manual["value"] and not force:
             return
         current = Path(output_var.get().strip() or "report.opju")
         suffix = current.suffix if current.suffix.lower() in {".opju", ".xlsx"} else ".opju"
-        output_var.set(str(app.series.series_folder / report_output_name(ivl_date_var.get(), spectrum_date_var.get(), suffix)))
+        output_var.set(
+            str(
+                app.series.series_folder
+                / report_output_name(
+                    ivl_date_var.get(),
+                    spectrum_date_var.get(),
+                    suffix,
+                    report_mode_var.get(),
+                )
+            )
+        )
     out_frame = ttk.Frame(main)
     out_frame.pack(fill="x", pady=(0, 10))
     ttk.Label(out_frame, text="Файл отчета:").pack(side="left")
@@ -264,26 +316,26 @@ def open_report_window(app) -> None:
 
     same_grid_var = tk.BooleanVar(value=True)
     ttk.Checkbutton(
-        main,
+        spectrum_options_frame,
         text="Одинаковый диапазон и шаг напряжения для всех выбранных пикселей",
         variable=same_grid_var,
     ).pack(anchor="w", pady=(0, 6))
 
-    grid_frame = ttk.LabelFrame(main, text="Диапазон напряжения")
+    grid_frame = ttk.LabelFrame(spectrum_options_frame, text="Диапазон напряжения")
     grid_frame.pack(fill="x", pady=(0, 10))
     global_vars = {"start": tk.StringVar(value=""), "stop": tk.StringVar(value=""), "step": tk.StringVar(value="")}
     for col, (key, label) in enumerate((("start", "Начало, В"), ("stop", "Конец, В"), ("step", "Шаг, В"))):
         ttk.Label(grid_frame, text=label).grid(row=0, column=col * 2, sticky="e", padx=(8, 4), pady=6)
         ttk.Entry(grid_frame, textvariable=global_vars[key], width=10).grid(row=0, column=col * 2 + 1, sticky="w", padx=(0, 8), pady=6)
 
-    per_pixel_frame = ttk.LabelFrame(main, text="Индивидуальные диапазоны")
+    per_pixel_frame = ttk.LabelFrame(spectrum_options_frame, text="Индивидуальные диапазоны")
     per_pixel_vars: Dict[str, Dict[str, tk.StringVar]] = {}
 
     def update_per_pixel_visibility(*_args) -> None:
         if same_grid_var.get():
             per_pixel_frame.pack_forget()
         else:
-            per_pixel_frame.pack(fill="both", expand=True, pady=(0, 10), before=status_label)
+            per_pixel_frame.pack(fill="both", expand=True, pady=(0, 10))
 
     status_var = tk.StringVar(value="")
     status_label = ttk.Label(main, textvariable=status_var, foreground="#555555", wraplength=700)
@@ -291,6 +343,9 @@ def open_report_window(app) -> None:
     same_grid_var.trace_add("write", update_per_pixel_visibility)
 
     def refresh_defaults(*_args) -> None:
+        if report_mode_var.get() == REPORT_MODE_IVL:
+            status_var.set("В отчет войдет только раздел ВАЯХ.")
+            return
         selected = selected_report_candidates(candidates, substrate_selection_vars, pixel_selection_vars)
         common = common_report_voltages(selected)
         if common:
@@ -332,16 +387,30 @@ def open_report_window(app) -> None:
         rebuild_selection()
         refresh_defaults()
 
+    def update_report_mode(*_args) -> None:
+        mode = report_mode_var.get()
+        ivl_date_combo.configure(state="readonly" if mode in {REPORT_MODE_FULL, REPORT_MODE_IVL} else "disabled")
+        spectrum_date_combo.configure(
+            state="readonly" if mode in {REPORT_MODE_FULL, REPORT_MODE_SPECTRA} else "disabled"
+        )
+        if mode == REPORT_MODE_IVL:
+            spectrum_options_frame.pack_forget()
+        elif not spectrum_options_frame.winfo_manager():
+            spectrum_options_frame.pack(fill="both", expand=True, before=out_frame)
+        refresh_output_name()
+        update_per_pixel_visibility()
+        refresh_defaults()
+
     ivl_date_var.trace_add("write", lambda *_args: refresh_output_name())
     spectrum_date_var.trace_add("write", change_spectrum_date)
+    report_mode_var.trace_add("write", update_report_mode)
     rebuild_selection()
-    update_per_pixel_visibility()
-    refresh_defaults()
+    update_report_mode()
 
     def build_command() -> List[str]:
-        selected = selected_report_candidates(candidates, substrate_selection_vars, pixel_selection_vars)
-        if not selected:
-            raise ValueError("Не выбран ни один спектральный пиксель")
+        mode = report_mode_var.get()
+        includes_ivl = mode in {REPORT_MODE_FULL, REPORT_MODE_IVL}
+        includes_spectra = mode in {REPORT_MODE_FULL, REPORT_MODE_SPECTRA}
         output_text = output_var.get().strip()
         if not output_text:
             raise ValueError("Не задан файл отчета")
@@ -354,13 +423,29 @@ def open_report_window(app) -> None:
             str(app.series.series_folder / "measurements"),
             "--output",
             str(output),
-            "--ivl-date",
-            ivl_date_var.get(),
-            "--spectrum-date",
-            spectrum_date_var.get(),
-            "--require-spectrum-pixel-selection",
+            "--report-mode",
+            mode,
             "--strict",
         ]
+        if includes_ivl:
+            if not ivl_date_var.get():
+                raise ValueError("Не выбрана дата ВАЯХ")
+            cmd.extend(["--ivl-date", ivl_date_var.get()])
+        if not includes_spectra:
+            return cmd
+
+        if not spectrum_date_var.get():
+            raise ValueError("Не выбрана дата спектров")
+        selected = selected_report_candidates(candidates, substrate_selection_vars, pixel_selection_vars)
+        if not selected:
+            raise ValueError("Не выбран ни один спектральный пиксель")
+        cmd.extend(
+            [
+                "--spectrum-date",
+                spectrum_date_var.get(),
+                "--require-spectrum-pixel-selection",
+            ]
+        )
         for pixel, info in sorted(selected.items()):
             cmd.extend(["--spectrum-series-pixel", f"{info['series']}={pixel}"])
 

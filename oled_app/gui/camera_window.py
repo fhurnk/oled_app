@@ -11,6 +11,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+from datetime import date
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any, Callable, Dict, Optional
@@ -47,6 +48,12 @@ SERIES_CAMERA_STATIONS = {
         "journal_type": "CAMERA_STABILITY",
     },
 }
+
+
+def free_camera_date_folder(download_root: Path | str, capture_date: Optional[date] = None) -> Path:
+    """Keep free-camera downloads grouped by their local capture date."""
+
+    return Path(download_root).expanduser() / (capture_date or date.today()).isoformat()
 
 STABILITY_CURRENT_LIMIT_POSTROLL_S = 5.0
 
@@ -755,6 +762,8 @@ class CameraTestWindow(tk.Toplevel):
                 "station_key": camera_station_key(self.station_var.get()),
                 "download_dir": self._download_dir(),
             }
+        else:
+            self._recording_context = {"download_dir": self._download_dir()}
         self._run_async(
             "Запуск записи",
             lambda: client.start_recording(video_settings, crop),
@@ -1462,7 +1471,8 @@ class CameraTestWindow(tk.Toplevel):
                 self._series_capture_context = context
             return self._series_capture_dir
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
-        return Path(str(settings.get("download_dir") or SCRIPT_DIR / "camera_downloads")).expanduser()
+        download_root = Path(str(settings.get("download_dir") or SCRIPT_DIR / "camera_downloads"))
+        return free_camera_date_folder(download_root)
 
     def _capture_stem(self, kind: str) -> str:
         if not self.series_bound:

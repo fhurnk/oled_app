@@ -61,6 +61,25 @@ COLOR4LINE_RGB = [
 
 ORIGIN_REPORT_ROOT = ""
 
+REPORT_MODE_FULL = "full"
+REPORT_MODE_IVL = "ivl"
+REPORT_MODE_SPECTRA = "spectra"
+REPORT_MODES = (REPORT_MODE_FULL, REPORT_MODE_IVL, REPORT_MODE_SPECTRA)
+
+
+def report_mode(args: argparse.Namespace) -> str:
+    """Return the requested report composition, preserving old callers as full reports."""
+
+    return getattr(args, "report_mode", REPORT_MODE_FULL)
+
+
+def report_includes_ivl(args: argparse.Namespace) -> bool:
+    return report_mode(args) in {REPORT_MODE_FULL, REPORT_MODE_IVL}
+
+
+def report_includes_spectra(args: argparse.Namespace) -> bool:
+    return report_mode(args) in {REPORT_MODE_FULL, REPORT_MODE_SPECTRA}
+
 
 @dataclass(frozen=True)
 class MeasurementPath:
@@ -567,12 +586,15 @@ def setup_workbook() -> Workbook:
 
 
 def write_readme(ws, args: argparse.Namespace, iv_count: int, spectra_count: int) -> None:
+    includes_ivl = report_includes_ivl(args)
+    includes_spectra = report_includes_spectra(args)
     rows = [
         ("OLED report origin-preparation workbook", None),
         ("Created by", "scripts/build_report_origin_workbook.py"),
+        ("Report mode", report_mode(args)),
         ("Measurements dir", str(args.measurements_dir)),
-        ("IVL date", args.ivl_date or "latest"),
-        ("Spectrum date", args.spectrum_date or "latest"),
+        ("IVL date", (args.ivl_date or "latest") if includes_ivl else "excluded"),
+        ("Spectrum date", (args.spectrum_date or "latest") if includes_spectra else "excluded"),
         ("IVL working pixels", iv_count),
         ("Selected spectrum pixels", spectra_count),
         ("Spectrum source sheet", args.spectrum_sheet),
@@ -1064,12 +1086,15 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
     iv_root = measurements_dir / "01_IVL_VAH"
     spectra_root = measurements_dir / "02_SPECTRA"
 
-    if not iv_root.exists():
+    includes_ivl = report_includes_ivl(args)
+    includes_spectra = report_includes_spectra(args)
+
+    if includes_ivl and not iv_root.exists():
         warnings.append(f"IVL root not found: {iv_root}")
-    if not spectra_root.exists():
+    if includes_spectra and not spectra_root.exists():
         warnings.append(f"Spectrum root not found: {spectra_root}")
 
-    iv_records = collect_iv_records(iv_root, warnings, args.ivl_date) if iv_root.exists() else []
+    iv_records = collect_iv_records(iv_root, warnings, args.ivl_date) if includes_ivl and iv_root.exists() else []
     explicit_pixels = parse_spectrum_pixels(args.spectrum_pixel or [])
     explicit_series_pixels = parse_spectrum_pixels(getattr(args, "spectrum_series_pixel", None) or [])
     spectrum_records = (
@@ -1082,31 +1107,34 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
             args.spectrum_date,
             explicit_series_pixels,
         )
-        if spectra_root.exists()
+        if includes_spectra and spectra_root.exists()
         else []
     )
-    per_pixel_voltage_grids = parse_spectrum_voltage_grids(args.spectrum_voltage_grid or [])
-    spectrum_records = apply_voltage_filters(
-        spectrum_records,
-        args.voltage_start,
-        args.voltage_stop,
-        args.voltage_step,
-        per_pixel_voltage_grids,
-        warnings,
-    )
-    if not per_pixel_voltage_grids:
-        validate_voltage_grids(
+    if includes_spectra:
+        per_pixel_voltage_grids = parse_spectrum_voltage_grids(args.spectrum_voltage_grid or [])
+        spectrum_records = apply_voltage_filters(
             spectrum_records,
             args.voltage_start,
             args.voltage_stop,
             args.voltage_step,
+            per_pixel_voltage_grids,
             warnings,
         )
-    common_voltage = choose_common_voltage(spectrum_records, args.max_voltage)
-    if args.max_voltage is not None and common_voltage is None:
-        warnings.append(f"Requested common max voltage is absent from selected spectra: {args.max_voltage}")
-    if spectrum_records and common_voltage is None:
-        warnings.append("Selected spectra have no common voltage for all-pixel spectrum charts")
+        if not per_pixel_voltage_grids:
+            validate_voltage_grids(
+                spectrum_records,
+                args.voltage_start,
+                args.voltage_stop,
+                args.voltage_step,
+                warnings,
+            )
+        common_voltage = choose_common_voltage(spectrum_records, args.max_voltage)
+        if args.max_voltage is not None and common_voltage is None:
+            warnings.append(f"Requested common max voltage is absent from selected spectra: {args.max_voltage}")
+        if spectrum_records and common_voltage is None:
+            warnings.append("Selected spectra have no common voltage for all-pixel spectrum charts")
+    else:
+        common_voltage = None
 
     if args.strict and warnings:
         raise RuntimeError("Strict mode failed:\n" + "\n".join(warnings))
@@ -1123,34 +1151,38 @@ def build_workbook(args: argparse.Namespace, data: ReportData) -> tuple[Workbook
     wb = setup_workbook()
     write_readme(wb["README"], args, len(data.iv_records), len(data.spectrum_records))
 
-    iv_sheet = wb.create_sheet("IVL_U_I_PD")
-    iv_blocks = write_iv_sheet(iv_sheet, data.iv_records, include_voltage=True)
+    iv_blocks: list[IvBlock] = []
+    spectra_blocks: list[SpectrumBlock] = []
+    if report_includes_ivl(args):
+        iv_sheet = wb.create_sheet("IVL_U_I_PD")
+        iv_blocks = write_iv_sheet(iv_sheet, data.iv_records, include_voltage=True)
 
-    iv_no_voltage_sheet = wb.create_sheet("IVL_I_PD")
-    write_iv_sheet(iv_no_voltage_sheet, data.iv_records, include_voltage=False)
+        iv_no_voltage_sheet = wb.create_sheet("IVL_I_PD")
+        write_iv_sheet(iv_no_voltage_sheet, data.iv_records, include_voltage=False)
 
-    if iv_blocks and not args.no_charts:
-        add_iv_charts(wb, iv_blocks)
+        if iv_blocks and not args.no_charts:
+            add_iv_charts(wb, iv_blocks)
 
-    spectra_sheet = wb.create_sheet("Spectra_by_voltage")
-    spectra_blocks = write_spectra_by_voltage(spectra_sheet, data.spectrum_records)
+    if report_includes_spectra(args):
+        spectra_sheet = wb.create_sheet("Spectra_by_voltage")
+        spectra_blocks = write_spectra_by_voltage(spectra_sheet, data.spectrum_records)
 
-    write_common_spectra(
-        wb.create_sheet("Spectra_max_common"),
-        data.spectrum_records,
-        data.common_voltage,
-        normalized=False,
-        warnings=data.warnings,
-    )
-    write_common_spectra(
-        wb.create_sheet("Spectra_max_norm"),
-        data.spectrum_records,
-        data.common_voltage,
-        normalized=True,
-        warnings=data.warnings,
-    )
+        write_common_spectra(
+            wb.create_sheet("Spectra_max_common"),
+            data.spectrum_records,
+            data.common_voltage,
+            normalized=False,
+            warnings=data.warnings,
+        )
+        write_common_spectra(
+            wb.create_sheet("Spectra_max_norm"),
+            data.spectrum_records,
+            data.common_voltage,
+            normalized=True,
+            warnings=data.warnings,
+        )
     write_origin_plot_specs(wb, iv_blocks, data.spectrum_records, data.common_voltage)
-    if spectra_blocks and not args.no_charts:
+    if report_includes_spectra(args) and spectra_blocks and not args.no_charts:
         add_spectra_charts(wb, spectra_blocks, data.common_voltage, data.spectrum_records)
 
     write_warnings(wb, data.warnings)
@@ -1367,9 +1399,10 @@ def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
         [
             "OLED report Origin project",
             "Created by scripts/build_report_origin_workbook.py",
+            f"Report mode: {report_mode(args)}",
             f"Measurements dir: {args.measurements_dir}",
-            f"IVL date: {args.ivl_date or 'latest'}",
-            f"Spectrum date: {args.spectrum_date or 'latest'}",
+            f"IVL date: {(args.ivl_date or 'latest') if report_includes_ivl(args) else 'excluded'}",
+            f"Spectrum date: {(args.spectrum_date or 'latest') if report_includes_spectra(args) else 'excluded'}",
             f"IVL working pixels: {len(data.iv_records)}",
             f"Selected spectrum pixels: {len(data.spectrum_records)}",
             f"Spectrum source sheet: {args.spectrum_sheet}",
@@ -1629,24 +1662,26 @@ def build_origin_project(args: argparse.Namespace, data: ReportData) -> list[str
         except Exception:
             ORIGIN_REPORT_ROOT = ""
 
-        iv_sheets = create_origin_iv_book(op, data.iv_records)
-        spectrum_sheets = create_origin_spectrum_sheets(op, data.spectrum_records)
-        common_wks, norm_wks = create_origin_common_spectrum_sheets(
-            op,
-            data.spectrum_records,
-            data.common_voltage,
-            origin_warnings,
-        )
-        create_origin_iv_graphs(op, data.iv_records, iv_sheets, origin_warnings)
-        create_origin_spectrum_graphs(
-            op,
-            data.spectrum_records,
-            spectrum_sheets,
-            common_wks,
-            norm_wks,
-            data.common_voltage,
-            origin_warnings,
-        )
+        if report_includes_ivl(args):
+            iv_sheets = create_origin_iv_book(op, data.iv_records)
+            create_origin_iv_graphs(op, data.iv_records, iv_sheets, origin_warnings)
+        if report_includes_spectra(args):
+            spectrum_sheets = create_origin_spectrum_sheets(op, data.spectrum_records)
+            common_wks, norm_wks = create_origin_common_spectrum_sheets(
+                op,
+                data.spectrum_records,
+                data.common_voltage,
+                origin_warnings,
+            )
+            create_origin_spectrum_graphs(
+                op,
+                data.spectrum_records,
+                spectrum_sheets,
+                common_wks,
+                norm_wks,
+                data.common_voltage,
+                origin_warnings,
+            )
         write_origin_readme(op, args, data)
         write_origin_warnings(op, origin_warnings)
 
@@ -1699,6 +1734,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--spectrum-sheet",
         default="Processed counts per s",
         help="Spectrum worksheet to use.",
+    )
+    parser.add_argument(
+        "--report-mode",
+        choices=REPORT_MODES,
+        default=REPORT_MODE_FULL,
+        help="Report composition: full, IVL only, or spectra only.",
     )
     parser.add_argument("--ivl-date", default=None, help="Use IVL files only from this YYYY-MM-DD measurement date.")
     parser.add_argument("--spectrum-date", default=None, help="Use spectrum files only from this YYYY-MM-DD measurement date.")
