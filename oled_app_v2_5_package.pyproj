@@ -90,6 +90,7 @@
     <Content Include="docs\versions\v1.7.5.md" />
     <Content Include="docs\versions\v1.8.0-alpha.md" />
     <Content Include="docs\versions\v1.8.0-beta.md" />
+    <Content Include="docs\versions\v1.8.0.md" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">

@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.0-beta",
+    "current_version": "v1.8.0",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.0-beta.md"
+    "docs/versions/v1.8.0.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -64,9 +64,10 @@
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
-    "release_channel": "beta",
-    "current_prerelease": "v1.8.0-beta",
-    "beta_scope": "Immediate voltage-mode stability targets with symmetric setpoint buttons, guided camera capture in numbered camera-only sessions with captured-photo confirmation, live integration-time trial spectra, persistent manual spectrum start voltage, safe spectrum stopping, sequential substrate spectra, and substrate-first report selection.",
+    "release_channel": "stable",
+    "current_release": "v1.8.0",
+    "previous_prerelease": "v1.8.0-beta",
+    "release_scope": "Immediate voltage-mode stability targets with symmetric setpoint buttons, guided camera capture in numbered camera-only sessions with captured-photo confirmation, live integration-time trial spectra, persistent manual spectrum start voltage, safe spectrum stopping, sequential substrate spectra, and substrate-first report selection.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -76,7 +77,7 @@
       "CHANGELOG.md",
       "docs/versions/vX.Y.Z[-PRERELEASE].md"
     ],
-    "release_command": ".\\env\\Scripts\\python.exe .\\scripts\\create_github_release.py vX.Y.Z[-PRERELEASE] --prerelease --latest false",
+    "release_command": ".\\env\\Scripts\\python.exe .\\scripts\\create_github_release.py vX.Y.Z",
     "publication_execution": "Run gh authentication checks, branch/tag pushes, and GitHub Release create/edit outside the restricted Codex sandbox with access to the system keyring.",
     "tag_required": true,
     "github_release_required": true
