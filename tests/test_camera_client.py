@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import threading
 import tempfile
 import unittest
@@ -25,6 +26,7 @@ from oled_app.gui.camera_window import (
     build_series_capture_stem,
     center_crop_dimensions,
     decode_liveview_frame,
+    load_local_photo_preview,
     stability_current_limit_reached,
     stability_postroll_remaining_s,
 )
@@ -33,6 +35,53 @@ from oled_app.series.paths import ensure_camera_session_folder
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_downloaded_photo_preview_is_loaded_and_fitted(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "captured.jpg"
+            Image.new("RGB", (1600, 1200), "navy").save(path)
+            preview = load_local_photo_preview(path, (800, 500))
+
+        self.assertEqual(preview.size, (667, 500))
+
+    def test_queued_liveview_frame_does_not_replace_captured_photo(self) -> None:
+        frames = queue.Queue()
+        frames.put(b"stale-liveview-frame")
+        rendered = []
+        scheduled = []
+        camera = SimpleNamespace(
+            _closed=False,
+            _frame_queue=frames,
+            _photo_preview_active=True,
+            _last_frame=None,
+            _render_frame=lambda frame: rendered.append(frame),
+            after=lambda delay, callback: scheduled.append((delay, callback)),
+            _frame_after_id=None,
+            _consume_frames=lambda: None,
+        )
+
+        CameraTestWindow._consume_frames(camera)
+
+        self.assertEqual(rendered, [])
+        self.assertTrue(frames.empty())
+        self.assertEqual(scheduled[0][0], 50)
+
+    def test_guided_before_photo_passes_image_to_confirmation_dialog(self) -> None:
+        finished = []
+        camera = SimpleNamespace(_finish_guided_measurement=lambda message: finished.append(message))
+        photo_path = Path("captured.jpg")
+
+        with patch("oled_app.gui.camera_window.ask_workflow_continue", return_value=False) as ask:
+            CameraTestWindow._guided_before_photo_complete(
+                camera,
+                photo_path,
+                "ivl",
+                "CG1_1_1",
+                lambda: None,
+            )
+
+        self.assertEqual(ask.call_args.kwargs["image_path"], photo_path)
+        self.assertEqual(len(finished), 1)
+
     def test_camera_sessions_use_separate_numbered_measurement_folder(self) -> None:
         pixel_row = {
             "Quarter number": 1,

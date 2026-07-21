@@ -96,7 +96,35 @@ def stability_postroll_remaining_s(
     return max(0.0, STABILITY_CURRENT_LIMIT_POSTROLL_S - elapsed_after_event)
 
 
-def ask_workflow_continue(parent, title: str, message: str) -> bool:
+def load_local_photo_preview(path: Path | str, max_size: tuple[int, int]):
+    """Load and resize a downloaded photo for Tk previews without cropping it."""
+
+    if Image is None:
+        raise RuntimeError("Для показа фотографии требуется Pillow.")
+    width = max(1, min(int(max_size[0]), 8192))
+    height = max(1, min(int(max_size[1]), 8192))
+    with Image.open(path) as source:
+        source.load()
+        image = source.convert("RGB")
+    scale = min(width / image.width, height / image.height)
+    target = (
+        max(1, min(width, int(image.width * scale + 0.5))),
+        max(1, min(height, int(image.height * scale + 0.5))),
+    )
+    if target == image.size:
+        return image
+    try:
+        return image.resize(target, Image.Resampling.LANCZOS)
+    except OSError:
+        return image.resize(target, Image.Resampling.BILINEAR)
+
+
+def ask_workflow_continue(
+    parent,
+    title: str,
+    message: str,
+    image_path: Optional[Path | str] = None,
+) -> bool:
     """Show the guided camera workflow gate with explicit Next and Cancel actions."""
 
     dialog = tk.Toplevel(parent)
@@ -106,6 +134,21 @@ def ask_workflow_continue(parent, title: str, message: str) -> bool:
     result = {"continue": False}
     frame = ttk.Frame(dialog, padding=18)
     frame.pack(fill="both", expand=True)
+
+    if image_path is not None:
+        try:
+            image = load_local_photo_preview(image_path, (840, 500))
+            preview = ImageTk.PhotoImage(image=image, master=dialog)
+            dialog._captured_photo_preview = preview
+            ttk.Label(frame, image=preview, anchor="center").pack(fill="both", expand=True, pady=(0, 14))
+        except Exception as exc:
+            ttk.Label(
+                frame,
+                text=f"Фото сохранено, но предпросмотр не загрузился: {exc}",
+                foreground="#B00020",
+                wraplength=780,
+                justify="left",
+            ).pack(anchor="w", pady=(0, 14))
     ttk.Label(frame, text=message, wraplength=460, justify="left").pack(anchor="w")
     buttons = ttk.Frame(frame)
     buttons.pack(fill="x", pady=(16, 0))
@@ -118,7 +161,17 @@ def ask_workflow_continue(parent, title: str, message: str) -> bool:
     ttk.Button(buttons, text="Далее", command=lambda: close(True)).pack(side="right", padx=(0, 8))
     dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
     dialog.grab_set()
-    fit_window_to_screen(dialog, 520, 190, 420, 150, horizontal_margin=40, vertical_margin=70)
+    requested_width = 900 if image_path is not None else 520
+    requested_height = 720 if image_path is not None else 190
+    fit_window_to_screen(
+        dialog,
+        requested_width,
+        requested_height,
+        420,
+        150,
+        horizontal_margin=40,
+        vertical_margin=70,
+    )
     parent.wait_window(dialog)
     return bool(result["continue"])
 
@@ -253,6 +306,7 @@ class CameraTestWindow(tk.Toplevel):
         self._frame_queue: queue.Queue[bytes] = queue.Queue(maxsize=1)
         self._canvas_image = None
         self._last_frame: Optional[bytes] = None
+        self._photo_preview_active = False
         self._last_render_error = ""
         self._render_error_count = 0
         self._poll_after_id = None
@@ -1013,6 +1067,7 @@ class CameraTestWindow(tk.Toplevel):
     def _start_local_stream(self) -> None:
         if not self.client:
             return
+        self._photo_preview_active = False
         if self._stream_thread and self._stream_thread.is_alive():
             return
         stop_event = threading.Event()
@@ -1071,12 +1126,13 @@ class CameraTestWindow(tk.Toplevel):
                 frame = self._frame_queue.get_nowait()
             except queue.Empty:
                 break
-        if frame:
+        if frame and not self._photo_preview_active:
             self._last_frame = frame
             self._render_frame(frame)
         self._frame_after_id = self.after(50, self._consume_frames)
 
     def _render_frame(self, frame: bytes) -> None:
+        self._photo_preview_active = False
         try:
             width = max(self.preview_canvas.winfo_width(), 200)
             height = max(self.preview_canvas.winfo_height(), 160)
@@ -1108,24 +1164,13 @@ class CameraTestWindow(tk.Toplevel):
         if Image is None or ImageTk is None:
             return
         try:
-            with Image.open(path) as source:
-                source.load()
-                image = source.convert("RGB")
             width = max(self.preview_canvas.winfo_width(), 200)
             height = max(self.preview_canvas.winfo_height(), 160)
-            scale = min(width / image.width, height / image.height)
-            target = (
-                max(1, min(width, int(image.width * scale + 0.5))),
-                max(1, min(height, int(image.height * scale + 0.5))),
-            )
-            if target != image.size:
-                try:
-                    image = image.resize(target, Image.Resampling.LANCZOS)
-                except OSError:
-                    image = image.resize(target, Image.Resampling.BILINEAR)
+            image = load_local_photo_preview(path, (width, height))
             photo = ImageTk.PhotoImage(image=image, master=self.preview_canvas)
             self._canvas_image = photo
             self._last_frame = None
+            self._photo_preview_active = True
             self.preview_canvas.delete("all")
             self.preview_canvas.create_image(
                 self.preview_canvas.winfo_width() // 2,
@@ -1155,6 +1200,7 @@ class CameraTestWindow(tk.Toplevel):
         self._update_buttons()
 
     def _show_placeholder(self, text: str) -> None:
+        self._photo_preview_active = False
         self.preview_canvas.delete("all")
         self.preview_canvas.create_text(
             max(self.preview_canvas.winfo_width() // 2, 160),
@@ -1522,14 +1568,15 @@ class CameraTestWindow(tk.Toplevel):
             "Фото до измерения",
             "Фото до измерения сохранено",
             "photo_before",
-            after_complete=lambda _path: self._guided_before_photo_complete(
-                station_key, pixel_id, measurement
+            after_complete=lambda path: self._guided_before_photo_complete(
+                path, station_key, pixel_id, measurement
             ),
             on_error=self._guided_measurement_failed,
         )
 
     def _guided_before_photo_complete(
         self,
+        photo_path: Path,
         station_key: str,
         pixel_id: str,
         measurement: Callable[[], Optional[Dict[str, Any]]],
@@ -1541,6 +1588,7 @@ class CameraTestWindow(tk.Toplevel):
             "Фото до измерения сохранено. Проверьте положение образца и изображение.\n\n"
             "Нажмите «Далее», чтобы автоматически начать видео и измерение, "
             "или «Отмена», чтобы завершить сценарий.",
+            image_path=photo_path,
         )
         if not should_continue:
             self._finish_guided_measurement("Автоматический запуск отменён после начального фото.")
