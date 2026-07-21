@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.0",
+    "current_version": "v1.8.1",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.0.md"
+    "docs/versions/v1.8.1.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -65,9 +65,9 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "stable",
-    "current_release": "v1.8.0",
+    "current_release": "v1.8.1",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Immediate voltage-mode stability targets with symmetric setpoint buttons, guided camera capture in numbered camera-only sessions with captured-photo confirmation, live integration-time trial spectra, persistent manual spectrum start voltage, safe spectrum stopping, sequential substrate spectra, and substrate-first report selection.",
+    "release_scope": "Stable v1.8 workflows with the physical two-by-two substrate pixel map corrected to 1 2 / 4 3 in setup and measurement status views.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.0`
+- Current app version: `v1.8.1`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.0`. It includes immediate voltage-mode stability targets with symmetric setpoint buttons, numbered camera-only measurement sessions with captured-photo confirmation, live integration-time trial spectra, persistent manual spectrum start voltage, and safe spectrum stopping.
+The current stable release is `v1.8.1`. It keeps the `v1.8.0` workflows and corrects the physical two-by-two pixel map to `1 2 / 4 3` in both series setup and measurement status views.
 
 ## Main Entry Points
 

@@ -345,7 +345,7 @@ def setup_pixel_rect(x: float, y: float, w: float, h: float, pixel_number: int):
     inner_w = (w - 2 * pad_x - gap) / 2
     inner_h = (h - pad_top - pad_bottom - gap) / 2
     row = 0 if pixel_number in {1, 2} else 1
-    col = 0 if pixel_number in {1, 3} else 1
+    col = 0 if pixel_number in {1, 4} else 1
     return x + pad_x + col * (inner_w + gap), y + pad_top + row * (inner_h + gap), inner_w, inner_h
 
 

@@ -2,11 +2,13 @@ import unittest
 from types import SimpleNamespace
 
 from oled_app.gui.app import OLEDModularApp
+from oled_app.gui.measurement_menu import pixel_rect_inside_substrate
 from oled_app.gui.spectrum_window import (
     group_pixels_by_substrate,
     initial_spectrum_start_value,
     params_for_pixel_opening,
 )
+from oled_app.gui.start_screen import setup_pixel_rect
 from oled_app.measurements.spectrum import SpectrumParams
 from oled_app.series.layout import build_holder_layout
 
@@ -20,6 +22,20 @@ class _FakeJournal:
 
 
 class HolderLayoutTests(unittest.TestCase):
+    def test_pixels_use_physical_two_by_two_order(self):
+        for rect_function in (setup_pixel_rect, pixel_rect_inside_substrate):
+            with self.subTest(rect_function=rect_function.__name__):
+                rectangles = {
+                    pixel: rect_function(0, 0, 100, 60, pixel)
+                    for pixel in range(1, 5)
+                }
+                self.assertEqual(rectangles[1][0], rectangles[4][0])
+                self.assertEqual(rectangles[2][0], rectangles[3][0])
+                self.assertEqual(rectangles[1][1], rectangles[2][1])
+                self.assertEqual(rectangles[4][1], rectangles[3][1])
+                self.assertLess(rectangles[1][0], rectangles[2][0])
+                self.assertLess(rectangles[1][1], rectangles[4][1])
+
     def test_physical_substrate_order_matches_holder(self):
         width = 930
         layout = build_holder_layout(width, 560)

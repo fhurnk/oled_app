@@ -309,7 +309,7 @@ def pixel_rect_inside_substrate(x: float, y: float, w: float, h: float, pixel_nu
     inner_w = (w - 2 * pad_x - gap) / 2
     inner_h = (h - pad_top - pad_bottom - gap) / 2
     row = 0 if pixel_number in {1, 2} else 1
-    col = 0 if pixel_number in {1, 3} else 1
+    col = 0 if pixel_number in {1, 4} else 1
     px = x + pad_x + col * (inner_w + gap)
     py = y + pad_top + row * (inner_h + gap)
     return px, py, inner_w, inner_h
