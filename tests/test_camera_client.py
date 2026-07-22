@@ -49,6 +49,39 @@ class CameraClientHelpersTests(unittest.TestCase):
 
         self.assertEqual(preview.size, (667, 500))
 
+    def test_downloaded_photo_preview_decodes_from_memory_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "full-size.jpg"
+            Image.new("RGB", (2400, 1600), "navy").save(path)
+            real_open = Image.open
+
+            def fail_for_lazy_path(source, *args, **kwargs):
+                if isinstance(source, (str, Path)):
+                    raise OSError(22, "Invalid argument")
+                return real_open(source, *args, **kwargs)
+
+            with patch("oled_app.gui.camera_window.Image.open", side_effect=fail_for_lazy_path):
+                preview = load_local_photo_preview(path, (840, 500))
+
+        self.assertEqual(preview.size, (750, 500))
+
+    def test_downloaded_photo_preview_retries_transient_onedrive_read_error(self) -> None:
+        encoded = BytesIO()
+        Image.new("RGB", (1600, 1200), "navy").save(encoded, format="JPEG")
+
+        with (
+            patch.object(
+                Path,
+                "read_bytes",
+                side_effect=[OSError(22, "Invalid argument"), encoded.getvalue()],
+            ),
+            patch("oled_app.gui.camera_window.time.sleep") as sleep,
+        ):
+            preview = load_local_photo_preview(Path("captured.jpg"), (800, 500))
+
+        self.assertEqual(preview.size, (667, 500))
+        sleep.assert_called_once_with(0.05)
+
     def test_queued_liveview_frame_does_not_replace_captured_photo(self) -> None:
         frames = queue.Queue()
         frames.put(b"stale-liveview-frame")

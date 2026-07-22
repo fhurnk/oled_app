@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.8.3"
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 
 CONFIG_FILE = "series_config.json"

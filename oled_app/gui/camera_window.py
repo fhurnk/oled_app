@@ -56,6 +56,7 @@ def free_camera_date_folder(download_root: Path | str, capture_date: Optional[da
     return Path(download_root).expanduser() / (capture_date or date.today()).isoformat()
 
 STABILITY_CURRENT_LIMIT_POSTROLL_S = 5.0
+PHOTO_PREVIEW_READ_ATTEMPTS = 4
 
 
 def camera_station_key(value: str) -> str:
@@ -103,6 +104,21 @@ def stability_postroll_remaining_s(
     return max(0.0, STABILITY_CURRENT_LIMIT_POSTROLL_S - elapsed_after_event)
 
 
+def read_local_file_snapshot(path: Path | str) -> bytes:
+    """Read a newly downloaded file, tolerating brief OneDrive filter races."""
+
+    local_path = Path(path).expanduser()
+    for attempt in range(PHOTO_PREVIEW_READ_ATTEMPTS):
+        try:
+            return local_path.read_bytes()
+        except OSError as exc:
+            retryable = exc.errno in {13, 22} or getattr(exc, "winerror", None) in {32, 33}
+            if not retryable or attempt + 1 >= PHOTO_PREVIEW_READ_ATTEMPTS:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+    raise RuntimeError("Не удалось прочитать сохранённую фотографию.")
+
+
 def load_local_photo_preview(path: Path | str, max_size: tuple[int, int]):
     """Load and resize a downloaded photo for Tk previews without cropping it."""
 
@@ -110,20 +126,13 @@ def load_local_photo_preview(path: Path | str, max_size: tuple[int, int]):
         raise RuntimeError("Для показа фотографии требуется Pillow.")
     width = max(1, min(int(max_size[0]), 8192))
     height = max(1, min(int(max_size[1]), 8192))
-    with Image.open(path) as source:
-        source.load()
-        image = source.convert("RGB")
-    scale = min(width / image.width, height / image.height)
-    target = (
-        max(1, min(width, int(image.width * scale + 0.5))),
-        max(1, min(height, int(image.height * scale + 0.5))),
-    )
-    if target == image.size:
-        return image
-    try:
-        return image.resize(target, Image.Resampling.LANCZOS)
-    except OSError:
-        return image.resize(target, Image.Resampling.BILINEAR)
+    # OneDrive may reject Pillow's deferred reads from a newly replaced file on
+    # Windows with OSError(22).  Take an independent in-memory snapshot first,
+    # then decode and resize without keeping the synchronized file open.
+    encoded = read_local_file_snapshot(path)
+    with Image.open(io.BytesIO(encoded)) as source:
+        source.thumbnail((width, height), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        return source.convert("RGB").copy()
 
 
 def ask_workflow_continue(
@@ -348,7 +357,7 @@ class CameraTestWindow(tk.Toplevel):
         ).pack(side="left")
         ttk.Label(
             header,
-            text="BETA · привязка к станции и пикселю" if self.series_bound else "BETA · свободная съёмка и файлы",
+            text="Привязка к станции и пикселю" if self.series_bound else "Свободная съёмка и файлы",
             foreground="#0969DA" if self.series_bound else "#57606A",
             font=("Segoe UI", 10, "bold"),
         ).pack(side="left", padx=(12, 0))

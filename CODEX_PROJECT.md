@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.2`
+- Current app version: `v1.8.3`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.2`. It adds full/IVL-only/spectra-only reports, context-sensitive spectrum selectors, and date folders for free-camera downloads.
+The current stable release is `v1.8.3`. It adds reliable memory-backed saved-photo previews on OneDrive and removes beta labels while retaining the manual LiveView workflow from v1.8.2.
 
 ## Main Entry Points
 
