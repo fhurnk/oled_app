@@ -151,6 +151,60 @@ Choice: 2 RAW + Large Fine JPEG
         self.assertEqual(controls[0]["choices"], ["Large Fine JPEG", "Medium Fine JPEG"])
         self.assertEqual(controls[1]["choices"], ["Large", "Medium"])
 
+    def test_exposure_discovery_uses_only_writable_camera_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = CameraController(ServiceConfig(data_dir=folder))
+            responses = [
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    (
+                        "/main/capturesettings/aperture\n"
+                        "/main/imgsettings/iso\n"
+                        "/main/capturesettings/shutterspeed\n"
+                        "/main/capturesettings/exposurecompensation\n"
+                    ),
+                    "",
+                ),
+                subprocess.CompletedProcess([], 0, "Current: 100\nChoice: 0 100\nChoice: 1 400\n", ""),
+                subprocess.CompletedProcess([], 0, "Current: 1/30\nChoice: 0 1/30\nChoice: 1 1/4\n", ""),
+                subprocess.CompletedProcess([], 0, "Readonly: 1\nCurrent: 4\nChoice: 0 4\nChoice: 1 5.6\n", ""),
+                subprocess.CompletedProcess([], 0, "Current: 0\nChoice: 0 -1\nChoice: 1 0\nChoice: 2 +1\n", ""),
+            ]
+            with patch.object(controller, "_run_command", side_effect=responses):
+                controls = controller._discover_exposure_controls()
+
+        self.assertEqual([control["key"] for control in controls], ["iso", "shutterspeed", "exposurecompensation"])
+        self.assertEqual(controls[0]["label"], "ISO")
+        self.assertEqual(controls[1]["label"], "Выдержка")
+        self.assertEqual(controls[1]["choices"], ["1/30", "1/4"])
+
+    def test_exposure_setting_is_applied_verified_and_cached(self) -> None:
+        path = "/main/imgsettings/iso"
+        with tempfile.TemporaryDirectory() as folder:
+            controller = CameraController(ServiceConfig(data_dir=folder))
+            controller._exposure_controls = {
+                path: {
+                    "path": path,
+                    "key": "iso",
+                    "label": "ISO",
+                    "current": "100",
+                    "choices": ["100", "400"],
+                }
+            }
+            responses = [
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "Current: 400\nChoice: 0 100\nChoice: 1 400\n", ""),
+            ]
+            with patch.object(controller, "_run_command", side_effect=responses) as run_command:
+                controller._apply_photo_settings({path: "400"})
+
+        self.assertEqual(
+            run_command.call_args_list[0].args[0],
+            ["gphoto2", "--set-config-value", f"{path}=400"],
+        )
+        self.assertEqual(controller._exposure_controls[path]["current"], "400")
+
     def test_video_discovery_uses_only_camera_reported_quality_and_fps(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             controller = CameraController(ServiceConfig(data_dir=folder))

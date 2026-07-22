@@ -310,6 +310,7 @@ class CameraTestWindow(tk.Toplevel):
         self.capability_data: Dict[str, Any] = {}
         self.remote_files: Dict[str, RemoteFile] = {}
         self.photo_quality_vars: Dict[str, tk.StringVar] = {}
+        self.photo_exposure_vars: Dict[str, tk.StringVar] = {}
         self.video_quality_control_path = ""
         self.video_fps_control_path = ""
         self.video_quality_by_label: Dict[str, str] = {}
@@ -528,6 +529,17 @@ class CameraTestWindow(tk.Toplevel):
             variable=self.keep_remote_var,
             command=self._save_quality_preferences,
         ).pack(anchor="w", pady=(6, 0))
+
+        exposure_box = ttk.LabelFrame(controls_frame, text="Экспозиция полноразмерного фото", padding=8)
+        exposure_box.pack(fill="x", pady=(10, 0))
+        self.photo_exposure_frame = ttk.Frame(exposure_box)
+        self.photo_exposure_frame.pack(fill="x")
+        ttk.Label(
+            self.photo_exposure_frame,
+            text="ISO, выдержка и другие параметры появятся после опроса камеры.",
+            wraplength=360,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
 
         crop_box = ttk.LabelFrame(controls_frame, text="Центральный кроп", padding=8)
         crop_box.pack(fill="x", pady=(10, 0))
@@ -901,42 +913,27 @@ class CameraTestWindow(tk.Toplevel):
 
     def _apply_capabilities(self, capabilities: Dict[str, Any]) -> None:
         self.capability_data = capabilities or {}
-        for child in self.photo_quality_frame.winfo_children():
-            child.destroy()
-        self.photo_quality_vars = {}
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
         saved_photo = dict(settings.get("photo_quality_settings") or {})
-        controls = list(capabilities.get("photo_controls") or [])
-        if not controls:
-            ttk.Label(
-                self.photo_quality_frame,
-                text="Камера не сообщила переключаемые JPEG-параметры; используется её текущее качество.",
-                wraplength=360,
-                justify="left",
-            ).grid(row=0, column=0, columnspan=2, sticky="w")
-        for row, control in enumerate(controls):
-            path = str(control.get("path") or "")
-            choices = [str(value) for value in control.get("choices") or []]
-            if not path or not choices:
-                continue
-            selected = str(saved_photo.get(path) or control.get("current") or choices[0])
-            if selected not in choices:
-                selected = str(control.get("current") or choices[0])
-            variable = tk.StringVar(value=selected)
-            self.photo_quality_vars[path] = variable
-            ttk.Label(self.photo_quality_frame, text=str(control.get("label") or "Качество фото") + ":").grid(
-                row=row, column=0, sticky="w", pady=2
-            )
-            combo = ttk.Combobox(
-                self.photo_quality_frame,
-                textvariable=variable,
-                values=choices,
-                state="readonly",
-                width=30,
-            )
-            combo.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=2)
-            combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
-        self.photo_quality_frame.columnconfigure(1, weight=1)
+        saved_exposure = dict(settings.get("photo_exposure_settings") or {})
+        self.photo_quality_vars = self._configure_photo_control_group(
+            self.photo_quality_frame,
+            list(capabilities.get("photo_controls") or []),
+            saved_photo,
+            "Камера не сообщила переключаемые JPEG-параметры; используется её текущее качество.",
+            "Качество фото",
+        )
+        self.photo_exposure_vars = self._configure_photo_control_group(
+            self.photo_exposure_frame,
+            list(capabilities.get("exposure_controls") or []),
+            saved_exposure,
+            (
+                "Камера не сообщила изменяемые параметры экспозиции. "
+                "Переведите диск режимов в M и нажмите «Переинициализировать камеру»."
+            ),
+            "Экспозиция",
+            note=str(capabilities.get("exposure_note") or ""),
+        )
 
         saved_video = dict(settings.get("video_camera_settings") or {})
         self.video_quality_control_path, self.video_quality_by_label = self._configure_video_control(
@@ -955,6 +952,51 @@ class CameraTestWindow(tk.Toplevel):
         )
         self._update_video_source_text()
         self._save_quality_preferences()
+
+    def _configure_photo_control_group(
+        self,
+        frame: ttk.Frame,
+        controls: list[Dict[str, Any]],
+        saved: Dict[str, str],
+        unavailable_text: str,
+        default_label: str,
+        note: str = "",
+    ) -> Dict[str, tk.StringVar]:
+        for child in frame.winfo_children():
+            child.destroy()
+        variables: Dict[str, tk.StringVar] = {}
+        if not controls:
+            ttk.Label(frame, text=unavailable_text, wraplength=360, justify="left").grid(
+                row=0, column=0, columnspan=2, sticky="w"
+            )
+        for row, control in enumerate(controls):
+            path = str(control.get("path") or "")
+            choices = [str(value) for value in control.get("choices") or []]
+            if not path or not choices:
+                continue
+            selected = str(saved.get(path) or control.get("current") or choices[0])
+            if selected not in choices:
+                selected = str(control.get("current") or choices[0])
+            variable = tk.StringVar(value=selected)
+            variables[path] = variable
+            ttk.Label(frame, text=str(control.get("label") or default_label) + ":").grid(
+                row=row, column=0, sticky="w", pady=2
+            )
+            combo = ttk.Combobox(
+                frame,
+                textvariable=variable,
+                values=choices,
+                state="readonly",
+                width=30,
+            )
+            combo.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=2)
+            combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
+        if note and controls:
+            ttk.Label(frame, text=note, foreground="#555555", wraplength=360, justify="left").grid(
+                row=len(controls), column=0, columnspan=2, sticky="w", pady=(5, 0)
+            )
+        frame.columnconfigure(1, weight=1)
+        return variables
 
     @staticmethod
     def _configure_video_control(
@@ -980,7 +1022,13 @@ class CameraTestWindow(tk.Toplevel):
         return path, labels
 
     def _selected_photo_settings(self) -> Dict[str, str]:
-        return {path: variable.get() for path, variable in self.photo_quality_vars.items() if variable.get()}
+        selected = {
+            path: variable.get()
+            for variables in (self.photo_quality_vars, self.photo_exposure_vars)
+            for path, variable in variables.items()
+            if variable.get()
+        }
+        return selected
 
     def _selected_video_settings(self) -> Dict[str, str]:
         selected: Dict[str, str] = {}
@@ -1044,7 +1092,13 @@ class CameraTestWindow(tk.Toplevel):
             settings["crop_height_percent"] = crop["height_percent"]
         settings["video_camera_settings"] = self._selected_video_settings()
         if self.photo_quality_vars:
-            settings["photo_quality_settings"] = self._selected_photo_settings()
+            settings["photo_quality_settings"] = {
+                path: variable.get() for path, variable in self.photo_quality_vars.items() if variable.get()
+            }
+        if self.photo_exposure_vars:
+            settings["photo_exposure_settings"] = {
+                path: variable.get() for path, variable in self.photo_exposure_vars.items() if variable.get()
+            }
         self.app.app_settings["camera"] = settings
         save_app_settings(self.app.app_settings)
 
@@ -1455,7 +1509,13 @@ class CameraTestWindow(tk.Toplevel):
         settings["crop_height_percent"] = crop["height_percent"]
         settings["video_camera_settings"] = self._selected_video_settings()
         if self.photo_quality_vars:
-            settings["photo_quality_settings"] = self._selected_photo_settings()
+            settings["photo_quality_settings"] = {
+                path: variable.get() for path, variable in self.photo_quality_vars.items() if variable.get()
+            }
+        if self.photo_exposure_vars:
+            settings["photo_exposure_settings"] = {
+                path: variable.get() for path, variable in self.photo_exposure_vars.items() if variable.get()
+            }
         self.app.app_settings["camera"] = settings
         save_app_settings(self.app.app_settings)
 

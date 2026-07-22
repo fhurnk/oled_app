@@ -44,6 +44,16 @@ PHOTO_CONFIG_LABELS = {
     "quality": "Качество фото",
 }
 PHOTO_CONFIG_PRIORITY = {name: index for index, name in enumerate(PHOTO_CONFIG_LABELS)}
+EXPOSURE_CONFIG_LABELS = {
+    "iso": "ISO",
+    "shutterspeed": "Выдержка",
+    "shutterspeed2": "Выдержка",
+    "aperture": "Диафрагма",
+    "aperture2": "Диафрагма",
+    "exposurecompensation": "Экспокоррекция",
+    "exposurebiascompensation": "Экспокоррекция",
+}
+EXPOSURE_CONFIG_PRIORITY = {name: index for index, name in enumerate(EXPOSURE_CONFIG_LABELS)}
 VIDEO_CONFIG_LABELS = {
     "liveviewsize": ("quality", "Качество/размер LiveView"),
     "output": ("quality", "Качество/размер LiveView Canon"),
@@ -273,6 +283,7 @@ class CameraController:
         self._liveview_clients = 0
         self._liveview_idle_timer: Optional[threading.Timer] = None
         self._photo_controls: Dict[str, Dict[str, Any]] = {}
+        self._exposure_controls: Dict[str, Dict[str, Any]] = {}
         self._video_controls: Dict[str, Dict[str, Any]] = {}
         self._viewfinder_control_path = ""
         self._viewfinder_off_verified: Optional[bool] = None
@@ -292,7 +303,7 @@ class CameraController:
         self._index_existing_files()
 
     def health(self) -> Dict[str, Any]:
-        return {"success": True, "service": "camera", "status": "ok", "version": "1.8.0-alpha"}
+        return {"success": True, "service": "camera", "status": "ok", "version": "1.8.4"}
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
@@ -365,6 +376,11 @@ class CameraController:
                 LOGGER.exception("Could not discover camera photo quality controls")
                 photo_controls = []
             try:
+                exposure_controls = self._discover_exposure_controls()
+            except Exception:
+                LOGGER.exception("Could not discover camera exposure controls")
+                exposure_controls = []
+            try:
                 video_controls = self._discover_video_controls()
             except Exception:
                 LOGGER.exception("Could not discover camera video controls")
@@ -373,6 +389,7 @@ class CameraController:
                 self.camera_connected = True
                 self.camera_model = model or "Canon / gPhoto2 camera"
                 self._photo_controls = {str(item["path"]): item for item in photo_controls}
+                self._exposure_controls = {str(item["path"]): item for item in exposure_controls}
                 self._video_controls = {str(item["path"]): item for item in video_controls}
                 self._latest_frame_dimensions = None
                 self._viewfinder_off_verified = None
@@ -386,6 +403,7 @@ class CameraController:
             if not self.camera_connected:
                 raise CameraServiceError("Сначала инициализируйте камеру.", "CAMERA_NOT_FOUND")
             controls = [dict(value) for value in self._photo_controls.values()]
+            exposure_controls = [dict(value) for value in self._exposure_controls.values()]
             video_controls = [dict(value) for value in self._video_controls.values()]
             dimensions = list(self._latest_frame_dimensions) if self._latest_frame_dimensions else None
         return {
@@ -393,6 +411,11 @@ class CameraController:
             "camera_model": self.camera_model,
             "photo_controls": controls,
             "photo_note": "Показываются только безопасные JPEG-варианты, обнаруженные у подключённой камеры.",
+            "exposure_controls": exposure_controls,
+            "exposure_note": (
+                "Показываются только доступные для изменения ISO, выдержка, диафрагма и экспокоррекция. "
+                "После смены режима на диске камеры выполните повторную инициализацию."
+            ),
             "video_quality_controls": [item for item in video_controls if item.get("role") == "quality"],
             "video_fps_controls": [item for item in video_controls if item.get("role") == "fps"],
             "liveview_resolution": dimensions,
@@ -400,6 +423,17 @@ class CameraController:
         }
 
     def _discover_photo_controls(self) -> list[Dict[str, Any]]:
+        return self._discover_choice_controls(PHOTO_CONFIG_LABELS, PHOTO_CONFIG_PRIORITY, jpeg_only=True)
+
+    def _discover_exposure_controls(self) -> list[Dict[str, Any]]:
+        return self._discover_choice_controls(EXPOSURE_CONFIG_LABELS, EXPOSURE_CONFIG_PRIORITY)
+
+    def _discover_choice_controls(
+        self,
+        labels: Dict[str, str],
+        priorities: Dict[str, int],
+        jpeg_only: bool = False,
+    ) -> list[Dict[str, Any]]:
         result = self._run_command(
             [self.config.gphoto2_bin, "--list-config"],
             self.config.command_timeout_s,
@@ -415,9 +449,9 @@ class CameraController:
             if not path.startswith("/") or path in seen:
                 continue
             basename = re.sub(r"[^a-z0-9]", "", path.rsplit("/", 1)[-1].lower())
-            if basename not in PHOTO_CONFIG_LABELS:
+            if basename not in labels:
                 continue
-            candidates.append((PHOTO_CONFIG_PRIORITY[basename], path, basename))
+            candidates.append((priorities[basename], path, basename))
             seen.add(path)
 
         controls: list[Dict[str, Any]] = []
@@ -431,7 +465,7 @@ class CameraController:
                 continue
             control = parse_gphoto_config(path, details.stdout)
             choices = [str(value) for value in control.get("choices") or []]
-            if basename == "imageformat":
+            if jpeg_only and basename == "imageformat":
                 choices = [value for value in choices if "jpeg" in value.lower() and "raw" not in value.lower()]
             if control.get("readonly") or len(choices) < 2:
                 continue
@@ -442,7 +476,7 @@ class CameraController:
                 {
                     "path": path,
                     "key": basename,
-                    "label": PHOTO_CONFIG_LABELS[basename],
+                    "label": labels[basename],
                     "current": current,
                     "choices": choices,
                 }
@@ -453,14 +487,17 @@ class CameraController:
         if not requested:
             return
         with self._lock:
-            controls = {path: dict(value) for path, value in self._photo_controls.items()}
+            controls = {
+                path: dict(value)
+                for path, value in {**self._photo_controls, **self._exposure_controls}.items()
+            }
         for path, requested_value in requested.items():
             control = controls.get(str(path))
             value = str(requested_value)
             if not control:
-                raise CameraServiceError("Параметр качества не поддерживается этой камерой.", "UNSUPPORTED_CAMERA_SETTING", str(path), 400)
+                raise CameraServiceError("Параметр фото не поддерживается этой камерой.", "UNSUPPORTED_CAMERA_SETTING", str(path), 400)
             if value not in control.get("choices", []):
-                raise CameraServiceError("Недопустимое качество для подключённой камеры.", "UNSUPPORTED_CAMERA_SETTING", value, 400)
+                raise CameraServiceError("Недопустимое значение параметра фото.", "UNSUPPORTED_CAMERA_SETTING", value, 400)
             applied = self._run_command(
                 [self.config.gphoto2_bin, "--set-config-value", f"{path}={value}"],
                 self.config.command_timeout_s,
@@ -468,7 +505,7 @@ class CameraController:
             )
             if applied.returncode != 0:
                 details = (applied.stderr or applied.stdout).strip()
-                raise CameraServiceError("Камера не применила выбранное качество фото.", "CAMERA_SETTING_FAILED", details)
+                raise CameraServiceError("Камера не применила выбранный параметр фото.", "CAMERA_SETTING_FAILED", details)
             verify = self._run_command(
                 [self.config.gphoto2_bin, "--get-config", str(path)],
                 self.config.command_timeout_s,
@@ -478,13 +515,15 @@ class CameraController:
             actual = str(verified.get("current") or value)
             if actual != value:
                 raise CameraServiceError(
-                    "Камера применила другое качество фото.",
+                    "Камера применила другое значение параметра фото.",
                     "CAMERA_SETTING_FAILED",
                     f"Запрошено: {value}; установлено: {actual}",
                 )
             with self._lock:
                 if str(path) in self._photo_controls:
                     self._photo_controls[str(path)]["current"] = actual
+                if str(path) in self._exposure_controls:
+                    self._exposure_controls[str(path)]["current"] = actual
 
     def _discover_video_controls(self) -> list[Dict[str, Any]]:
         result = self._run_command(
@@ -1471,7 +1510,7 @@ class CameraController:
 
 def create_app(config: ServiceConfig) -> FastAPI:
     controller = CameraController(config)
-    app = FastAPI(title="OLED Canon Camera Service", version="1.8.0-alpha")
+    app = FastAPI(title="OLED Canon Camera Service", version="1.8.4")
     app.state.camera = controller
 
     @app.exception_handler(CameraServiceError)

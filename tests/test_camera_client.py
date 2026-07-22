@@ -323,12 +323,17 @@ class CameraClientHelpersTests(unittest.TestCase):
             "file": {"file_id": "abc 123", "name": "photo.jpg", "kind": "photo", "size": 10}
         }
         video_settings = {"/main/capturesettings/moviefps": "25"}
+        photo_settings = {
+            "/main/imgsettings/imageformat": "Large Fine JPEG",
+            "/main/imgsettings/iso": "400",
+            "/main/capturesettings/shutterspeed": "1/4",
+        }
         with patch.object(
             client,
             "_json_request",
             side_effect=[remote_payload, {"success": True}, {"success": True}, {"success": True}],
         ) as request:
-            remote = client.capture_photo({"/main/imgsettings/imageformat": "Large Fine JPEG"})
+            remote = client.capture_photo(photo_settings)
             client.start_liveview(video_settings)
             client.start_recording(video_settings)
             client.delete_file(RemoteFile("abc 123", "photo.jpg", "photo", 10))
@@ -340,7 +345,7 @@ class CameraClientHelpersTests(unittest.TestCase):
                 "POST",
                 "/api/photo/capture",
                 {
-                    "photo_settings": {"/main/imgsettings/imageformat": "Large Fine JPEG"},
+                    "photo_settings": photo_settings,
                     "crop": {"width_percent": 100.0, "height_percent": 100.0},
                 },
             ),
@@ -358,6 +363,33 @@ class CameraClientHelpersTests(unittest.TestCase):
             ),
         )
         self.assertEqual(request.call_args_list[3].args, ("DELETE", "/api/files/abc%20123"))
+
+    def test_selected_photo_settings_merge_quality_and_exposure(self) -> None:
+        class Value:
+            def __init__(self, value: str):
+                self.value = value
+
+            def get(self) -> str:
+                return self.value
+
+        camera = SimpleNamespace(
+            photo_quality_vars={"/main/imgsettings/imageformat": Value("Large Fine JPEG")},
+            photo_exposure_vars={
+                "/main/imgsettings/iso": Value("800"),
+                "/main/capturesettings/shutterspeed": Value("1/2"),
+            },
+        )
+
+        selected = CameraTestWindow._selected_photo_settings(camera)
+
+        self.assertEqual(
+            selected,
+            {
+                "/main/imgsettings/imageformat": "Large Fine JPEG",
+                "/main/imgsettings/iso": "800",
+                "/main/capturesettings/shutterspeed": "1/2",
+            },
+        )
 
     def test_liveview_stop_uses_timeout_longer_than_server_shutdown(self) -> None:
         client = CameraClient("http://camera.test:8765", timeout_s=8.0, stream_timeout_s=12.0)

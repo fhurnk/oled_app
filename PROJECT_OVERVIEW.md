@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.8.3`
+Версия: `v1.8.4`
 
 ## Назначение
 
@@ -22,7 +22,7 @@
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
 - клиент Canon через Raspberry Pi находится в `oled_app/camera/client.py`, а свободный и привязанный к серии режимы — в `oled_app/gui/camera_window.py`.
 - в камере серии выбор станции и пикселя открывает параметры с фиксированным пикселем и запускает сопровождаемый цикл `фото до → подтверждение → видео + измерение → подтверждение → фото после`; при токовом лимите стабильности видео получает безопасный 5-секундный post-roll.
-- отдельный сервис Raspberry Pi находится в `raspberry_camera_service/`; он получает единый MJPEG-поток через `gphoto2`, отдаёт LiveView по HTTP, динамически сообщает JPEG-варианты камеры, направляет кадры в FFmpeg при записи и умеет безопасно удалять скачанный файл по запросу клиента.
+- отдельный сервис Raspberry Pi находится в `raspberry_camera_service/`; он получает единый MJPEG-поток через `gphoto2`, отдаёт LiveView по HTTP, динамически сообщает JPEG-варианты и доступные для записи ISO, выдержку, диафрагму и экспокоррекцию, направляет кадры в FFmpeg при записи и умеет безопасно удалять скачанный файл по запросу клиента.
 - подготовка Origin-отчета вынесена в `oled_app/reports/origin_report.py`, а прежний CLI-скрипт оставлен совместимой оболочкой.
 - workflow ВАЯХ/IVL подготовлен в `oled_app/measurements/ivl.py` и подключен к новому GUI.
 - общая запись raw CSV вынесена в `oled_app/measurements/raw_io.py`; сборка IVL-, Spectrum- и Stability-книг из raw CSV вынесена в `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py` и `oled_app/processing/stability_results.py`.
@@ -135,6 +135,7 @@ oled_app_v2_5_package/
       v1.8.1.md
       v1.8.2.md
       v1.8.3.md
+      v1.8.4.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.3`
+- Current app version: `v1.8.4`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.3`. It adds reliable memory-backed saved-photo previews on OneDrive and removes beta labels while retaining the manual LiveView workflow from v1.8.2.
+The current stable release is `v1.8.4`. It dynamically discovers writable ISO, shutter-speed, aperture, and exposure-compensation choices and verifies selected values before full-resolution capture.
 
 ## Main Entry Points
 
@@ -26,7 +26,7 @@ The current stable release is `v1.8.3`. It adds reliable memory-backed saved-pho
 - Series creation, quarter metadata/naming, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
 - The desktop camera HTTP client lives in `oled_app/camera/client.py`; free and series-bound workflows live in `oled_app/gui/camera_window.py`.
-- The Raspberry Pi FastAPI service, dynamic gPhoto2 JPEG-quality discovery, FFmpeg video profiles, verified-download deletion API, example config, systemd unit for Linux user `user`, and setup guide live under `raspberry_camera_service/`.
+- The Raspberry Pi FastAPI service, dynamic gPhoto2 JPEG-quality and exposure-control discovery, FFmpeg video profiles, verified-download deletion API, example config, systemd unit for Linux user `user`, and setup guide live under `raspberry_camera_service/`.
 - The camera-dependent photo/video quality design and implementation notes live in `docs/camera_quality_research.md`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.

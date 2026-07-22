@@ -91,6 +91,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "crop_height_percent": 100.0,
         "video_camera_settings": {},
         "photo_quality_settings": {},
+        "photo_exposure_settings": {},
     },
     "ivl_advanced": {
         "photodiode_bias_V": -5.0,

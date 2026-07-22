@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.3",
+    "current_version": "v1.8.4",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.3.md"
+    "docs/versions/v1.8.4.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -65,9 +65,9 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "stable",
-    "current_release": "v1.8.3",
+    "current_release": "v1.8.4",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Reliable memory-backed saved-photo previews on OneDrive, the manual LiveView workflow retained from v1.8.2, and camera UI without beta labels.",
+    "release_scope": "Dynamic survey and verified application of writable ISO, shutter-speed, aperture, and exposure-compensation controls for full-resolution camera photos.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

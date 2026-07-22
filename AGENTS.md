@@ -11,7 +11,7 @@ When a new Codex chat starts in this repository, read these files before changin
 
 ## Versioning, Changelog, And GitHub Releases
 
-The current project release is `v1.8.3`. Keep `APP_VERSION`, `CHANGELOG.md`, `docs/versions/v1.8.3.md`, visible docs, tag, and GitHub Release synchronized. Create a later version only when the user explicitly requests the next project version.
+The current project release is `v1.8.4`. Keep `APP_VERSION`, `CHANGELOG.md`, `docs/versions/v1.8.4.md`, visible docs, tag, and GitHub Release synchronized. Create a later version only when the user explicitly requests the next project version.
 
 For every user-visible behavior change, bug fix, documentation change, or release preparation:
 
