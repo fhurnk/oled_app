@@ -3,6 +3,7 @@ numpy>=1.23
 openpyxl>=3.1
 pyserial>=3.5
 Pillow>=10.0
+imageio-ffmpeg>=0.6.0
 
 # Hardware libraries required for real OLED measurements.
 # Install vendor drivers for the SMU and spectrometer before using real mode.

@@ -30,6 +30,7 @@ from oled_app.camera import (
     normalize_center_crop,
     safe_capture_stem,
 )
+from oled_app.camera.telemetry_video import create_stability_telemetry_video
 from oled_app.constants import APP_VERSION, SCRIPT_DIR
 from oled_app.series import ensure_camera_session_folder
 from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
@@ -310,6 +311,9 @@ class CameraTestWindow(tk.Toplevel):
             self.crop_width_var.set("100")
             self.crop_height_var.set("100")
         self.keep_remote_var = tk.BooleanVar(value=bool(settings.get("keep_remote_files_after_download", True)))
+        self.combine_stability_telemetry_var = tk.BooleanVar(
+            value=bool(settings.get("combine_stability_telemetry_video", True))
+        )
 
         self.client: Optional[CameraClient] = None
         self.status: Dict[str, Any] = {}
@@ -339,11 +343,13 @@ class CameraTestWindow(tk.Toplevel):
         self._recording_stop_requested_monotonic: Optional[float] = None
         self._recording_context: Dict[str, Any] = {}
         self._guided_measurement_active = False
+        self._guided_create_telemetry = False
         self._series_capture_dir: Optional[Path] = None
         self._series_capture_context: Optional[tuple[str, str, str]] = None
         self.station_combo = None
         self.pixel_combo = None
         self.measurement_launch_button = None
+        self.combine_stability_telemetry_checkbutton = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -535,6 +541,14 @@ class CameraTestWindow(tk.Toplevel):
             variable=self.keep_remote_var,
             command=self._save_quality_preferences,
         ).pack(anchor="w", pady=(6, 0))
+        if self.series_bound:
+            self.combine_stability_telemetry_checkbutton = ttk.Checkbutton(
+                quality_box,
+                text="Создавать отдельное видео с показаниями стабильности",
+                variable=self.combine_stability_telemetry_var,
+                command=self._save_quality_preferences,
+            )
+            self.combine_stability_telemetry_checkbutton.pack(anchor="w", pady=(6, 0))
 
         exposure_box = ttk.LabelFrame(controls_frame, text="Экспозиция полноразмерного фото", padding=8)
         exposure_box.pack(fill="x", pady=(10, 0))
@@ -1092,6 +1106,7 @@ class CameraTestWindow(tk.Toplevel):
     def _save_quality_preferences(self, _event=None) -> None:
         settings = dict(self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"]))
         settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
+        settings["combine_stability_telemetry_video"] = bool(self.combine_stability_telemetry_var.get())
         crop = self._selected_crop(show_error=False)
         if crop is not None:
             settings["crop_width_percent"] = crop["width_percent"]
@@ -1487,6 +1502,10 @@ class CameraTestWindow(tk.Toplevel):
                         else "disabled"
                     )
                 )
+            if self.combine_stability_telemetry_checkbutton is not None:
+                self.combine_stability_telemetry_checkbutton.configure(
+                    state="disabled" if recording or self._busy or guided else "normal"
+                )
 
     def _make_client(self) -> CameraClient:
         settings = self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
@@ -1508,6 +1527,7 @@ class CameraTestWindow(tk.Toplevel):
         settings["host"] = self.host_var.get().strip() or "192.168.4.1"
         settings["port"] = int(self.port_var.get().strip())
         settings["keep_remote_files_after_download"] = bool(self.keep_remote_var.get())
+        settings["combine_stability_telemetry_video"] = bool(self.combine_stability_telemetry_var.get())
         crop = self._selected_crop(show_error=False)
         if crop is None:
             raise ValueError("Исправьте параметры кадрирования.")
@@ -1643,6 +1663,7 @@ class CameraTestWindow(tk.Toplevel):
         self._series_capture_context = None
         camera_session_dir = self._download_dir()
         self._guided_measurement_active = True
+        self._guided_create_telemetry = bool(self.combine_stability_telemetry_var.get())
         self.activity_var.set(
             f"Подготовка {self.station_var.get()} · {pixel_id}: "
             f"фото до измерения (камера {camera_session_dir.name})"
@@ -1731,11 +1752,53 @@ class CameraTestWindow(tk.Toplevel):
             return
         self.activity_var.set("Остановка и скачивание видео")
         self.stop_recording(
-            after_stopped=lambda _path: self._guided_video_complete(measurement_result),
+            after_stopped=lambda path: self._guided_video_complete(path, measurement_result),
             on_error=self._guided_measurement_failed,
         )
 
-    def _guided_video_complete(self, measurement_result: Optional[Dict[str, Any]]) -> None:
+    def _guided_video_complete(
+        self,
+        video_path: Path,
+        measurement_result: Optional[Dict[str, Any]],
+    ) -> None:
+        station_key = camera_station_key(self.station_var.get())
+        workbook_path = (measurement_result or {}).get("file")
+        if station_key == "stability" and workbook_path and self._guided_create_telemetry:
+            self.activity_var.set("Добавление показаний стабильности в копию видео")
+            self._run_async(
+                "Создание видео с показаниями",
+                lambda: create_stability_telemetry_video(video_path, Path(workbook_path)),
+                lambda telemetry_path: self._guided_telemetry_complete(measurement_result, telemetry_path),
+                quiet=True,
+                failed=lambda exc: self._guided_telemetry_failed(measurement_result, exc),
+            )
+            return
+        if station_key == "stability" and workbook_path:
+            self._log("Объединение видео с показаниями отключено; сохранено исходное видео.")
+        self._guided_video_prompt(measurement_result)
+
+    def _guided_telemetry_complete(
+        self,
+        measurement_result: Optional[Dict[str, Any]],
+        telemetry_path: Path,
+    ) -> None:
+        self._log(f"Видео с показаниями стабильности сохранено: {telemetry_path}")
+        self._guided_video_prompt(measurement_result)
+
+    def _guided_telemetry_failed(
+        self,
+        measurement_result: Optional[Dict[str, Any]],
+        exc: Exception,
+    ) -> None:
+        messagebox.showwarning(
+            "Видео с показаниями",
+            "Исходное видео сохранено, но создать копию с показаниями не удалось.\n\n"
+            f"{camera_error_dialog_text(exc)}",
+            parent=self,
+        )
+        self._guided_video_prompt(measurement_result)
+
+    def _guided_video_prompt(self, measurement_result: Optional[Dict[str, Any]]) -> None:
         station = SERIES_CAMERA_STATIONS[camera_station_key(self.station_var.get())]
         pixel_id = self.pixel_var.get().strip()
         should_continue = ask_workflow_continue(
@@ -1765,6 +1828,7 @@ class CameraTestWindow(tk.Toplevel):
 
     def _finish_guided_measurement(self, message: str) -> None:
         self._guided_measurement_active = False
+        self._guided_create_telemetry = False
         self.activity_var.set("Готово")
         self._log(message)
         self._update_buttons()

@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.6`
+- Current app version: `v1.8.7`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.6`. Canon photo choice controls retry by exact gPhoto2 choice index when value-based application does not persist, and camera-setting errors expose the requested and actual values.
+The current stable release is `v1.8.7`. Guided stability capture can optionally create a separate expanded MP4 with synchronized measured voltage/current in a top telemetry bar while preserving the source video.
 
 ## Main Entry Points
 
@@ -25,7 +25,7 @@ The current stable release is `v1.8.6`. Canon photo choice controls retry by exa
 - Shared constants, settings defaults, settings I/O, and common utility helpers now live in `oled_app/constants.py`, `oled_app/settings.py`, and `oled_app/utils.py`.
 - Series creation, quarter metadata/naming, journal handling, measurement paths, status colors, and holder layout now live under `oled_app/series/`.
 - Hardware probing, Ossila auto-COM, simulator module installation, SMU shutdown helper, and spectrometer discovery now live under `oled_app/hardware/`.
-- The desktop camera HTTP client lives in `oled_app/camera/client.py`; free and series-bound workflows live in `oled_app/gui/camera_window.py`.
+- The desktop camera HTTP client lives in `oled_app/camera/client.py`; synchronized stability-video rendering lives in `oled_app/camera/telemetry_video.py`; free and series-bound workflows live in `oled_app/gui/camera_window.py`.
 - The Raspberry Pi FastAPI service, dynamic gPhoto2 JPEG-quality and exposure-control discovery, FFmpeg video profiles, verified-download deletion API, example config, systemd unit for Linux user `user`, and setup guide live under `raspberry_camera_service/`.
 - The camera-dependent photo/video quality design and implementation notes live in `docs/camera_quality_research.md`.
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.

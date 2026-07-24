@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.6",
+    "current_version": "v1.8.7",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.6.md"
+    "docs/versions/v1.8.7.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -34,6 +34,7 @@
     "measurement_stability_module": "oled_app/measurements/stability.py",
     "series_metadata_module": "oled_app/series/metadata.py",
     "camera_client_module": "oled_app/camera/client.py",
+    "camera_telemetry_video_module": "oled_app/camera/telemetry_video.py",
     "camera_service": "raspberry_camera_service/camera_service.py",
     "camera_service_guide": "raspberry_camera_service/README.md",
     "gui_widgets_module": "oled_app/gui/widgets.py",
@@ -65,9 +66,9 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "stable",
-    "current_release": "v1.8.6",
+    "current_release": "v1.8.7",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Reliable Canon photo-setting application with exact gPhoto2 choice-index fallback and actionable mismatch diagnostics.",
+    "release_scope": "Optional synchronized stability telemetry video with a separate top bar that preserves the source MP4.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
