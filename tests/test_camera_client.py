@@ -29,6 +29,7 @@ from oled_app.gui.camera_window import (
     camera_error_dialog_text,
     center_crop_dimensions,
     decode_liveview_frame,
+    first_available_video_control,
     free_camera_date_folder,
     load_local_photo_preview,
     stability_current_limit_reached,
@@ -39,6 +40,29 @@ from oled_app.series.paths import ensure_camera_session_folder
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_video_control_is_hidden_when_camera_has_no_selectable_choices(self) -> None:
+        self.assertEqual(first_available_video_control([]), {})
+        self.assertEqual(
+            first_available_video_control([{"path": "/main/movie", "choices": []}]),
+            {},
+        )
+
+    def test_video_control_uses_first_selectable_camera_setting(self) -> None:
+        available = {
+            "path": "/main/movie/fps",
+            "choices": ["24", "25"],
+            "current": "24",
+        }
+
+        selected = first_available_video_control(
+            [
+                {"path": "/main/movie/quality", "choices": []},
+                available,
+            ]
+        )
+
+        self.assertIs(selected, available)
+
     def test_camera_error_dialog_includes_service_details(self) -> None:
         error = CameraClientError(
             "Камера не сохранила параметр «ISO».",

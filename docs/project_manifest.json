@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.7",
+    "current_version": "v1.8.8",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.7.md"
+    "docs/versions/v1.8.8.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -66,9 +66,9 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "stable",
-    "current_release": "v1.8.7",
+    "current_release": "v1.8.8",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Optional synchronized stability telemetry video with a separate top bar that preserves the source MP4.",
+    "release_scope": "Camera video-quality and FPS controls are shown only when the connected camera exposes selectable settings.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

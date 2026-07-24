@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.7`
+- Current app version: `v1.8.8`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.7`. Guided stability capture can optionally create a separate expanded MP4 with synchronized measured voltage/current in a top telemetry bar while preserving the source video.
+The current stable release is `v1.8.8`. Camera video-quality and FPS rows are visible only when the connected camera exposes corresponding writable choice controls; unavailable settings no longer occupy disabled UI rows.
 
 ## Main Entry Points
 

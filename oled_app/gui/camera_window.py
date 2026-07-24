@@ -76,6 +76,15 @@ def camera_station_key(value: str) -> str:
     return "ivl"
 
 
+def first_available_video_control(controls: list[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return the first camera video control that has both a path and selectable choices."""
+
+    for control in controls:
+        if str(control.get("path") or "") and [str(value) for value in control.get("choices") or []]:
+            return control
+    return {}
+
+
 def stability_current_limit_reached(result: Optional[Dict[str, Any]]) -> bool:
     """Return whether stability stopped because the measured current crossed its limit."""
 
@@ -510,29 +519,33 @@ class CameraTestWindow(tk.Toplevel):
         ttk.Label(self.photo_quality_frame, text="Параметры фото появятся после подключения камеры.").grid(
             row=0, column=0, sticky="w"
         )
-        video_row = ttk.Frame(quality_box)
-        video_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(video_row, text="Качество/размер камеры:").pack(side="left")
+        self.video_quality_row = ttk.Frame(quality_box)
+        ttk.Label(self.video_quality_row, text="Качество/размер камеры:").pack(side="left")
         self.video_quality_combo = ttk.Combobox(
-            video_row,
+            self.video_quality_row,
             textvariable=self.video_quality_var,
             state="readonly",
             width=43,
         )
         self.video_quality_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.video_quality_combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
-        fps_row = ttk.Frame(quality_box)
-        fps_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(fps_row, text="Кадров в секунду камеры:").pack(side="left")
+        self.video_fps_row = ttk.Frame(quality_box)
+        ttk.Label(self.video_fps_row, text="Кадров в секунду камеры:").pack(side="left")
         self.video_fps_combo = ttk.Combobox(
-            fps_row,
+            self.video_fps_row,
             textvariable=self.video_fps_var,
             state="readonly",
             width=43,
         )
         self.video_fps_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.video_fps_combo.bind("<<ComboboxSelected>>", self._save_quality_preferences)
-        ttk.Label(quality_box, textvariable=self.video_source_var, foreground="#333333", wraplength=360).pack(
+        self.video_source_label = ttk.Label(
+            quality_box,
+            textvariable=self.video_source_var,
+            foreground="#333333",
+            wraplength=360,
+        )
+        self.video_source_label.pack(
             anchor="w", pady=(5, 0)
         )
         ttk.Checkbutton(
@@ -963,12 +976,20 @@ class CameraTestWindow(tk.Toplevel):
             saved_video,
             "Камера не предоставляет выбор качества",
         )
+        self._set_video_control_row_visible(
+            self.video_quality_row,
+            bool(self.video_quality_control_path),
+        )
         self.video_fps_control_path, self.video_fps_by_label = self._configure_video_control(
             self.video_fps_combo,
             self.video_fps_var,
             list(capabilities.get("video_fps_controls") or []),
             saved_video,
             "Камера не предоставляет выбор FPS",
+        )
+        self._set_video_control_row_visible(
+            self.video_fps_row,
+            bool(self.video_fps_control_path),
         )
         self._update_video_source_text()
         self._save_quality_preferences()
@@ -1026,7 +1047,7 @@ class CameraTestWindow(tk.Toplevel):
         saved: Dict[str, str],
         unavailable_text: str,
     ) -> tuple[str, Dict[str, str]]:
-        control = controls[0] if controls else {}
+        control = first_available_video_control(controls)
         path = str(control.get("path") or "")
         choices = [str(value) for value in control.get("choices") or []]
         if not path or not choices:
@@ -1040,6 +1061,12 @@ class CameraTestWindow(tk.Toplevel):
         combo.configure(values=list(labels), state="readonly")
         variable.set(selected)
         return path, labels
+
+    def _set_video_control_row_visible(self, row: ttk.Frame, visible: bool) -> None:
+        if visible:
+            row.pack(fill="x", pady=(6, 0), before=self.video_source_label)
+        else:
+            row.pack_forget()
 
     def _selected_photo_settings(self) -> Dict[str, str]:
         selected = {
@@ -1382,6 +1409,8 @@ class CameraTestWindow(tk.Toplevel):
         self.error_var.set(str(exc))
         self.video_quality_combo.configure(values=(), state="disabled")
         self.video_fps_combo.configure(values=(), state="disabled")
+        self._set_video_control_row_visible(self.video_quality_row, False)
+        self._set_video_control_row_visible(self.video_fps_row, False)
         self.video_quality_var.set("Нет связи с Raspberry Pi")
         self.video_fps_var.set("Нет связи с Raspberry Pi")
         self._show_placeholder("Связь с Raspberry Pi потеряна\nНажмите «Подключиться» для повтора")
