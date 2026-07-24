@@ -50,6 +50,12 @@ SERIES_CAMERA_STATIONS = {
 }
 
 
+def camera_error_dialog_text(exc: Exception) -> str:
+    message = str(exc)
+    details = str(exc.details or "").strip() if isinstance(exc, CameraClientError) else ""
+    return f"{message}\n\n{details}" if details and details not in message else message
+
+
 def free_camera_date_folder(download_root: Path | str, capture_date: Optional[date] = None) -> Path:
     """Keep free-camera downloads grouped by their local capture date."""
 
@@ -1415,11 +1421,11 @@ class CameraTestWindow(tk.Toplevel):
         failed: Optional[Callable[[Exception], None]] = None,
     ) -> None:
         self._busy = False
-        details = exc.details if isinstance(exc, CameraClientError) else ""
-        self.error_var.set(str(exc))
-        self._log(f"{label}: {exc}" + (f" | {details}" if details else ""))
+        display_text = camera_error_dialog_text(exc)
+        self.error_var.set(display_text)
+        self._log(f"{label}: {display_text.replace(chr(10), ' | ')}")
         if not quiet:
-            messagebox.showerror("Камера", str(exc), parent=self)
+            messagebox.showerror("Камера", display_text, parent=self)
         if failed is not None:
             failed(exc)
         self._update_buttons()

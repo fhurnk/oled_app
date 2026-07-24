@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.5`
+- Current app version: `v1.8.6`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.5`. Reports can exclude any physical holder quarter from IVL, spectra, tables, and graphs.
+The current stable release is `v1.8.6`. Canon photo choice controls retry by exact gPhoto2 choice index when value-based application does not persist, and camera-setting errors expose the requested and actual values.
 
 ## Main Entry Points
 

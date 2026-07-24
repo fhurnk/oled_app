@@ -14,6 +14,7 @@ from PIL import Image
 
 from oled_app.camera.client import (
     CameraClient,
+    CameraClientError,
     RemoteFile,
     available_path,
     build_camera_service_url,
@@ -25,6 +26,7 @@ from oled_app.camera.client import (
 from oled_app.gui.camera_window import (
     CameraTestWindow,
     build_series_capture_stem,
+    camera_error_dialog_text,
     center_crop_dimensions,
     decode_liveview_frame,
     free_camera_date_folder,
@@ -37,6 +39,18 @@ from oled_app.series.paths import ensure_camera_session_folder
 
 
 class CameraClientHelpersTests(unittest.TestCase):
+    def test_camera_error_dialog_includes_service_details(self) -> None:
+        error = CameraClientError(
+            "Камера не сохранила параметр «ISO».",
+            "CAMERA_SETTING_FAILED",
+            "ISO: запрошено 1000; установлено 800",
+        )
+
+        self.assertEqual(
+            camera_error_dialog_text(error),
+            "Камера не сохранила параметр «ISO».\n\nISO: запрошено 1000; установлено 800",
+        )
+
     def test_free_camera_downloads_are_grouped_by_capture_date(self) -> None:
         folder = free_camera_date_folder(Path("camera_downloads"), date(2026, 7, 21))
         self.assertEqual(folder, Path("camera_downloads") / "2026-07-21")

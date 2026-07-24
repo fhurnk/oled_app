@@ -122,13 +122,24 @@ def center_crop_filter(crop: Optional[Dict[str, Any]] = None) -> str:
 def parse_gphoto_config(path: str, output: str) -> Dict[str, Any]:
     """Parse gphoto2 --get-config output without depending on its locale."""
 
-    result: Dict[str, Any] = {"path": path, "label": "", "type": "", "current": "", "choices": [], "readonly": False}
+    result: Dict[str, Any] = {
+        "path": path,
+        "label": "",
+        "type": "",
+        "current": "",
+        "choices": [],
+        "choice_indices": {},
+        "readonly": False,
+    }
     choices: list[str] = []
+    choice_indices: Dict[str, int] = {}
     for raw_line in str(output or "").splitlines():
         line = raw_line.strip()
-        choice_match = re.match(r"Choice\s*:\s*\d+\s+(.*)$", line, flags=re.IGNORECASE)
+        choice_match = re.match(r"Choice\s*:\s*(\d+)\s+(.*)$", line, flags=re.IGNORECASE)
         if choice_match:
-            choices.append(choice_match.group(1).strip())
+            choice_value = choice_match.group(2).strip()
+            choices.append(choice_value)
+            choice_indices[choice_value] = int(choice_match.group(1))
             continue
         if ":" not in line:
             continue
@@ -143,6 +154,7 @@ def parse_gphoto_config(path: str, output: str) -> Dict[str, Any]:
         elif normalized in {"readonly", "толькочтение"}:
             result["readonly"] = value.lower() not in {"0", "false", "off", "no", "нет"}
     result["choices"] = choices
+    result["choice_indices"] = choice_indices
     return result
 
 
@@ -479,6 +491,11 @@ class CameraController:
                     "label": labels[basename],
                     "current": current,
                     "choices": choices,
+                    "choice_indices": {
+                        value: int(control.get("choice_indices", {}).get(value))
+                        for value in choices
+                        if control.get("choice_indices", {}).get(value) is not None
+                    },
                 }
             )
         return controls
@@ -498,26 +515,43 @@ class CameraController:
                 raise CameraServiceError("Параметр фото не поддерживается этой камерой.", "UNSUPPORTED_CAMERA_SETTING", str(path), 400)
             if value not in control.get("choices", []):
                 raise CameraServiceError("Недопустимое значение параметра фото.", "UNSUPPORTED_CAMERA_SETTING", value, 400)
-            applied = self._run_command(
-                [self.config.gphoto2_bin, "--set-config-value", f"{path}={value}"],
-                self.config.command_timeout_s,
-                check=False,
-            )
-            if applied.returncode != 0:
-                details = (applied.stderr or applied.stdout).strip()
-                raise CameraServiceError("Камера не применила выбранный параметр фото.", "CAMERA_SETTING_FAILED", details)
-            verify = self._run_command(
-                [self.config.gphoto2_bin, "--get-config", str(path)],
-                self.config.command_timeout_s,
-                check=False,
-            )
-            verified = parse_gphoto_config(str(path), verify.stdout) if verify.returncode == 0 else {}
-            actual = str(verified.get("current") or value)
-            if actual != value:
+            label = str(control.get("label") or path)
+            attempts = [("--set-config-value", value)]
+            choice_index = control.get("choice_indices", {}).get(value)
+            if choice_index is not None:
+                attempts.append(("--set-config-index", str(choice_index)))
+
+            actual = ""
+            failure_details = ""
+            for option, option_value in attempts:
+                applied = self._run_command(
+                    [self.config.gphoto2_bin, option, f"{path}={option_value}"],
+                    self.config.command_timeout_s,
+                    check=False,
+                )
+                if applied.returncode != 0:
+                    failure_details = (applied.stderr or applied.stdout).strip()
+                    continue
+                verify = self._run_command(
+                    [self.config.gphoto2_bin, "--get-config", str(path)],
+                    self.config.command_timeout_s,
+                    check=False,
+                )
+                if verify.returncode != 0:
+                    failure_details = (verify.stderr or verify.stdout).strip()
+                    continue
+                verified = parse_gphoto_config(str(path), verify.stdout)
+                actual = str(verified.get("current") or "")
+                if actual == value:
+                    break
+            else:
+                details = f"{label} ({path}): запрошено {value}; установлено {actual or 'не определено'}"
+                if failure_details:
+                    details += f"; gPhoto2: {failure_details}"
                 raise CameraServiceError(
-                    "Камера применила другое значение параметра фото.",
+                    f"Камера не сохранила параметр «{label}»: запрошено {value}, установлено {actual or 'не определено'}.",
                     "CAMERA_SETTING_FAILED",
-                    f"Запрошено: {value}; установлено: {actual}",
+                    details,
                 )
             with self._lock:
                 if str(path) in self._photo_controls:
@@ -1510,7 +1544,7 @@ class CameraController:
 
 def create_app(config: ServiceConfig) -> FastAPI:
     controller = CameraController(config)
-    app = FastAPI(title="OLED Canon Camera Service", version="1.8.4")
+    app = FastAPI(title="OLED Canon Camera Service", version="1.8.6")
     app.state.camera = controller
 
     @app.exception_handler(CameraServiceError)

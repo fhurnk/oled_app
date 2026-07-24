@@ -13,6 +13,7 @@ from PIL import Image
 
 from raspberry_camera_service.camera_service import (
     CameraController,
+    CameraServiceError,
     ServiceConfig,
     center_crop_filter,
     jpeg_dimensions,
@@ -125,6 +126,10 @@ Choice: 2 RAW + Large Fine JPEG
 
         self.assertEqual(parsed["current"], "Large Fine JPEG")
         self.assertEqual(parsed["choices"], ["Large Fine JPEG", "RAW", "RAW + Large Fine JPEG"])
+        self.assertEqual(
+            parsed["choice_indices"],
+            {"Large Fine JPEG": 0, "RAW": 1, "RAW + Large Fine JPEG": 2},
+        )
         self.assertFalse(parsed["readonly"])
 
     def test_jpeg_dimensions_reads_real_frame(self) -> None:
@@ -149,6 +154,7 @@ Choice: 2 RAW + Large Fine JPEG
                 controls = controller._discover_photo_controls()
 
         self.assertEqual(controls[0]["choices"], ["Large Fine JPEG", "Medium Fine JPEG"])
+        self.assertEqual(controls[0]["choice_indices"], {"Large Fine JPEG": 0, "Medium Fine JPEG": 2})
         self.assertEqual(controls[1]["choices"], ["Large", "Medium"])
 
     def test_exposure_discovery_uses_only_writable_camera_choices(self) -> None:
@@ -204,6 +210,60 @@ Choice: 2 RAW + Large Fine JPEG
             ["gphoto2", "--set-config-value", f"{path}=400"],
         )
         self.assertEqual(controller._exposure_controls[path]["current"], "400")
+
+    def test_photo_setting_falls_back_to_exact_choice_index(self) -> None:
+        path = "/main/imgsettings/iso"
+        with tempfile.TemporaryDirectory() as folder:
+            controller = CameraController(ServiceConfig(data_dir=folder))
+            controller._exposure_controls = {
+                path: {
+                    "path": path,
+                    "key": "iso",
+                    "label": "ISO",
+                    "current": "100",
+                    "choices": ["100", "400"],
+                    "choice_indices": {"100": 0, "400": 1},
+                }
+            }
+            responses = [
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "Current: 100\nChoice: 0 100\nChoice: 1 400\n", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "Current: 400\nChoice: 0 100\nChoice: 1 400\n", ""),
+            ]
+            with patch.object(controller, "_run_command", side_effect=responses) as run_command:
+                controller._apply_photo_settings({path: "400"})
+
+        self.assertEqual(
+            run_command.call_args_list[2].args[0],
+            ["gphoto2", "--set-config-index", f"{path}=1"],
+        )
+        self.assertEqual(controller._exposure_controls[path]["current"], "400")
+
+    def test_photo_setting_error_identifies_control_and_values(self) -> None:
+        path = "/main/capturesettings/shutterspeed"
+        with tempfile.TemporaryDirectory() as folder:
+            controller = CameraController(ServiceConfig(data_dir=folder))
+            controller._exposure_controls = {
+                path: {
+                    "path": path,
+                    "key": "shutterspeed",
+                    "label": "Выдержка",
+                    "current": "1/8",
+                    "choices": ["1/8", "1/4"],
+                }
+            }
+            responses = [
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "Current: 1/8\nChoice: 0 1/8\nChoice: 1 1/4\n", ""),
+            ]
+            with patch.object(controller, "_run_command", side_effect=responses):
+                with self.assertRaises(CameraServiceError) as raised:
+                    controller._apply_photo_settings({path: "1/4"})
+
+        self.assertIn("Выдержка", str(raised.exception))
+        self.assertIn("запрошено 1/4", str(raised.exception))
+        self.assertIn("установлено 1/8", str(raised.exception))
 
     def test_video_discovery_uses_only_camera_reported_quality_and_fps(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
