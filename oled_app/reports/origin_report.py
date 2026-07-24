@@ -227,6 +227,11 @@ def pixel_position_key(pixel: str) -> tuple:
     return (quarter, substrate, pixel_number, natural_key(prefix), natural_key(pixel))
 
 
+def series_quarter_number(series: str) -> int | None:
+    match = re.search(r"(\d+)$", str(series or ""))
+    return int(match.group(1)) if match else None
+
+
 def measurement_sort_key(record) -> tuple:
     return (*pixel_position_key(record.pixel), natural_key(record.series), natural_key(record.subseries))
 
@@ -292,9 +297,17 @@ def read_iv_record(meta: MeasurementPath, warnings: list[str]) -> IvRecord | Non
         wb.close()
 
 
-def collect_iv_records(iv_root: Path, warnings: list[str], date_filter: str | None = None) -> list[IvRecord]:
+def collect_iv_records(
+    iv_root: Path,
+    warnings: list[str],
+    date_filter: str | None = None,
+    excluded_quarters: set[int] | None = None,
+) -> list[IvRecord]:
+    excluded_quarters = excluded_quarters or set()
     records: list[IvRecord] = []
     for meta in latest_by_pixel(iv_root, "IVL_*.xlsx", date_filter).values():
+        if series_quarter_number(meta.series) in excluded_quarters:
+            continue
         record = read_iv_record(meta, warnings)
         if record is None:
             continue
@@ -390,11 +403,15 @@ def collect_spectrum_records(
     warnings: list[str],
     date_filter: str | None = None,
     explicit_series_pixels: dict[str, str] | None = None,
+    excluded_quarters: set[int] | None = None,
 ) -> list[SpectrumRecord]:
     explicit_series_pixels = explicit_series_pixels or {}
+    excluded_quarters = excluded_quarters or set()
     if explicit_series_pixels:
         candidates_by_series: dict[str, list[MeasurementPath]] = {}
         for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
+            if series_quarter_number(meta.series) in excluded_quarters:
+                continue
             candidates_by_series.setdefault(meta.series, []).append(meta)
 
         selected_by_series: dict[str, MeasurementPath] = {}
@@ -432,6 +449,8 @@ def collect_spectrum_records(
     latest: dict[str, MeasurementPath] = {}
     candidates_by_subseries: dict[str, list[MeasurementPath]] = {}
     for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
+        if series_quarter_number(meta.series) in excluded_quarters:
+            continue
         candidates_by_subseries.setdefault(meta.subseries, []).append(meta)
 
     for subseries, candidates in candidates_by_subseries.items():
@@ -595,6 +614,7 @@ def write_readme(ws, args: argparse.Namespace, iv_count: int, spectra_count: int
         ("Measurements dir", str(args.measurements_dir)),
         ("IVL date", (args.ivl_date or "latest") if includes_ivl else "excluded"),
         ("Spectrum date", (args.spectrum_date or "latest") if includes_spectra else "excluded"),
+        ("Excluded quarters", ", ".join(str(value) for value in args.exclude_quarter) or "none"),
         ("IVL working pixels", iv_count),
         ("Selected spectrum pixels", spectra_count),
         ("Spectrum source sheet", args.spectrum_sheet),
@@ -1088,13 +1108,18 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
 
     includes_ivl = report_includes_ivl(args)
     includes_spectra = report_includes_spectra(args)
+    excluded_quarters = set(args.exclude_quarter or [])
 
     if includes_ivl and not iv_root.exists():
         warnings.append(f"IVL root not found: {iv_root}")
     if includes_spectra and not spectra_root.exists():
         warnings.append(f"Spectrum root not found: {spectra_root}")
 
-    iv_records = collect_iv_records(iv_root, warnings, args.ivl_date) if includes_ivl and iv_root.exists() else []
+    iv_records = (
+        collect_iv_records(iv_root, warnings, args.ivl_date, excluded_quarters)
+        if includes_ivl and iv_root.exists()
+        else []
+    )
     explicit_pixels = parse_spectrum_pixels(args.spectrum_pixel or [])
     explicit_series_pixels = parse_spectrum_pixels(getattr(args, "spectrum_series_pixel", None) or [])
     spectrum_records = (
@@ -1106,6 +1131,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
             warnings,
             args.spectrum_date,
             explicit_series_pixels,
+            excluded_quarters,
         )
         if includes_spectra and spectra_root.exists()
         else []
@@ -1403,6 +1429,7 @@ def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
             f"Measurements dir: {args.measurements_dir}",
             f"IVL date: {(args.ivl_date or 'latest') if report_includes_ivl(args) else 'excluded'}",
             f"Spectrum date: {(args.spectrum_date or 'latest') if report_includes_spectra(args) else 'excluded'}",
+            f"Excluded quarters: {', '.join(str(value) for value in args.exclude_quarter) or 'none'}",
             f"IVL working pixels: {len(data.iv_records)}",
             f"Selected spectrum pixels: {len(data.spectrum_records)}",
             f"Spectrum source sheet: {args.spectrum_sheet}",
@@ -1743,6 +1770,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--ivl-date", default=None, help="Use IVL files only from this YYYY-MM-DD measurement date.")
     parser.add_argument("--spectrum-date", default=None, help="Use spectrum files only from this YYYY-MM-DD measurement date.")
+    parser.add_argument(
+        "--exclude-quarter",
+        action="append",
+        type=int,
+        choices=range(1, 5),
+        default=[],
+        help="Exclude a physical holder quarter (1-4) from every report section. Can be passed multiple times.",
+    )
     parser.add_argument(
         "--spectrum-pixel",
         action="append",

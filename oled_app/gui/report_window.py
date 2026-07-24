@@ -17,6 +17,7 @@ from oled_app.reports.origin_report import (
     REPORT_MODE_FULL,
     REPORT_MODE_IVL,
     REPORT_MODE_SPECTRA,
+    series_quarter_number,
 )
 from oled_app.utils import (
     build_report_voltage_grid,
@@ -58,8 +59,10 @@ def read_report_spectrum_voltages(path: Path) -> List[float]:
 def collect_report_spectrum_candidates(
     app,
     date_filter: Optional[str] = None,
+    excluded_quarters: Optional[set[int]] = None,
 ) -> Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]:
     assert app.series is not None
+    excluded_quarters = excluded_quarters or set()
     spectra_root = app.series.series_folder / "measurements" / MEASUREMENT_FOLDER_NAMES["SPECTRUM"]
     if not spectra_root.exists():
         return {}
@@ -75,6 +78,8 @@ def collect_report_spectrum_candidates(
         if date_filter and parts[0] != date_filter:
             continue
         series = parts[1]
+        if series_quarter_number(series) in excluded_quarters:
+            continue
         substrate = parts[2]
         pixel = parts[3]
         mtime = path.stat().st_mtime
@@ -167,7 +172,16 @@ def open_report_window(app) -> None:
     report_mode_var = tk.StringVar(value=available_modes[0])
     ivl_date_var = tk.StringVar(value=ivl_dates[-1] if ivl_dates else "")
     spectrum_date_var = tk.StringVar(value=spectrum_dates[-1] if spectrum_dates else "")
-    candidates = collect_report_spectrum_candidates(app, spectrum_date_var.get()) if spectrum_dates else {}
+    excluded_quarter_vars = {quarter: tk.BooleanVar(value=False) for quarter in range(1, 5)}
+
+    def selected_excluded_quarters() -> set[int]:
+        return {quarter for quarter, var in excluded_quarter_vars.items() if var.get()}
+
+    candidates = (
+        collect_report_spectrum_candidates(app, spectrum_date_var.get(), selected_excluded_quarters())
+        if spectrum_dates
+        else {}
+    )
 
     win = tk.Toplevel(app)
     win.title("Составить отчет")
@@ -201,6 +215,17 @@ def open_report_window(app) -> None:
     ttk.Label(date_frame, text="Спектры:").grid(row=0, column=2, sticky="e", padx=(8, 4), pady=6)
     spectrum_date_combo = ttk.Combobox(date_frame, values=spectrum_dates, textvariable=spectrum_date_var, state="readonly", width=14)
     spectrum_date_combo.grid(row=0, column=3, sticky="w", padx=(0, 8), pady=6)
+
+    quarter_frame = ttk.LabelFrame(main, text="Исключить четверти из отчёта")
+    quarter_frame.pack(fill="x", pady=(0, 10))
+    ttk.Label(quarter_frame, text="Не включать:").pack(side="left", padx=(8, 4), pady=6)
+    for quarter in range(1, 5):
+        ttk.Checkbutton(
+            quarter_frame,
+            text=str(quarter),
+            variable=excluded_quarter_vars[quarter],
+            command=lambda: change_excluded_quarters(),
+        ).pack(side="left", padx=6, pady=6)
 
     spectrum_options_frame = ttk.Frame(main)
     spectrum_options_frame.pack(fill="both", expand=True)
@@ -382,8 +407,26 @@ def open_report_window(app) -> None:
 
     def change_spectrum_date(*_args) -> None:
         nonlocal candidates
-        candidates = collect_report_spectrum_candidates(app, spectrum_date_var.get())
+        candidates = collect_report_spectrum_candidates(
+            app,
+            spectrum_date_var.get(),
+            selected_excluded_quarters(),
+        )
         refresh_output_name()
+        rebuild_selection()
+        refresh_defaults()
+
+    def change_excluded_quarters() -> None:
+        nonlocal candidates
+        candidates = (
+            collect_report_spectrum_candidates(
+                app,
+                spectrum_date_var.get(),
+                selected_excluded_quarters(),
+            )
+            if spectrum_dates
+            else {}
+        )
         rebuild_selection()
         refresh_defaults()
 
@@ -427,6 +470,8 @@ def open_report_window(app) -> None:
             mode,
             "--strict",
         ]
+        for quarter in sorted(selected_excluded_quarters()):
+            cmd.extend(["--exclude-quarter", str(quarter)])
         if includes_ivl:
             if not ivl_date_var.get():
                 raise ValueError("Не выбрана дата ВАЯХ")

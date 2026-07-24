@@ -22,10 +22,12 @@ from oled_app.reports.origin_report import (
     ReportData,
     SpectrumRecord,
     build_workbook,
+    collect_iv_records,
     collect_report_data,
     collect_spectrum_records,
     create_origin_iv_book,
     parse_args,
+    series_quarter_number,
 )
 
 
@@ -111,6 +113,18 @@ class ReportWindowSelectionTests(unittest.TestCase):
             self.assertEqual(set(candidates["CG1"]), {"CG1_1", "CG1_2"})
             self.assertEqual(set(candidates["CG1"]["CG1_2"]), {"CG1_2_1"})
 
+    def test_excluded_quarter_is_hidden_from_spectrum_candidates(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            series_folder = Path(temp_dir)
+            spectra_root = series_folder / "measurements" / "02_SPECTRA" / "2026-07-18"
+            _write_spectrum(spectra_root / "CG1" / "CG1_1" / "CG1_1_1" / "SPECTRUM_CG1_1_1.xlsx")
+            _write_spectrum(spectra_root / "CG2" / "CG2_1" / "CG2_1_1" / "SPECTRUM_CG2_1_1.xlsx")
+            app = SimpleNamespace(series=SimpleNamespace(series_folder=series_folder))
+
+            candidates = collect_report_spectrum_candidates(app, "2026-07-18", {2})
+
+            self.assertEqual(set(candidates), {"CG1"})
+
     def test_selected_pixel_is_limited_to_selected_substrate(self):
         candidates = {
             "CG1": {
@@ -135,6 +149,15 @@ class ReportBuilderSelectionTests(unittest.TestCase):
         for mode in (REPORT_MODE_FULL, REPORT_MODE_IVL, REPORT_MODE_SPECTRA):
             with self.subTest(mode=mode):
                 self.assertEqual(parse_args(["--report-mode", mode]).report_mode, mode)
+
+    def test_cli_accepts_repeated_excluded_quarters(self):
+        args = parse_args(["--exclude-quarter", "2", "--exclude-quarter", "4"])
+        self.assertEqual(args.exclude_quarter, [2, 4])
+
+    def test_series_quarter_number_uses_trailing_number(self):
+        self.assertEqual(series_quarter_number("CLR3"), 3)
+        self.assertEqual(series_quarter_number("quarter12"), 12)
+        self.assertIsNone(series_quarter_number("UNKNOWN"))
 
     def test_excluded_measurement_root_is_not_required_in_strict_mode(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -225,6 +248,57 @@ class ReportBuilderSelectionTests(unittest.TestCase):
         self.assertEqual([record.pixel for record in records], ["CG1_2_3"])
         self.assertEqual(records[0].subseries, "CG1_2")
         self.assertEqual(warnings, [])
+
+    def test_excluded_quarter_is_skipped_before_reading_measurements(self):
+        timestamp = datetime(2026, 7, 18, 12, 0, 0)
+        paths = {
+            "CG1_1_1": MeasurementPath(Path("one.xlsx"), "2026-07-18", "CG1", "CG1_1", "CG1_1_1", timestamp),
+            "CG2_1_1": MeasurementPath(Path("two.xlsx"), "2026-07-18", "CG2", "CG2_1", "CG2_1_1", timestamp),
+        }
+
+        def make_spectrum_record(meta, _sheet_name, _warnings):
+            return SpectrumRecord(
+                meta.path,
+                meta.date_dir,
+                meta.series,
+                meta.subseries,
+                meta.pixel,
+                [2.0],
+                [500.0],
+                [[100.0]],
+            )
+
+        def make_iv_record(meta, _warnings):
+            return IvRecord(
+                meta.path,
+                meta.date_dir,
+                meta.series,
+                meta.subseries,
+                meta.pixel,
+                "Cycle_1",
+                "WORKING",
+                [],
+            )
+
+        with patch("oled_app.reports.origin_report.latest_by_pixel", return_value=paths), patch(
+            "oled_app.reports.origin_report.read_spectrum_record",
+            side_effect=make_spectrum_record,
+        ), patch(
+            "oled_app.reports.origin_report.read_iv_record",
+            side_effect=make_iv_record,
+        ):
+            spectra = collect_spectrum_records(
+                Path("spectra"),
+                {},
+                "Processed counts per s",
+                False,
+                [],
+                excluded_quarters={2},
+            )
+            ivl = collect_iv_records(Path("ivl"), [], excluded_quarters={2})
+
+        self.assertEqual([record.series for record in spectra], ["CG1"])
+        self.assertEqual([record.series for record in ivl], ["CG1"])
 
     def test_cli_accepts_series_pixel_selection(self):
         args = parse_args(["--spectrum-series-pixel", "CG1=CG1_2_3"])
