@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 import csv
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from oled_app.measurements.stability import (
     StabilityParams,
@@ -111,6 +113,106 @@ class StabilitySetpointTests(unittest.TestCase):
                 self.assertTrue(result["file"].exists())
                 self.assertEqual(result["final_setpoint"], 1.5)
                 self.assertEqual(result["control_mode"], "voltage")
+        finally:
+            uninstall_simulator_modules()
+
+    def test_serial_write_failure_reports_confirmed_emergency_shutdown(self) -> None:
+        class Channel:
+            def __init__(self, fail_second_voltage: bool = False):
+                self.fail_second_voltage = fail_second_voltage
+                self.voltage_calls = 0
+
+            @property
+            def set(self):
+                return self
+
+            def enabled(self, _value, response=0):
+                return None
+
+            def range(self, _value, response=0):
+                return None
+
+            def voltage(self, _value, response=0):
+                self.voltage_calls += 1
+                if self.fail_second_voltage and self.voltage_calls >= 2:
+                    raise PermissionError("WriteFile failed")
+
+            def measure(self):
+                return [[0.0, 0.0]]
+
+        class Device:
+            def __init__(self, _port):
+                self.smu1 = Channel(fail_second_voltage=True)
+                self.smu2 = Channel()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                return None
+
+        params = StabilityParams(
+            com_port="COM3",
+            control_mode="voltage",
+            voltage_setpoint_V=4.0,
+            voltage_start=4.0,
+            measurement_time_s=1.0,
+            sample_interval_s=0.1,
+        )
+        fake_xtralien = SimpleNamespace(Device=Device)
+
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                patch.dict(sys.modules, {"xtralien": fake_xtralien}),
+                patch("oled_app.measurements.stability.prepare_hardware_environment"),
+                patch("oled_app.measurements.stability.time.sleep", return_value=None),
+                patch(
+                    "oled_app.measurements.stability.shutdown_smu_with_reconnect",
+                    return_value=True,
+                ) as shutdown,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Команды безопасного сброса выходов",
+                ):
+                    run_stability_measurement(
+                        "Q1_1_1",
+                        Path(folder),
+                        params,
+                        lambda _message: None,
+                        {"raw_data": {"policy": "keep_separate", "folder_name": "raw_data"}},
+                    )
+
+        shutdown.assert_called_once()
+
+    def test_unconfirmed_shutdown_prevents_successful_stability_result(self) -> None:
+        controller = StabilitySetpointController("voltage", 1.0, maximum=5.0)
+        controller.request_stop()
+        params = StabilityParams(
+            control_mode="voltage",
+            voltage_setpoint_V=1.0,
+            voltage_start=1.0,
+            measurement_time_s=1.0,
+        )
+
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                with patch(
+                    "oled_app.measurements.stability.shutdown_smu_with_reconnect",
+                    return_value=False,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "Немедленно отключите выход SMU вручную"):
+                        run_stability_measurement(
+                            "Q1_1_1",
+                            Path(folder),
+                            params,
+                            lambda _message: None,
+                            {
+                                "hardware_mode": "simulator",
+                                "raw_data": {"policy": "keep_separate", "folder_name": "raw_data"},
+                            },
+                            control=controller,
+                        )
         finally:
             uninstall_simulator_modules()
 

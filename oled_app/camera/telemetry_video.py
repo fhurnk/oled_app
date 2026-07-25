@@ -23,10 +23,10 @@ TELEMETRY_VIDEO_SUFFIX = "_telemetry"
 
 @dataclass(frozen=True)
 class StabilityTelemetrySample:
-    """One measured stability point used by the video telemetry renderer."""
+    """One stability point with the commanded voltage used by the video renderer."""
 
     measurement_time_s: float
-    voltage_V: float
+    voltage_setpoint_V: float
     current_mA: float
 
 
@@ -50,7 +50,7 @@ def find_ffmpeg_executable() -> Path:
 
 
 def read_stability_telemetry(workbook_path: Path | str) -> List[StabilityTelemetrySample]:
-    """Read elapsed time, measured voltage and measured current from a stability workbook."""
+    """Read elapsed time, commanded voltage and measured current from a stability workbook."""
 
     path = Path(workbook_path)
     if not path.exists():
@@ -60,9 +60,10 @@ def read_stability_telemetry(workbook_path: Path | str) -> List[StabilityTelemet
         worksheet = workbook["Data"] if "Data" in workbook.sheetnames else workbook.active
         required = {
             "Time (s)": "time",
-            "Voltage OLED / LED (V)": "voltage",
+            "Applied voltage (V)": "applied_voltage",
             "Current OLED / LED (mA)": "current",
         }
+        optional = {"Voltage setpoint (V)": "voltage_setpoint"}
         header_row: Optional[int] = None
         columns: Dict[str, int] = {}
         for row_index in range(1, min(worksheet.max_row, 60) + 1):
@@ -71,7 +72,9 @@ def read_stability_telemetry(workbook_path: Path | str) -> List[StabilityTelemet
                 value = worksheet.cell(row=row_index, column=column_index).value
                 if value in required:
                     row_columns[required[str(value)]] = column_index
-            if len(row_columns) == len(required):
+                elif value in optional:
+                    row_columns[optional[str(value)]] = column_index
+            if all(alias in row_columns for alias in required.values()):
                 header_row = row_index
                 columns = row_columns
                 break
@@ -80,21 +83,35 @@ def read_stability_telemetry(workbook_path: Path | str) -> List[StabilityTelemet
 
         samples: List[StabilityTelemetrySample] = []
         for row_index in range(header_row + 1, worksheet.max_row + 1):
-            values = (
-                worksheet.cell(row=row_index, column=columns["time"]).value,
-                worksheet.cell(row=row_index, column=columns["voltage"]).value,
-                worksheet.cell(row=row_index, column=columns["current"]).value,
+            measurement_time = worksheet.cell(row=row_index, column=columns["time"]).value
+            applied_voltage = worksheet.cell(row=row_index, column=columns["applied_voltage"]).value
+            current = worksheet.cell(row=row_index, column=columns["current"]).value
+            voltage_setpoint = (
+                worksheet.cell(row=row_index, column=columns["voltage_setpoint"]).value
+                if "voltage_setpoint" in columns
+                else None
             )
             try:
-                measurement_time_s, voltage_V, current_mA = (float(value) for value in values)
+                measurement_time_s = float(measurement_time)
+                applied_voltage_V = float(applied_voltage)
+                current_mA = float(current)
             except (TypeError, ValueError):
                 continue
-            if not all(math.isfinite(value) for value in (measurement_time_s, voltage_V, current_mA)):
+            try:
+                requested_voltage_V = float(voltage_setpoint)
+            except (TypeError, ValueError):
+                requested_voltage_V = applied_voltage_V
+            if not math.isfinite(requested_voltage_V):
+                requested_voltage_V = applied_voltage_V
+            if not all(
+                math.isfinite(value)
+                for value in (measurement_time_s, requested_voltage_V, current_mA)
+            ):
                 continue
             samples.append(
                 StabilityTelemetrySample(
                     measurement_time_s=measurement_time_s,
-                    voltage_V=voltage_V,
+                    voltage_setpoint_V=requested_voltage_V,
                     current_mA=current_mA,
                 )
             )
@@ -233,7 +250,7 @@ def _write_ass_file(
             text = (
                 f"Стабильность · {safe_pixel}{warning}\\N"
                 f"t = {sample.measurement_time_s:.1f} с    "
-                f"U = {sample.voltage_V:.3f} В    I = {sample.current_mA:.3f} мА"
+                f"U уст. = {sample.voltage_setpoint_V:.3f} В    I = {sample.current_mA:.3f} мА"
             )
         lines.append(
             f"Dialogue: 0,{_ass_timestamp(start)},{_ass_timestamp(end)},Telemetry,,0,0,0,,{text}"

@@ -68,7 +68,7 @@
     "release_channel": "stable",
     "current_release": "v1.8.8",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Camera video-quality and FPS controls are shown only when the connected camera exposes selectable settings.",
+    "release_scope": "Dynamic camera controls plus a stability hotfix for reconnect-based SMU shutdown and commanded-voltage telemetry.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

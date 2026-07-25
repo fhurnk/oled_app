@@ -10,7 +10,7 @@ This file is written for Codex agents. Read it before editing the project.
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.8`. Camera video-quality and FPS rows are visible only when the connected camera exposes corresponding writable choice controls; unavailable settings no longer occupy disabled UI rows.
+The current stable release is `v1.8.8` with the 2026-07-25 hotfix. Camera video controls are shown only when writable; stability serial failures trigger reconnect-based SMU shutdown; telemetry displays commanded voltage rather than the measured voltage.
 
 ## Main Entry Points
 

@@ -28,18 +28,20 @@ def write_stability_workbook(path: Path) -> None:
     worksheet.append(
         [
             "Time (s)",
+            "Voltage setpoint (V)",
+            "Applied voltage (V)",
             "Voltage OLED / LED (V)",
             "Current OLED / LED (mA)",
         ]
     )
-    worksheet.append([0.0, 3.1, 1.2])
-    worksheet.append([1.0, 3.2, 1.3])
+    worksheet.append([0.0, 4.0, 4.0, 3.999, 1.2])
+    worksheet.append([1.0, None, 3.2, 3.198, 1.3])
     workbook.save(path)
     workbook.close()
 
 
 class StabilityTelemetryVideoTests(unittest.TestCase):
-    def test_reads_measured_voltage_and_current_from_workbook(self) -> None:
+    def test_reads_voltage_setpoint_instead_of_measured_voltage(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             workbook_path = Path(folder) / "stability.xlsx"
             write_stability_workbook(workbook_path)
@@ -47,7 +49,7 @@ class StabilityTelemetryVideoTests(unittest.TestCase):
             samples = read_stability_telemetry(workbook_path)
 
         self.assertEqual(len(samples), 2)
-        self.assertEqual(samples[0], StabilityTelemetrySample(0.0, 3.1, 1.2))
+        self.assertEqual(samples[0], StabilityTelemetrySample(0.0, 4.0, 1.2))
         self.assertEqual(samples[1], StabilityTelemetrySample(1.0, 3.2, 1.3))
 
     def test_maps_measurement_points_to_video_with_preroll_and_last_value_hold(self) -> None:

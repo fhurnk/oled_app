@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 from openpyxl import load_workbook
 
-from oled_app.hardware import prepare_hardware_environment, safe_shutdown_smu
+from oled_app.hardware import prepare_hardware_environment, shutdown_smu_with_reconnect
 from oled_app.measurements.raw_io import RawCsvWriter, cleanup_raw_files, raw_csv_path
 from oled_app.processing.stability_results import (
     STABILITY_RAW_HEADERS,
@@ -243,6 +243,8 @@ def run_stability_measurement(
     last_elapsed = 0.0
     last_control_revision = -1
     last_progress_payload: Optional[Dict[str, Any]] = None
+    measurement_error: Optional[Exception] = None
+    shutdown_confirmed = True
 
     with RawCsvWriter(raw_file, STABILITY_RAW_HEADERS) as raw_writer:
         with xtralien.Device(params.com_port) as smu:
@@ -384,8 +386,28 @@ def run_stability_measurement(
 
                     if current_limit_reached or voltage_limit_reached or stopped_by_user:
                         break
+            except Exception as exc:
+                measurement_error = exc
             finally:
-                safe_shutdown_smu(smu)
+                shutdown_confirmed = shutdown_smu_with_reconnect(smu, params.com_port, log=log)
+
+    if measurement_error is not None or not shutdown_confirmed:
+        if shutdown_confirmed:
+            safety_note = "Команды безопасного сброса выходов (0 В и/или отключение) приняты прибором."
+        else:
+            safety_note = (
+                "КРИТИЧЕСКИ: подтвердить отключение выходов не удалось. "
+                "Немедленно отключите выход SMU вручную."
+            )
+        if measurement_error is None:
+            raise RuntimeError(
+                "Измерение стабильности завершилось, но безопасное выключение SMU не подтверждено.\n"
+                f"{safety_note}"
+            )
+        raise RuntimeError(
+            f"Измерение стабильности остановлено из-за ошибки связи с SMU: {measurement_error}\n"
+            f"{safety_note}"
+        ) from measurement_error
 
     if current_limit_reached:
         status = "BURNED"
