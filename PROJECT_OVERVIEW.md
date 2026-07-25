@@ -160,7 +160,7 @@ OLED_series/
       01_IVL_VAH/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
       02_SPECTRA/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
       03_STABILITY/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
-      04_CAMERA/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/camera/
+      04_CAMERA/YYYY-MM-DD/CR1/CR1_1/CR1_1_1/
         1/
           CR1_1_1_ivl_photo_before_*.jpg
           CR1_1_1_ivl_video_*.mp4
@@ -170,6 +170,8 @@ OLED_series/
           CR1_1_1_stability_video_*.mp4
           CR1_1_1_stability_video_*_telemetry.mp4
 ```
+
+До хотфикса `v1.8.8` камерные сессии создавались в дополнительной подпапке `<pixel>/camera/N`. Приложение не перемещает эти материалы, но учитывает их номера при создании новых прямых каталогов `<pixel>/N`.
 
 Начиная с `v1.7.5`, ВАЯХ, спектры и стабильность в модульном приложении пишут промежуточные `*_raw.csv` после каждой точки и после завершения собирают из них совместимые итоговые `.xlsx`. В настройках можно выбрать, сохранять raw CSV в подпапке `raw_data` или удалять после успешной сборки XLSX.
 

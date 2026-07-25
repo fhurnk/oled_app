@@ -68,7 +68,7 @@
     "release_channel": "stable",
     "current_release": "v1.8.8",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Dynamic camera controls plus a stability hotfix for reconnect-based SMU shutdown and commanded-voltage telemetry.",
+    "release_scope": "Dynamic camera controls plus hotfixes for reconnect-based SMU shutdown, commanded-voltage telemetry, and direct numbered camera-session folders.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

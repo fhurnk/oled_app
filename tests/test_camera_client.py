@@ -36,7 +36,7 @@ from oled_app.gui.camera_window import (
     stability_postroll_remaining_s,
 )
 from oled_app.gui.widgets import calculate_window_geometry
-from oled_app.series.paths import ensure_camera_session_folder
+from oled_app.series.paths import ensure_camera_session_folder, ensure_measurement_folder
 
 
 class CameraClientHelpersTests(unittest.TestCase):
@@ -169,10 +169,36 @@ class CameraClientHelpersTests(unittest.TestCase):
             first = ensure_camera_session_folder(Path(folder), "CG1_1_1", pixel_row)
             second = ensure_camera_session_folder(Path(folder), "CG1_1_1", pixel_row)
 
-        self.assertEqual(first.parts[-7], "04_CAMERA")
-        self.assertEqual(first.parts[-5:-1], ("CG1", "CG1_1", "CG1_1_1", "camera"))
+        self.assertEqual(first.parts[-6], "04_CAMERA")
+        self.assertEqual(first.parts[-4:], ("CG1", "CG1_1", "CG1_1_1", "1"))
         self.assertEqual(first.name, "1")
         self.assertEqual(second.name, "2")
+
+    def test_camera_session_number_continues_after_legacy_camera_folder(self) -> None:
+        pixel_row = {
+            "Quarter number": 1,
+            "Quarter code": "CG",
+            "Substrate number": 1,
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            pixel_root = ensure_measurement_folder(
+                Path(folder),
+                "CAMERA",
+                "CG1_1_1",
+                pixel_row,
+            )
+            legacy_session = pixel_root / "camera" / "3"
+            legacy_session.mkdir(parents=True)
+
+            new_session = ensure_camera_session_folder(
+                Path(folder),
+                "CG1_1_1",
+                pixel_row,
+            )
+
+            self.assertEqual(new_session, pixel_root / "4")
+            self.assertTrue(legacy_session.is_dir())
+
     def test_series_camera_opens_selected_measurement_with_selected_pixel(self) -> None:
         class Value:
             def __init__(self, value: str):

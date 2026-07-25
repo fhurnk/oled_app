@@ -60,12 +60,17 @@ def ensure_camera_session_folder(
         "CAMERA",
         pixel_id,
         pixel_row,
-    ) / "camera"
-    camera_root.mkdir(parents=True, exist_ok=True)
+    )
+    legacy_camera_root = camera_root / "camera"
+    numbered_session_roots = [camera_root]
+    if legacy_camera_root.is_dir():
+        numbered_session_roots.append(legacy_camera_root)
+
     session_number = max(
         (
             int(item.name)
-            for item in camera_root.iterdir()
+            for session_root in numbered_session_roots
+            for item in session_root.iterdir()
             if item.is_dir() and item.name.isdigit()
         ),
         default=0,

@@ -10,7 +10,7 @@ This file is written for Codex agents. Read it before editing the project.
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.8` with the 2026-07-25 hotfix. Camera video controls are shown only when writable; stability serial failures trigger reconnect-based SMU shutdown; telemetry displays commanded voltage rather than the measured voltage.
+The current stable release is `v1.8.8` with the 2026-07-25 hotfix. Camera video controls are shown only when writable; stability serial failures trigger reconnect-based SMU shutdown; telemetry displays commanded voltage rather than the measured voltage; new camera sessions use `<pixel>/N` without a redundant `camera` level while legacy numbering remains recognized.
 
 ## Main Entry Points
 
