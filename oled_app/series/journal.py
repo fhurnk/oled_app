@@ -142,6 +142,7 @@ class SeriesJournal:
                 old.get("Last IVL file", ""),
                 old.get("Last IVL max current (mA)", ""),
                 old.get("Last IVL max photodiode (uA)", ""),
+                bool(old.get("Spectrum priority", False)),
                 old.get("Last spectrum date", ""),
                 old.get("Last spectrum file", ""),
                 old.get("Last spectrum peak count", ""),
@@ -208,6 +209,25 @@ class SeriesJournal:
             if row.get("Pixel ID") == pixel_id:
                 return row
         return None
+
+    def set_spectrum_priority(self, pixel_id: str, enabled: bool) -> None:
+        wb = load_workbook(self.path)
+        try:
+            ws = wb[PIXELS_SHEET]
+            headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+            columns = {header: index + 1 for index, header in enumerate(headers)}
+            if "Spectrum priority" not in columns:
+                column = ws.max_column + 1
+                ws.cell(row=1, column=column, value="Spectrum priority")
+                columns["Spectrum priority"] = column
+                style_header_row(ws, 1, column, column)
+            for row in range(2, ws.max_row + 1):
+                if ws.cell(row=row, column=columns["Pixel ID"]).value == pixel_id:
+                    ws.cell(row=row, column=columns["Spectrum priority"], value=bool(enabled))
+                    break
+            wb.save(self.path)
+        finally:
+            wb.close()
 
     def has_any_ivl(self) -> bool:
         if not self.path.exists():
@@ -289,6 +309,8 @@ class SeriesJournal:
                 if max_photo_uA is not None:
                     ws_pixels.cell(row=row_idx, column=col["Last IVL max photodiode (uA)"], value=float(max_photo_uA))
             elif measurement_type == "SPECTRUM":
+                if "Spectrum priority" in col:
+                    ws_pixels.cell(row=row_idx, column=col["Spectrum priority"], value=False)
                 ws_pixels.cell(row=row_idx, column=col["Last spectrum date"], value=date_text)
                 ws_pixels.cell(row=row_idx, column=col["Last spectrum file"], value=rel_file)
                 if spectrum_peak_count is not None and "Last spectrum peak count" in col:

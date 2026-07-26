@@ -137,7 +137,7 @@ def normalize_quarter_payload(
     }
 
 
-def luminance_coefficient_for_color(app_settings: Dict[str, Any], color: Any) -> float:
+def base_luminance_coefficient_for_color(app_settings: Dict[str, Any], color: Any) -> float:
     units = app_settings.get("measurement_units", {}) if isinstance(app_settings, dict) else {}
     # Legacy settings from v1.7.5/v1.7.6 may still contain the old shared coefficient.
     fallback = float(units.get("luminance_cd_m2_per_uA", 1.0) or 1.0)
@@ -146,3 +146,30 @@ def luminance_coefficient_for_color(app_settings: Dict[str, Any], color: Any) ->
         return float(units.get(key, fallback) or fallback)
     except Exception:
         return fallback
+
+
+def geometric_conversion_coefficient(app_settings: Dict[str, Any]) -> float:
+    units = app_settings.get("measurement_units", {}) if isinstance(app_settings, dict) else {}
+    try:
+        value = float(units.get("geometric_conversion_coefficient", 1.0) or 1.0)
+        return value if value > 0 else 1.0
+    except Exception:
+        return 1.0
+
+
+def default_integral_conversion_coefficient(app_settings: Dict[str, Any]) -> float:
+    units = app_settings.get("measurement_units", {}) if isinstance(app_settings, dict) else {}
+    try:
+        value = float(units.get("integral_conversion_coefficient", 1.0) or 1.0)
+        return value if value > 0 else 1.0
+    except Exception:
+        return 1.0
+
+
+def luminance_coefficient_for_color(app_settings: Dict[str, Any], color: Any) -> float:
+    """Return the effective color coefficient including the geometry factor."""
+
+    return (
+        base_luminance_coefficient_for_color(app_settings, color)
+        * geometric_conversion_coefficient(app_settings)
+    )

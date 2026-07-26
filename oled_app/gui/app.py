@@ -32,8 +32,10 @@ from .ivl_window import (
 from .camera_window import open_camera_test_window
 from .measurement_menu import pixel_ids, refresh_pixel_table, show_measurement_menu
 from .report_window import open_report_window
+from .recalculation_window import start_series_luminance_recalculation
 from .settings_window import open_settings_window
 from .spectrum_window import open_spectrum_window
+from .spectral_calibration_window import calibrate_quarter_from_latest_spectrum
 from .stability_window import open_stability_window
 from .start_screen import show_edit_series_screen, show_new_series_screen, show_start_screen
 from .widgets import enable_windows_dpi_awareness, fit_window_to_screen, window_dpi_scale
@@ -264,6 +266,12 @@ class OLEDModularApp(tk.Tk):
 
     def open_spectrum_window(self) -> None:
         open_spectrum_window(self)
+
+    def calibrate_quarter_from_latest_spectrum(self) -> None:
+        calibrate_quarter_from_latest_spectrum(self)
+
+    def recalculate_series_luminance(self) -> None:
+        start_series_luminance_recalculation(self)
 
     def open_stability_window(self) -> None:
         open_stability_window(self)

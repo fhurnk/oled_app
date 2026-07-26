@@ -22,6 +22,9 @@ MIGRATED_PACKAGE_LAYERS = (
     "measurements.spectrum",
     "measurements.stability",
     "processing.ivl_results",
+    "processing.ivl_preview",
+    "processing.luminance_recalculation",
+    "processing.spectral_calibration",
     "processing.spectrum_results",
     "processing.stability_results",
     "gui.widgets",
@@ -33,6 +36,8 @@ MIGRATED_PACKAGE_LAYERS = (
     "gui.settings_window",
     "gui.ivl_window",
     "gui.spectrum_window",
+    "gui.spectral_calibration_window",
+    "gui.recalculation_window",
     "gui.stability_window",
     "gui.report_window",
 )

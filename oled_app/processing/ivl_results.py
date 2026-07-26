@@ -174,6 +174,7 @@ def save_ivl_workbook(pixel_id: str, filename: Path, params: Any, cycles: List[D
         ("Current limit (mA)", _params_value(params, "current_limit_mA", "")),
         ("Photodiode threshold (uA)", _params_value(params, "photodiode_threshold_uA", "")),
         ("Pixel area (mm^2)", _params_value(params, "pixel_area_mm2", "")),
+        ("Geometric coefficient", _params_value(params, "geometric_coefficient", 1.0)),
         ("Luminance conversion (cd/m^2 per uA)", _params_value(params, "luminance_cd_m2_per_uA", "")),
         ("Burned confirmation cycles", _params_value(params, "burned_confirmation_cycles", "")),
         ("Первый промер / диагноз", ivl_diagnosis),
@@ -193,7 +194,7 @@ def save_ivl_workbook(pixel_id: str, filename: Path, params: Any, cycles: List[D
         "Current limit reached",
         "First measurement diagnosis",
     ]
-    start = 13
+    start = 3 + len(meta) + 1
     ws_sum.append([])
     for column, header in enumerate(summary_headers, start=1):
         ws_sum.cell(row=start, column=column, value=header)

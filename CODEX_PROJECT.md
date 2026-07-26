@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.8.8`
+- Current app version: `v1.9.0-alpha`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.8.8` with the 2026-07-25 hotfix. Camera video controls are shown only when writable; stability serial failures trigger reconnect-based SMU shutdown; telemetry displays commanded voltage rather than the measured voltage; new camera sessions use `<pixel>/N` without a redundant `camera` level while legacy numbering remains recognized.
+The current prerelease is `v1.9.0-alpha`. It adds on-demand CIE/BPW34 spectral recalculation into a separate workbook, quarter-level integral calibration, geometry-aware luminance coefficients, series-wide XLSX/raw recalculation, spectrum-priority flags, and IVL hover thumbnails. The previous stable release is `v1.8.8`.
 
 ## Main Entry Points
 
@@ -31,6 +31,8 @@ The current stable release is `v1.8.8` with the 2026-07-25 hotfix. Camera video 
 - Origin report preparation now lives in `oled_app/reports/origin_report.py`; `scripts/build_report_origin_workbook.py` is a CLI wrapper.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.
 - Raw CSV measurement helpers now live in `oled_app/measurements/raw_io.py`; IVL, Spectrum, and Stability post-processing live in `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, and `oled_app/processing/stability_results.py`.
+- On-demand CIE/BPW34 recalculation lives in `oled_app/processing/spectral_calibration.py`; it must write `SPECTRAL_RECALC_*.xlsx` and must not modify the source spectrum workbook.
+- Existing-series luminance migration lives in `oled_app/processing/luminance_recalculation.py`; IVL thumbnails live in `oled_app/processing/ivl_preview.py`.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular application.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular application.
 - Shared Tk helpers, including Windows DPI awareness, screen-bounded geometry and scrollable containers, live in `oled_app/gui/widgets.py`; measurement progress windows live in `oled_app/gui/progress.py`.
@@ -41,7 +43,7 @@ During modularization, do not edit `oled_measurement_app_v2_5.py` unless the use
 ## Measurement Workflows
 
 - IVL / ВАЯХ: modular workflow is in `oled_app/measurements/ivl.py` and the modular GUI window is in `oled_app/gui/ivl_window.py`; it writes raw CSV during measurement and builds the compatible final XLSX through `oled_app/processing/ivl_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; it previews integration-time trials, supports safe stopping, writes raw summary/spectra CSV during measurement, and builds the compatible final XLSX through `oled_app/processing/spectrum_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
+- Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; it previews integration-time trials, supports safe stopping, writes raw summary/spectra CSV during measurement, builds the compatible final XLSX through `oled_app/processing/spectrum_results.py`, and prioritizes pixels marked in the journal. Spectral sensitivity correction is never automatic and is launched separately from the series menu.
 - Stability: modular workflow is in `oled_app/measurements/stability.py` and the modular GUI window is in `oled_app/gui/stability_window.py`; it supports mutable constant-current feedback and immediate constant-voltage targets and records both target and applied values in raw CSV/XLSX.
 - Report: report builder logic is in `oled_app/reports/origin_report.py`, and the modular GUI window is in `oled_app/gui/report_window.py`; it runs `scripts/build_report_origin_workbook.py` for full, IVL-only, or spectra-only Origin `.opju` reports, supports excluding holder quarters 1–4 from every section, and uses one selected substrate and spectrum pixel per included series plus selectable voltage grids when spectra are included.
 - Series journal: `series_journal.xlsx` inside each series folder.

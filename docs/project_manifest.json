@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.8.8",
+    "current_version": "v1.9.0-alpha",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.8.8.md"
+    "docs/versions/v1.9.0-alpha.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -30,6 +30,10 @@
     "processing_ivl_results_module": "oled_app/processing/ivl_results.py",
     "processing_stability_results_module": "oled_app/processing/stability_results.py",
     "processing_spectrum_results_module": "oled_app/processing/spectrum_results.py",
+    "processing_spectral_calibration_module": "oled_app/processing/spectral_calibration.py",
+    "processing_luminance_recalculation_module": "oled_app/processing/luminance_recalculation.py",
+    "processing_ivl_preview_module": "oled_app/processing/ivl_preview.py",
+    "spectral_sensitivity_data": "oled_app/data/spectral_sensitivity.csv",
     "measurement_spectrum_module": "oled_app/measurements/spectrum.py",
     "measurement_stability_module": "oled_app/measurements/stability.py",
     "series_metadata_module": "oled_app/series/metadata.py",
@@ -46,6 +50,8 @@
     "gui_settings_window_module": "oled_app/gui/settings_window.py",
     "gui_ivl_window_module": "oled_app/gui/ivl_window.py",
     "gui_spectrum_window_module": "oled_app/gui/spectrum_window.py",
+    "gui_spectral_calibration_module": "oled_app/gui/spectral_calibration_window.py",
+    "gui_luminance_recalculation_module": "oled_app/gui/recalculation_window.py",
     "gui_stability_window_module": "oled_app/gui/stability_window.py",
     "gui_report_window_module": "oled_app/gui/report_window.py",
     "requirements": "requirements.txt",
@@ -65,10 +71,11 @@
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
-    "release_channel": "stable",
-    "current_release": "v1.8.8",
+    "release_channel": "alpha",
+    "current_release": "v1.9.0-alpha",
+    "previous_release": "v1.8.8",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "Dynamic camera controls plus hotfixes for reconnect-based SMU shutdown, commanded-voltage telemetry, and direct numbered camera-session folders.",
+    "release_scope": "On-demand CIE/BPW34 recalculation in a separate workbook, quarter calibration, geometry-aware luminance migration, spectrum queue, and IVL hover thumbnails.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -85,7 +92,7 @@
   },
   "measurement_workflows": {
     "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing.",
-    "SPECTRUM": "Spectral measurement with context-sensitive pixel/substrate selection, live integration-time trial previews, persistent manual start voltage, and safe stop; modular workflow writes raw summary/spectra CSV during measurement and builds final XLSX after processing.",
+    "SPECTRUM": "Spectral measurement with pixel/substrate/priority-queue selection, live integration-time trial previews, persistent manual start voltage, and safe stop; CIE/BPW34 recalculation runs only from a separate button and writes SPECTRAL_RECALC_*.xlsx without modifying the source workbook.",
     "STABILITY": "Mutable constant-current feedback or immediate constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
   },
   "git": {

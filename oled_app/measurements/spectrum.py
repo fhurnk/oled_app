@@ -62,6 +62,7 @@ class SpectrumParams:
     peak_detection_enabled: bool = False
     pixel_area_mm2: float = 1.0
     luminance_cd_m2_per_uA: float = 1.0
+    geometric_coefficient: float = 1.0
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()

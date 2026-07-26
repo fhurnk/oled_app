@@ -8,7 +8,13 @@ from copy import deepcopy
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Tuple
 
+from PIL import Image, ImageTk
+
 from oled_app.hardware.probe import probe_hardware
+from oled_app.processing.ivl_preview import (
+    create_ivl_thumbnail_from_workbook,
+    ivl_thumbnail_path,
+)
 from oled_app.series import (
     build_holder_layout,
     ivl_status_marker,
@@ -51,6 +57,20 @@ def show_measurement_menu(app) -> None:
     ttk.Button(buttons, text="Обновить", command=app.refresh_pixel_table, width=14).grid(row=0, column=3, padx=8)
     ttk.Button(buttons, text="Журнал", command=lambda: messagebox.showinfo("Журнал", str(app.series.journal.path)), width=12).grid(row=0, column=4, padx=8)
     ttk.Button(buttons, text="Составить отчет", command=app.open_report_window, width=18, state=state_after_ivl).grid(row=0, column=5, padx=8)
+    ttk.Button(
+        buttons,
+        text="Пересчитать спектр в отдельный файл",
+        command=app.calibrate_quarter_from_latest_spectrum,
+        width=32,
+        state=state_after_ivl,
+    ).grid(row=1, column=0, columnspan=2, sticky="w", padx=(0, 8), pady=(8, 0))
+    ttk.Button(
+        buttons,
+        text="Пересчитать мкА → кд/м²",
+        command=app.recalculate_series_luminance,
+        width=24,
+        state=state_after_ivl,
+    ).grid(row=1, column=2, columnspan=2, sticky="w", padx=8, pady=(8, 0))
 
     status_history = ttk.Frame(main)
     status_history.pack(fill="both", expand=True, pady=(0, 10))
@@ -144,14 +164,15 @@ def refresh_pixel_table(app) -> None:
 def pixel_ids(app, require_ivl: bool = False, require_opening: bool = False) -> List[str]:
     assert app.series is not None
     rows = app.series.journal.list_pixels()
-    result = []
-    for row in rows:
+    result: List[Tuple[int, int, str]] = []
+    for index, row in enumerate(rows):
         if require_ivl and not row.get("Last IVL file"):
             continue
         if require_opening and as_float_or_none(row.get("Opening voltage (V)")) is None:
             continue
-        result.append(row["Pixel ID"])
-    return result
+        priority = bool(row.get("Spectrum priority"))
+        result.append((0 if priority else 1, index, row["Pixel ID"]))
+    return [pixel_id for _priority, _index, pixel_id in sorted(result)]
 
 
 def build_hardware_status_bar(app, parent) -> None:
@@ -285,14 +306,129 @@ def render_status_holder_canvas(app) -> None:
             canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", outline="#17345F", width=2)
             for pix in range(1, 5):
                 pixel_id = f"{substrate_id}_{pix}"
-                status = (rows.get(pixel_id, {}) or {}).get("Last status", "UNKNOWN")
+                pixel_row = rows.get(pixel_id, {}) or {}
+                status = pixel_row.get("Last status", "UNKNOWN")
                 color = pixel_status_color(status)
                 px, py, pw, ph = pixel_rect_inside_substrate(x, y, w, h, pix)
-                canvas.create_rectangle(px, py, px + pw, py + ph, fill=color, outline="#808080")
-                canvas.create_text(px + pw / 2, py + ph / 2, text=str(pix), font=("Segoe UI", 7))
+                pixel_tag = f"pixel::{pixel_id}"
+                common_tags = ("pixel", pixel_tag)
+                canvas.create_rectangle(
+                    px,
+                    py,
+                    px + pw,
+                    py + ph,
+                    fill=color,
+                    outline="#808080",
+                    tags=common_tags,
+                )
+                canvas.create_text(
+                    px + pw / 2,
+                    py + ph / 2,
+                    text=str(pix),
+                    font=("Segoe UI", 7),
+                    tags=common_tags,
+                )
+                canvas.tag_bind(
+                    pixel_tag,
+                    "<Enter>",
+                    lambda event, selected_pixel=pixel_id: show_ivl_hover_preview(
+                        app,
+                        selected_pixel,
+                        event,
+                    ),
+                )
+                canvas.tag_bind(pixel_tag, "<Leave>", lambda _event: hide_ivl_hover_preview(app))
+                if not pixel_row.get("Last spectrum file"):
+                    priority = bool(pixel_row.get("Spectrum priority"))
+                    priority_tag = f"spectrum-priority::{pixel_id}"
+                    canvas.create_text(
+                        px + pw - 2,
+                        py + 1,
+                        text="☑" if priority else "☐",
+                        anchor="ne",
+                        font=("Segoe UI Symbol", 7, "bold"),
+                        fill="#0B61A4" if priority else "#4B5563",
+                        tags=(pixel_tag, priority_tag),
+                    )
+                    canvas.tag_bind(
+                        priority_tag,
+                        "<Button-1>",
+                        lambda _event, selected_pixel=pixel_id: toggle_spectrum_priority(
+                            app,
+                            selected_pixel,
+                        ),
+                    )
             canvas.create_text(x + w / 2, y + h + 11, text=substrate_id, font=("Segoe UI", 8, "bold"), fill="#17345F")
 
     draw_status_legend(canvas, height)
+
+
+def toggle_spectrum_priority(app, pixel_id: str) -> None:
+    if app.series is None:
+        return
+    row = app.series.journal.get_pixel(pixel_id) or {}
+    if row.get("Last spectrum file"):
+        return
+    enabled = not bool(row.get("Spectrum priority"))
+    app.series.journal.set_spectrum_priority(pixel_id, enabled)
+    app.log(
+        f"{pixel_id}: {'добавлен в приоритетную очередь спектров' if enabled else 'убран из приоритетной очереди спектров'}."
+    )
+    refresh_pixel_table(app)
+
+
+def hide_ivl_hover_preview(app) -> None:
+    window = getattr(app, "_ivl_hover_window", None)
+    if window is not None:
+        try:
+            window.destroy()
+        except Exception:
+            pass
+    app._ivl_hover_window = None
+    app._ivl_hover_photo = None
+
+
+def show_ivl_hover_preview(app, pixel_id: str, event) -> None:
+    hide_ivl_hover_preview(app)
+    if app.series is None:
+        return
+    row = app.series.journal.get_pixel(pixel_id) or {}
+    workbook_path = resolve_series_file(app.series.series_folder, row.get("Last IVL file"))
+    if workbook_path is None:
+        return
+    preview_path = ivl_thumbnail_path(workbook_path)
+    try:
+        if not preview_path.exists():
+            create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
+        with Image.open(preview_path) as source:
+            image = source.copy()
+        photo = ImageTk.PhotoImage(image)
+    except Exception as exc:
+        app.log(f"Не удалось показать миниатюру ВАЯХ {pixel_id}: {exc}")
+        return
+
+    window = tk.Toplevel(app)
+    window.overrideredirect(True)
+    window.attributes("-topmost", True)
+    ttk.Label(window, text=pixel_id, font=("Segoe UI", 9, "bold")).pack(
+        anchor="w",
+        padx=6,
+        pady=(4, 0),
+    )
+    label = ttk.Label(window, image=photo)
+    label.pack(padx=4, pady=4)
+    window.update_idletasks()
+    x = min(
+        int(event.x_root) + 14,
+        max(0, window.winfo_screenwidth() - window.winfo_reqwidth() - 8),
+    )
+    y = min(
+        int(event.y_root) + 14,
+        max(0, window.winfo_screenheight() - window.winfo_reqheight() - 8),
+    )
+    window.geometry(f"+{x}+{y}")
+    app._ivl_hover_window = window
+    app._ivl_hover_photo = photo
 
 
 def draw_holder_base(canvas: tk.Canvas, width: int, height: int, title: str = "") -> None:

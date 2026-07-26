@@ -133,6 +133,8 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "luminance_red_cd_m2_per_uA": 1.0,
         "luminance_green_cd_m2_per_uA": 1.0,
         "luminance_blue_cd_m2_per_uA": 1.0,
+        "geometric_conversion_coefficient": 1.0,
+        "integral_conversion_coefficient": 1.0,
     },
     "raw_data": {
         "policy": RAW_DATA_POLICY_KEEP_SEPARATE,

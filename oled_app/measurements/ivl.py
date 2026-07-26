@@ -16,6 +16,7 @@ from oled_app.processing.ivl_results import (
     build_ivl_workbook_from_raw_csv,
     save_ivl_workbook as write_ivl_workbook,
 )
+from oled_app.processing.ivl_preview import create_ivl_thumbnail, ivl_thumbnail_path
 from oled_app.utils import (
     current_density_mA_cm2,
     luminance_cd_m2,
@@ -48,6 +49,7 @@ class IVLParams:
     burned_confirmation_cycles: int = 1
     pixel_area_mm2: float = 1.0
     luminance_cd_m2_per_uA: float = 1.0
+    geometric_coefficient: float = 1.0
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
@@ -277,6 +279,7 @@ def run_ivl_measurement(
                 cycle += 1
 
     filename = build_ivl_workbook_from_raw_csv(raw_file, filename, pixel_id, params, cycles)
+    thumbnail = create_ivl_thumbnail(ivl_thumbnail_path(filename), cycles)
     kept_raw_files = cleanup_raw_files([raw_file], app_settings, log)
     best_opening = next((cycle.get("opening_voltage") for cycle in cycles if cycle.get("opening_voltage") is not None), None)
     max_current = max([cycle["max_current_mA"] for cycle in cycles], default=0.0)
@@ -302,6 +305,7 @@ def run_ivl_measurement(
             )
     return {
         "file": filename,
+        "thumbnail": thumbnail,
         "raw_file": kept_raw_files[0] if kept_raw_files else None,
         "status": final_status,
         "opening_voltage": best_opening,

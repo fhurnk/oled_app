@@ -121,6 +121,7 @@ def create_spectrum_workbook(filename: Path, pixel_id: str, params: Any, voltage
         ("Current limit", f"{_params_value(params, 'current_limit_mA', '')} мА"),
         ("Pixel area (mm^2)", _params_value(params, "pixel_area_mm2", "")),
         ("Luminance conversion (cd/m^2 per uA)", _params_value(params, "luminance_cd_m2_per_uA", "")),
+        ("Geometric coefficient", _params_value(params, "geometric_coefficient", 1.0)),
         ("LED_TYPE final", _params_value(params, "led_type", "")),
         ("Peak search for T_int", _params_value(params, "peak_search_mode_for_tint", "")),
         ("Derivative peak detection", "YES" if _params_value(params, "peak_detection_enabled", False) else "NO"),

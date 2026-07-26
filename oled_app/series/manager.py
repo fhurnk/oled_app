@@ -9,6 +9,8 @@ from typing import Any, Dict
 from oled_app.constants import APP_VERSION, CONFIG_FILE
 from oled_app.series.journal import SeriesJournal
 from oled_app.series.metadata import (
+    default_integral_conversion_coefficient,
+    geometric_conversion_coefficient,
     luminance_coefficient_for_color,
     normalize_quarter_payload,
     quarter_led_color,
@@ -89,8 +91,59 @@ class SeriesManager:
         self.journal.config = self.config
         self.journal.initialize_or_update()
 
+    def save_config(self) -> None:
+        self.config["app_version"] = APP_VERSION
+        self.config["updated_at"] = now_str()
+        temp_path = self.config_path.with_name(f".{self.config_path.name}.updating")
+        temp_path.write_text(
+            json.dumps(self.config, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temp_path.replace(self.config_path)
+        self.journal.config = self.config
+
     def luminance_coefficient_for_pixel(self, pixel_id: str, app_settings: Dict[str, Any]) -> float:
         row = self.journal.get_pixel(pixel_id) or {}
         quarter_number = int(row.get("Quarter number") or 1)
         color = quarter_led_color(self.config, quarter_number)
         return luminance_coefficient_for_color(app_settings, color)
+
+    def integral_coefficient_for_pixel(self, pixel_id: str, app_settings: Dict[str, Any]) -> float:
+        configured = default_integral_conversion_coefficient(app_settings)
+        calibration = self.integral_calibration_for_pixel(pixel_id)
+        if calibration is not None:
+            try:
+                return configured * float(calibration.get("coefficient"))
+            except (TypeError, ValueError):
+                pass
+        return configured
+
+    def integral_calibration_for_pixel(self, pixel_id: str) -> Dict[str, Any] | None:
+        row = self.journal.get_pixel(pixel_id) or {}
+        quarter_number = str(int(row.get("Quarter number") or 1))
+        calibrations = self.config.get("quarter_integral_calibrations")
+        if isinstance(calibrations, dict):
+            calibration = calibrations.get(quarter_number)
+            if isinstance(calibration, dict):
+                return dict(calibration)
+        return None
+
+    def save_quarter_integral_calibration(
+        self,
+        quarter_number: int,
+        calibration: Dict[str, Any],
+    ) -> None:
+        calibrations = self.config.setdefault("quarter_integral_calibrations", {})
+        if not isinstance(calibrations, dict):
+            calibrations = {}
+            self.config["quarter_integral_calibrations"] = calibrations
+        calibrations[str(int(quarter_number))] = dict(calibration)
+        self.save_config()
+
+    @staticmethod
+    def geometric_coefficient(app_settings: Dict[str, Any]) -> float:
+        return geometric_conversion_coefficient(app_settings)
+
+    @staticmethod
+    def configured_integral_coefficient(app_settings: Dict[str, Any]) -> float:
+        return default_integral_conversion_coefficient(app_settings)

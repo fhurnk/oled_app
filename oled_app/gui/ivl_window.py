@@ -132,6 +132,7 @@ def build_ivl_params(app, vars_: Dict[str, tk.StringVar]) -> IVLParams:
         burned_confirmation_cycles=int(adv.get("burned_confirmation_cycles", 1)),
         pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
         luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
+        geometric_coefficient=float(units.get("geometric_conversion_coefficient", 1.0)),
     )
 
 

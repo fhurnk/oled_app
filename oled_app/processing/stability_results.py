@@ -149,6 +149,7 @@ def create_stability_workbook(filename: Path, pixel_id: str, params: Any) -> Wor
         ("Autosave interval (s)", _params_value(params, "autosave_interval_s", "")),
         ("Photodiode threshold (uA)", _params_value(params, "photodiode_threshold_uA", "")),
         ("Pixel area (mm^2)", _params_value(params, "pixel_area_mm2", "")),
+        ("Geometric coefficient", _params_value(params, "geometric_coefficient", 1.0)),
         ("Luminance conversion (cd/m^2 per uA)", _params_value(params, "luminance_cd_m2_per_uA", "")),
         ("Status", "IN_PROGRESS"),
         ("Max photodiode current (uA)", 0),

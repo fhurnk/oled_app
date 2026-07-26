@@ -50,6 +50,7 @@ class StabilityParams:
     photodiode_range: int = 4
     pixel_area_mm2: float = 1.0
     luminance_cd_m2_per_uA: float = 1.0
+    geometric_coefficient: float = 1.0
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()

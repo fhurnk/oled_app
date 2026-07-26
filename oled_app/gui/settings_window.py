@@ -51,6 +51,8 @@ def open_settings_window(app) -> None:
     luminance_red_var = tk.StringVar(value=str(units.get("luminance_red_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     luminance_green_var = tk.StringVar(value=str(units.get("luminance_green_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     luminance_blue_var = tk.StringVar(value=str(units.get("luminance_blue_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
+    geometric_coefficient_var = tk.StringVar(value=str(units.get("geometric_conversion_coefficient", 1.0)))
+    integral_coefficient_var = tk.StringVar(value=str(units.get("integral_conversion_coefficient", 1.0)))
     raw_settings = app.app_settings.get("raw_data", DEFAULT_APP_SETTINGS["raw_data"])
     raw_policy_labels = {
         RAW_DATA_POLICY_KEEP_SEPARATE: f"Сохранять в папке {RAW_DATA_FOLDER}",
@@ -81,21 +83,34 @@ def open_settings_window(app) -> None:
     add_settings_entry(general, 5, "Коэфф. красный R", luminance_red_var)
     add_settings_entry(general, 6, "Коэфф. зеленый G", luminance_green_var)
     add_settings_entry(general, 7, "Коэфф. синий B", luminance_blue_var)
-    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=8, column=0, sticky="e", pady=4, padx=(0, 8))
+    add_settings_entry(general, 8, "Геометрический коэффициент", geometric_coefficient_var)
+    add_settings_entry(general, 9, "Интегральный коэффициент", integral_coefficient_var)
+    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=10, column=0, sticky="e", pady=4, padx=(0, 8))
     ttk.Combobox(
         general,
         textvariable=raw_policy_var,
         values=list(raw_policy_values.keys()),
         state="readonly",
         width=30,
-    ).grid(row=8, column=1, sticky="w", pady=4)
+    ).grid(row=10, column=1, sticky="w", pady=4)
     ttk.Label(
         general,
         text="simulator = встроенная эмуляция пикселя; real = настоящие xtralien/seabreeze из Python-среды.",
         foreground="#555555",
         wraplength=610,
         justify="left",
-    ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ).grid(row=11, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ttk.Label(
+        general,
+        text=(
+            "R/G/B умножаются на геометрический коэффициент. "
+            "Спектральный интеграл умножается на интегральный, геометрический "
+            "и сохранённый коэффициент четверти."
+        ),
+        foreground="#555555",
+        wraplength=610,
+        justify="left",
+    ).grid(row=12, column=0, columnspan=3, sticky="w", pady=(6, 0))
     general.columnconfigure(1, weight=1)
 
     sim_cfg_var = tk.StringVar(value=str(app.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
@@ -218,11 +233,25 @@ def open_settings_window(app) -> None:
             settings["hardware_mode"] = mode_var.get().strip() or HARDWARE_MODE_REAL
             settings["com_port"] = com_var.get().strip() or "COM3"
             settings["auto_com_port"] = bool(auto_com_var.get())
+            geometric_coefficient = parse_float(
+                geometric_coefficient_var.get(),
+                "Геометрический коэффициент",
+            )
+            integral_coefficient = parse_float(
+                integral_coefficient_var.get(),
+                "Интегральный коэффициент",
+            )
+            if geometric_coefficient <= 0:
+                raise ValueError("Геометрический коэффициент должен быть больше нуля.")
+            if integral_coefficient <= 0:
+                raise ValueError("Интегральный коэффициент должен быть больше нуля.")
             settings["measurement_units"] = {
                 "pixel_area_mm2": parse_float(pixel_area_var.get(), "Площадь пикселя"),
                 "luminance_red_cd_m2_per_uA": parse_float(luminance_red_var.get(), "Коэффициент яркости R"),
                 "luminance_green_cd_m2_per_uA": parse_float(luminance_green_var.get(), "Коэффициент яркости G"),
                 "luminance_blue_cd_m2_per_uA": parse_float(luminance_blue_var.get(), "Коэффициент яркости B"),
+                "geometric_conversion_coefficient": geometric_coefficient,
+                "integral_conversion_coefficient": integral_coefficient,
             }
             settings["raw_data"] = {
                 "policy": raw_policy_values.get(raw_policy_var.get(), RAW_DATA_POLICY_KEEP_SEPARATE),

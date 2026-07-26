@@ -50,6 +50,9 @@ def open_spectrum_window(app) -> None:
     ttk.Radiobutton(frame, text="Вся подложка последовательно", variable=mode_var, value="substrate").grid(
         row=0, column=1, sticky="w", pady=4
     )
+    ttk.Radiobutton(frame, text="Очередь серии", variable=mode_var, value="queue").grid(
+        row=0, column=2, sticky="w", pady=4
+    )
 
     pixel_label = ttk.Label(frame, text="Пиксель:")
     pixel_label.grid(row=1, column=0, sticky="e", pady=5)
@@ -75,6 +78,16 @@ def open_spectrum_window(app) -> None:
     substrate_info_label.grid(
         row=3, column=0, columnspan=2, sticky="w", pady=(0, 4)
     )
+    queue_info_label = ttk.Label(
+        frame,
+        text=(
+            "Приоритетные пиксели с флажком на карте идут первыми; "
+            "после них — остальные доступные пиксели."
+        ),
+        foreground="#555555",
+        wraplength=570,
+    )
+    queue_info_label.grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
     first_pixel = app.series.journal.get_pixel(pixels[0])
     first_opening = as_float_or_none(first_pixel.get("Opening voltage (V)")) if first_pixel else None
@@ -134,6 +147,7 @@ def open_spectrum_window(app) -> None:
             widget.grid() if show_pixel else widget.grid_remove()
         for widget in (substrate_label, substrate_combo, substrate_info_label):
             widget.grid() if show_substrate else widget.grid_remove()
+        queue_info_label.grid() if mode_var.get() == "queue" else queue_info_label.grid_remove()
         if show_pixel:
             update_opening_info()
         else:
@@ -153,8 +167,10 @@ def open_spectrum_window(app) -> None:
             selected_mode = mode_var.get()
             if selected_mode == "single":
                 selected_pixels = [pixel_var.get()]
-            else:
+            elif selected_mode == "substrate":
                 selected_pixels = substrate_groups.get(substrate_var.get(), [])
+            else:
+                selected_pixels = list(pixels)
             if not selected_pixels:
                 raise ValueError("Для выбранной подложки нет доступных пикселей")
 
@@ -182,8 +198,10 @@ def open_spectrum_window(app) -> None:
         win.destroy()
         if selected_mode == "single":
             measure_one_spectrum(app, first_id, params)
-        else:
+        elif selected_mode == "substrate":
             measure_substrate_spectra(app, selected_pixels, params)
+        else:
+            measure_spectrum_queue(app, selected_pixels, params)
 
     ttk.Label(
         frame,
@@ -223,7 +241,7 @@ def initial_spectrum_start_value(saved: Dict[str, Any], opening: Optional[float]
 def group_pixels_by_substrate(app, pixels: List[str]) -> Dict[str, List[str]]:
     """Return eligible pixels grouped in physical substrate order."""
 
-    groups: Dict[str, List[tuple[int, str]]] = {}
+    groups: Dict[str, List[tuple[int, int, str]]] = {}
     for pixel_id in pixels:
         row = app.series.journal.get_pixel(pixel_id) if app.series is not None else None
         if not row:
@@ -233,9 +251,10 @@ def group_pixels_by_substrate(app, pixels: List[str]) -> Dict[str, List[str]]:
             pixel_number = int(row.get("Pixel number") or str(pixel_id).rsplit("_", 1)[1])
         except (TypeError, ValueError, IndexError):
             pixel_number = 9999
-        groups.setdefault(substrate_id, []).append((pixel_number, pixel_id))
+        priority = bool(row.get("Spectrum priority"))
+        groups.setdefault(substrate_id, []).append((0 if priority else 1, pixel_number, pixel_id))
     return {
-        substrate_id: [pixel_id for _number, pixel_id in sorted(items)]
+        substrate_id: [pixel_id for _priority, _number, pixel_id in sorted(items)]
         for substrate_id, items in groups.items()
     }
 
@@ -307,10 +326,23 @@ def measure_one_spectrum(
 
 
 def measure_substrate_spectra(app, pixels: List[str], params: SpectrumParams) -> None:
+    measure_spectrum_sequence(app, pixels, params, title="Спектры всей подложки")
+
+
+def measure_spectrum_queue(app, pixels: List[str], params: SpectrumParams) -> None:
+    measure_spectrum_sequence(app, pixels, params, title="Очередь спектров серии")
+
+
+def measure_spectrum_sequence(
+    app,
+    pixels: List[str],
+    params: SpectrumParams,
+    title: str,
+) -> None:
     measured: List[str] = []
     for pixel_id in pixels:
         choice = messagebox.askyesnocancel(
-            "Спектры всей подложки",
+            title,
             f"Следующий пиксель: {pixel_id}\n\n"
             f"Измерены: {', '.join(measured) if measured else 'пока нет'}\n\n"
             "Да — снять следующий.\nНет — пропустить этот пиксель.\nОтмена — остановить подложку.",
@@ -369,6 +401,7 @@ def build_spectrum_params(app, vars_: Dict[str, tk.StringVar], opening: float, u
         peak_detection_enabled=bool(adv.get("peak_detection_enabled", False)),
         pixel_area_mm2=float(units.get("pixel_area_mm2", 1.0)),
         luminance_cd_m2_per_uA=float(units.get("luminance_cd_m2_per_uA", 1.0)),
+        geometric_coefficient=float(units.get("geometric_conversion_coefficient", 1.0)),
     )
 
 
@@ -381,4 +414,15 @@ def params_for_pixel(app, pixel_id: str, params: SpectrumParams) -> SpectrumPara
         row = app.series.journal.get_pixel(pixel_id) or {}
         quarter_number = int(row.get("Quarter number") or 1)
         led_type = quarter_led_color(app.series.config, quarter_number)
-    return replace(params, luminance_cd_m2_per_uA=coeff, led_type=led_type)
+    geometry_resolver = getattr(app.series, "geometric_coefficient", None)
+    if callable(geometry_resolver):
+        geometric_coefficient = geometry_resolver(app.app_settings)
+    else:
+        units = app.app_settings.get("measurement_units", {})
+        geometric_coefficient = float(units.get("geometric_conversion_coefficient", 1.0))
+    return replace(
+        params,
+        luminance_cd_m2_per_uA=coeff,
+        led_type=led_type,
+        geometric_coefficient=geometric_coefficient,
+    )
