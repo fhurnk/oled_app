@@ -6,8 +6,8 @@ from tkinter import messagebox
 
 from oled_app.processing.spectral_calibration import (
     QuarterIntegralCalibration,
+    calibrate_quarter_spectral_integral,
     create_spectral_recalculation_workbook,
-    fit_quarter_integral_coefficient,
     read_spectrum_integral_points,
     spectral_recalculation_output_path,
 )
@@ -50,28 +50,33 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
 
     try:
         points = read_spectrum_integral_points(workbook_path)
-        effective_photo_coefficient = app.series.luminance_coefficient_for_pixel(
+        rgb_photo_coefficient = app.series.rgb_luminance_coefficient_for_pixel(
             pixel_id,
             app.app_settings,
         )
         for point in points:
-            point["photodiode_luminance_cd_m2"] = luminance_cd_m2(
+            point["rgb_luminance_cd_m2"] = luminance_cd_m2(
                 point.get("photodiode_uA"),
-                effective_photo_coefficient,
+                rgb_photo_coefficient,
             )
         geometry = app.series.geometric_coefficient(app.app_settings)
         configured_integral = app.series.configured_integral_coefficient(app.app_settings)
         quarter_number = int(row.get("Quarter number") or 1)
         stored_calibration = app.series.integral_calibration_for_pixel(pixel_id)
+        if (
+            stored_calibration is not None
+            and stored_calibration.get("method") != "normalized_shape_integral_median"
+        ):
+            stored_calibration = None
         use_stored_calibration = False
         if stored_calibration is not None:
             source_pixel = str(stored_calibration.get("source_pixel") or "не указан")
             choice = messagebox.askyesnocancel(
-                "Коэффициент четверти",
+                "Спектральный интеграл четверти",
                 (
                     f"Для четверти {quarter_number} уже есть калибровка по пикселю "
                     f"{source_pixel}.\n\n"
-                    "Да — применить сохранённый коэффициент к выбранному спектру.\n"
+                    "Да — применить сохранённый интеграл четверти к выбранному спектру.\n"
                     "Нет — заменить калибровку четверти расчётом по выбранному пикселю.\n"
                     "Отмена — не выполнять пересчёт."
                 ),
@@ -84,21 +89,24 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
         if use_stored_calibration:
             coefficient = as_float_or_none(stored_calibration.get("coefficient"))
             if coefficient is None or coefficient <= 0:
-                raise ValueError("Сохранённый интегральный коэффициент четверти некорректен.")
-            r_squared = as_float_or_none(stored_calibration.get("r_squared"))
+                raise ValueError("Сохранённый спектральный интеграл четверти некорректен.")
             calibration = QuarterIntegralCalibration(
                 integral_coefficient=configured_integral,
                 coefficient=float(coefficient),
                 geometric_coefficient=geometry,
                 effective_coefficient=float(coefficient) * configured_integral * geometry,
                 points_used=int(stored_calibration.get("points_used") or 0),
-                r_squared=r_squared,
+                relative_std_percent=as_float_or_none(
+                    stored_calibration.get("relative_std_percent")
+                ),
+                integral_min=float(stored_calibration.get("integral_min") or coefficient),
+                integral_max=float(stored_calibration.get("integral_max") or coefficient),
                 source_pixel=str(stored_calibration.get("source_pixel") or ""),
                 source_file=str(stored_calibration.get("source_file") or ""),
                 calculated_at=str(stored_calibration.get("calculated_at") or ""),
             )
         else:
-            calibration = fit_quarter_integral_coefficient(
+            calibration = calibrate_quarter_spectral_integral(
                 points,
                 geometry,
                 source_pixel=pixel_id,
@@ -112,7 +120,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             quarter_number,
             points,
             calibration,
-            effective_photodiode_coefficient=effective_photo_coefficient,
+            rgb_photodiode_coefficient=rgb_photo_coefficient,
         )
         if not use_stored_calibration:
             app.series.save_quarter_integral_calibration(
@@ -128,9 +136,9 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             calibration.as_dict(),
             notes=f"Источник: {workbook_path.name}",
         )
-        r_squared = (
-            f"{calibration.r_squared:.5f}"
-            if calibration.r_squared is not None
+        relative_std = (
+            f"{calibration.relative_std_percent:.3f}%"
+            if calibration.relative_std_percent is not None
             else "не определён"
         )
         action_text = (
@@ -139,10 +147,12 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             else f"рассчитан по {pixel_id} и назначен четверти"
         )
         app.log(
-            f"Четверть {quarter_number}: интегральный коэффициент "
-            f"{configured_integral:.9g}, коэффициент четверти "
-            f"{calibration.coefficient:.9g} {action_text}; "
-            f"точек {calibration.points_used}, R²={r_squared}. "
+            f"Четверть {quarter_number}: спектральный интеграл "
+            f"{calibration.coefficient:.9g}, интегральный коэффициент "
+            f"{configured_integral:.9g}; произведение "
+            f"{calibration.coefficient * configured_integral:.9g} "
+            f"заменяет R/G/B и {action_text}; точек {calibration.points_used}, "
+            f"разброс={relative_std}. "
             f"Результат: {output_path.name}"
         )
         result_intro = (
@@ -155,12 +165,16 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             result_intro
             + (
                 f"Интегральный коэффициент настроек: {configured_integral:.9g}\n"
-                f"Коэффициент четверти: {calibration.coefficient:.9g}\n"
-                f"Коэффициент фотодиода R/G/B с геометрией: {effective_photo_coefficient:.9g}\n"
+                f"Спектральный интеграл четверти: {calibration.coefficient:.9g}\n"
+                f"Новый коэффициент вместо R/G/B: "
+                f"{calibration.coefficient * configured_integral:.9g}\n"
+                f"Прежний коэффициент R/G/B с геометрией: {rgb_photo_coefficient:.9g}\n"
                 f"Геометрический коэффициент: {geometry:.9g}\n"
                 f"Точек: {calibration.points_used}\n"
-                f"R²: {r_squared}\n\n"
-                f"Результаты сохранены отдельно:\n{output_path}"
+                f"Относительный разброс интеграла: {relative_std}\n\n"
+                f"Результаты сохранены отдельно:\n{output_path}\n\n"
+                "Чтобы применить новый коэффициент к ранее снятым XLSX серии, "
+                "нажмите «Пересчитать мкА → кд/м²»."
             ),
             parent=app,
         )

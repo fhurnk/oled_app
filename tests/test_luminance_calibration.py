@@ -17,13 +17,14 @@ from oled_app.processing.ivl_preview import ivl_thumbnail_path
 from oled_app.processing.ivl_results import save_ivl_workbook
 from oled_app.processing.luminance_recalculation import recalculate_series_luminance
 from oled_app.processing.spectral_calibration import (
+    calibrate_quarter_spectral_integral,
     calculate_spectral_integrals,
     create_spectral_recalculation_workbook,
-    fit_quarter_integral_coefficient,
     read_spectrum_integral_points,
 )
 from oled_app.processing.spectrum_results import create_spectrum_workbook
 from oled_app.processing.stability_results import create_stability_workbook
+from oled_app.series.manager import SeriesManager
 from oled_app.series.metadata import luminance_coefficient_for_color
 
 
@@ -53,14 +54,14 @@ class SpectralSensitivityTests(unittest.TestCase):
         self.assertAlmostEqual(ratio, 3.4661641, places=5)
         self.assertAlmostEqual(ratio, 3.49, delta=0.05)
 
-    def test_integral_fit_separates_geometry_factor(self):
+    def test_quarter_calibration_uses_median_normalized_integral(self):
         points = [
-            {"weighted_integral": 1.0, "photodiode_luminance_cd_m2": 6.0, "status": "GOOD"},
-            {"weighted_integral": 2.0, "photodiode_luminance_cd_m2": 12.0, "status": "GOOD"},
-            {"weighted_integral": 3.0, "photodiode_luminance_cd_m2": 18.0, "status": "OK"},
+            {"shape_integral": 2.9, "photodiode_uA": 1.0, "status": "GOOD"},
+            {"shape_integral": 3.0, "photodiode_uA": 2.0, "status": "GOOD"},
+            {"shape_integral": 3.1, "photodiode_uA": 3.0, "status": "OK"},
         ]
 
-        calibration = fit_quarter_integral_coefficient(
+        calibration = calibrate_quarter_spectral_integral(
             points,
             geometric_coefficient=2.0,
             source_pixel="CR1_1_1",
@@ -69,9 +70,10 @@ class SpectralSensitivityTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(calibration.integral_coefficient, 1.5)
-        self.assertAlmostEqual(calibration.coefficient, 2.0)
-        self.assertAlmostEqual(calibration.effective_coefficient, 6.0)
-        self.assertAlmostEqual(calibration.r_squared, 1.0)
+        self.assertAlmostEqual(calibration.coefficient, 3.0)
+        self.assertAlmostEqual(calibration.effective_coefficient, 9.0)
+        self.assertAlmostEqual(calibration.integral_min, 2.9)
+        self.assertAlmostEqual(calibration.integral_max, 3.1)
 
     def test_rgb_coefficient_is_multiplied_by_geometry(self):
         settings = {
@@ -83,38 +85,37 @@ class SpectralSensitivityTests(unittest.TestCase):
 
         self.assertAlmostEqual(luminance_coefficient_for_color(settings, "red"), 13.5)
 
-    def test_rgb_reference_luminance_participates_before_integral_fit(self):
+    def test_spectral_product_replaces_rgb_only_after_quarter_calibration(self):
         settings = {
             "measurement_units": {
                 "luminance_red_cd_m2_per_uA": 5.0,
                 "geometric_conversion_coefficient": 2.0,
+                "integral_conversion_coefficient": 4.0,
             }
         }
-        effective_rgb = luminance_coefficient_for_color(settings, "red")
-        points = [
-            {
-                "weighted_integral": 2.0,
-                "photodiode_luminance_cd_m2": 1.0 * effective_rgb,
-                "status": "GOOD",
-            },
-            {
-                "weighted_integral": 4.0,
-                "photodiode_luminance_cd_m2": 2.0 * effective_rgb,
-                "status": "GOOD",
-            },
-        ]
-
-        calibration = fit_quarter_integral_coefficient(
-            points,
-            geometric_coefficient=2.0,
-            integral_coefficient=2.0,
-            source_pixel="CR1_1_1",
-            source_file="spectrum.xlsx",
+        manager = SeriesManager.__new__(SeriesManager)
+        manager.config = {
+            "quarter_led_colors": {"1": "red"},
+            "quarter_integral_calibrations": {},
+        }
+        manager.journal = SimpleNamespace(
+            get_pixel=lambda _pixel: {"Quarter number": 1}
         )
 
-        self.assertAlmostEqual(effective_rgb, 10.0)
-        self.assertAlmostEqual(calibration.coefficient, 1.25)
-        self.assertAlmostEqual(calibration.effective_coefficient, 5.0)
+        self.assertAlmostEqual(
+            manager.luminance_coefficient_for_pixel("CR1_1_1", settings),
+            10.0,
+        )
+
+        manager.config["quarter_integral_calibrations"]["1"] = {
+            "method": "normalized_shape_integral_median",
+            "coefficient": 3.0,
+        }
+
+        self.assertAlmostEqual(
+            manager.luminance_coefficient_for_pixel("CR1_1_1", settings),
+            24.0,
+        )
 
     def test_on_demand_recalculation_saves_separate_workbook(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -150,8 +151,8 @@ class SpectralSensitivityTests(unittest.TestCase):
 
             points = read_spectrum_integral_points(source)
             for point in points:
-                point["photodiode_luminance_cd_m2"] = point["photodiode_uA"] * 5.0
-            calibration = fit_quarter_integral_coefficient(
+                point["rgb_luminance_cd_m2"] = point["photodiode_uA"] * 5.0
+            calibration = calibrate_quarter_spectral_integral(
                 points,
                 geometric_coefficient=2.0,
                 source_pixel="P1",
@@ -165,6 +166,7 @@ class SpectralSensitivityTests(unittest.TestCase):
                 1,
                 points,
                 calibration,
+                rgb_photodiode_coefficient=5.0,
             )
 
             self.assertTrue(output.exists())
@@ -172,7 +174,24 @@ class SpectralSensitivityTests(unittest.TestCase):
             result_wb = load_workbook(output, data_only=True)
             try:
                 self.assertIn("Результаты", result_wb.sheetnames)
-                self.assertEqual(result_wb["Результаты"]["B4"].value, "P1")
+                ws_result = result_wb["Результаты"]
+                self.assertEqual(ws_result["B4"].value, "P1")
+                header_row = next(
+                    row
+                    for row in range(1, ws_result.max_row + 1)
+                    if ws_result.cell(row, 1).value == "Point"
+                )
+                first_result_row = header_row + 1
+                expected_luminance = (
+                    ws_result.cell(first_result_row, 3).value
+                    * calibration.coefficient
+                    * calibration.integral_coefficient
+                    * calibration.geometric_coefficient
+                )
+                self.assertAlmostEqual(
+                    ws_result.cell(first_result_row, 10).value,
+                    expected_luminance,
+                )
             finally:
                 result_wb.close()
 

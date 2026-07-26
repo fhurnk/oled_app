@@ -42,17 +42,20 @@ class SpectralIntegral:
 
 @dataclass(frozen=True)
 class QuarterIntegralCalibration:
-    """Origin-constrained fit converting weighted counts/s to cd/m²."""
+    """Normalized CIE/BPW34 integral assigned to one physical quarter."""
 
     integral_coefficient: float
     coefficient: float
     geometric_coefficient: float
     effective_coefficient: float
     points_used: int
-    r_squared: Optional[float]
+    relative_std_percent: Optional[float]
+    integral_min: float
+    integral_max: float
     source_pixel: str
     source_file: str
     calculated_at: str
+    method: str = "normalized_shape_integral_median"
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -99,9 +102,9 @@ def calculate_spectral_integrals(
 ) -> SpectralIntegral:
     """Normalize a processed spectrum and integrate ``spectrum * CIE / BPW34``.
 
-    ``weighted_integral`` keeps the absolute counts/s scale and is therefore
-    suitable for luminance fitting. ``shape_integral`` follows the user's
-    manual check: the spectrum is first normalized to its maximum.
+    ``shape_integral`` follows the user's manual check: the spectrum is first
+    normalized to its maximum. ``weighted_integral`` is retained only as an
+    absolute-amplitude diagnostic.
     """
 
     wl = np.asarray(wavelengths, dtype=np.float64)
@@ -151,19 +154,29 @@ def calculate_spectral_integrals(
     )
 
 
-def integral_luminance_cd_m2(
-    weighted_integral: Any,
+def spectral_luminance_cd_m2(
+    photodiode_current_uA: Any,
+    spectral_integral: Any,
     integral_coefficient: Any,
     geometric_coefficient: Any,
-    quarter_coefficient: Any = 1.0,
 ) -> Optional[float]:
-    integral = as_float_or_none(weighted_integral)
+    photodiode_current = as_float_or_none(photodiode_current_uA)
+    integral = as_float_or_none(spectral_integral)
     coefficient = as_float_or_none(integral_coefficient)
     geometry = as_float_or_none(geometric_coefficient)
-    quarter = as_float_or_none(quarter_coefficient)
-    if integral is None or coefficient is None or geometry is None or quarter is None:
+    if (
+        photodiode_current is None
+        or integral is None
+        or coefficient is None
+        or geometry is None
+    ):
         return None
-    return float(integral) * float(coefficient) * float(quarter) * float(geometry)
+    return (
+        float(photodiode_current)
+        * float(integral)
+        * float(coefficient)
+        * float(geometry)
+    )
 
 
 def _find_header_row(ws, required_header: str, limit: int = 60) -> Tuple[int, Dict[str, int]]:
@@ -250,14 +263,14 @@ def read_spectrum_integral_points(workbook_path: Path) -> List[Dict[str, Any]]:
         wb.close()
 
 
-def fit_quarter_integral_coefficient(
+def calibrate_quarter_spectral_integral(
     points: Iterable[Dict[str, Any]],
     geometric_coefficient: float,
     source_pixel: str,
     source_file: str,
     integral_coefficient: float = 1.0,
 ) -> QuarterIntegralCalibration:
-    """Fit luminance against the corrected absolute spectral integral."""
+    """Assign the median normalized spectral integral to a quarter."""
 
     geometry = float(geometric_coefficient)
     if geometry <= 0 or not math.isfinite(geometry):
@@ -266,39 +279,66 @@ def fit_quarter_integral_coefficient(
     if configured_integral <= 0 or not math.isfinite(configured_integral):
         raise ValueError("Интегральный коэффициент должен быть положительным.")
 
-    x_values: List[float] = []
-    y_values: List[float] = []
+    shape_integrals: List[float] = []
+    photodiode_currents: List[float] = []
     rejected_statuses = {"FAILED", "SATURATED", "NEEDS_REVIEW", "STOPPED", "NO_PEAK"}
     for point in points:
         status = str(point.get("status") or "").strip().upper()
-        x = as_float_or_none(point.get("weighted_integral"))
-        y = as_float_or_none(point.get("photodiode_luminance_cd_m2"))
-        if status in rejected_statuses or x is None or y is None or x <= 0 or y <= 0:
+        shape_integral = as_float_or_none(point.get("shape_integral"))
+        photodiode_current = as_float_or_none(point.get("photodiode_uA"))
+        if (
+            status in rejected_statuses
+            or shape_integral is None
+            or photodiode_current is None
+            or shape_integral <= 0
+            or photodiode_current <= 0
+        ):
             continue
-        x_values.append(float(x))
-        y_values.append(float(y))
-    if len(x_values) < 2:
+        shape_integrals.append(float(shape_integral))
+        photodiode_currents.append(float(photodiode_current))
+    if len(shape_integrals) < 2:
         raise ValueError("Для калибровки нужны минимум две пригодные точки спектра с разной светимостью.")
+    if math.isclose(min(photodiode_currents), max(photodiode_currents)):
+        raise ValueError("Для калибровки нужны точки с различным током фотодетектора.")
 
-    x_arr = np.asarray(x_values, dtype=np.float64)
-    y_arr = np.asarray(y_values, dtype=np.float64)
-    base_x = x_arr * configured_integral * geometry
-    coefficient = float(np.dot(base_x, y_arr) / np.dot(base_x, base_x))
+    integral_values = np.asarray(shape_integrals, dtype=np.float64)
+    coefficient = float(np.median(integral_values))
     effective = configured_integral * coefficient * geometry
-    predicted = x_arr * effective
-    residual = float(np.sum((y_arr - predicted) ** 2))
-    centered = float(np.sum((y_arr - float(np.mean(y_arr))) ** 2))
-    r_squared = None if centered <= 0 else 1.0 - residual / centered
+    relative_std_percent = (
+        None
+        if coefficient == 0
+        else float(np.std(integral_values) / coefficient * 100.0)
+    )
     return QuarterIntegralCalibration(
         integral_coefficient=configured_integral,
         coefficient=coefficient,
         geometric_coefficient=geometry,
         effective_coefficient=effective,
-        points_used=len(x_values),
-        r_squared=r_squared,
+        points_used=len(shape_integrals),
+        relative_std_percent=relative_std_percent,
+        integral_min=float(np.min(integral_values)),
+        integral_max=float(np.max(integral_values)),
         source_pixel=str(source_pixel),
         source_file=str(source_file),
         calculated_at=now_str(),
+    )
+
+
+def fit_quarter_integral_coefficient(
+    points: Iterable[Dict[str, Any]],
+    geometric_coefficient: float,
+    source_pixel: str,
+    source_file: str,
+    integral_coefficient: float = 1.0,
+) -> QuarterIntegralCalibration:
+    """Compatibility wrapper for the normalized-integral calibration."""
+
+    return calibrate_quarter_spectral_integral(
+        points,
+        geometric_coefficient,
+        source_pixel,
+        source_file,
+        integral_coefficient,
     )
 
 
@@ -321,7 +361,7 @@ def create_spectral_recalculation_workbook(
     points: Iterable[Dict[str, Any]],
     calibration: QuarterIntegralCalibration,
     sensitivity_csv: Optional[Path] = None,
-    effective_photodiode_coefficient: Optional[float] = None,
+    rgb_photodiode_coefficient: Optional[float] = None,
 ) -> Path:
     """Save on-demand CIE/BPW34 recalculation without modifying the source."""
 
@@ -333,7 +373,7 @@ def create_spectral_recalculation_workbook(
     ws.title = "Результаты"
     ws["A1"] = "Спектральный пересчёт CIE / BPW34"
     ws["A1"].font = Font(bold=True, size=14)
-    effective_photo = as_float_or_none(effective_photodiode_coefficient)
+    effective_photo = as_float_or_none(rgb_photodiode_coefficient)
     base_color_coefficient = (
         None
         if effective_photo is None or calibration.geometric_coefficient == 0
@@ -346,19 +386,25 @@ def create_spectral_recalculation_workbook(
         ("Recalculated", now_str()),
         ("Sensitivity CSV", str(Path(sensitivity_csv or DEFAULT_SENSITIVITY_CSV).resolve())),
         ("RGB coefficient before geometry", base_color_coefficient),
-        ("Photodiode coefficient (RGB * geometry)", effective_photo),
+        ("Previous photodiode coefficient (RGB * geometry)", effective_photo),
+        ("Quarter spectral integral", calibration.coefficient),
         ("Integral coefficient (settings)", calibration.integral_coefficient),
-        ("Quarter coefficient", calibration.coefficient),
+        (
+            "Coefficient replacing RGB",
+            calibration.coefficient * calibration.integral_coefficient,
+        ),
         ("Geometric coefficient", calibration.geometric_coefficient),
-        ("Effective coefficient", calibration.effective_coefficient),
+        ("Effective coefficient with geometry", calibration.effective_coefficient),
         ("Calibration source pixel", calibration.source_pixel),
         ("Calibration source file", calibration.source_file),
         ("Calibration date", calibration.calculated_at),
         ("Points used", calibration.points_used),
-        ("R^2", calibration.r_squared),
+        ("Integral relative std (%)", calibration.relative_std_percent),
+        ("Integral minimum", calibration.integral_min),
+        ("Integral maximum", calibration.integral_max),
         (
             "Formula",
-            "L_integral = weighted_integral * integral_coefficient * quarter_coefficient * geometric_coefficient",
+            "L = I_photodiode_uA * quarter_spectral_integral * integral_coefficient * geometric_coefficient",
         ),
     ]
     for row, (label, value) in enumerate(metadata, start=3):
@@ -369,11 +415,15 @@ def create_spectral_recalculation_workbook(
         "Point",
         "V set (V)",
         "I photodiode (uA)",
-        "Luminance by photodiode (cd/m^2)",
+        "Luminance by previous RGB coefficient (cd/m^2)",
         "Shape integral (CIE/BPW34)",
         "Weighted integral (counts/s*nm)",
-        "Luminance by integral (cd/m^2)",
-        "Deviation (%)",
+        "Point coefficient replacing RGB",
+        "Quarter spectral integral",
+        "Quarter coefficient replacing RGB",
+        "Luminance by quarter calibration (cd/m^2)",
+        "Difference from previous RGB luminance (%)",
+        "Point integral deviation from quarter (%)",
         "Status",
     ]
     header_row = 3 + len(metadata) + 2
@@ -382,30 +432,50 @@ def create_spectral_recalculation_workbook(
     style_header_row(ws, header_row, 1, len(headers))
 
     for row, point in enumerate(points, start=header_row + 1):
-        weighted = as_float_or_none(point.get("weighted_integral"))
-        photo_luminance = as_float_or_none(point.get("photodiode_luminance_cd_m2"))
-        integral_luminance = integral_luminance_cd_m2(
-            weighted,
+        photodiode_current = as_float_or_none(point.get("photodiode_uA"))
+        shape_integral = as_float_or_none(point.get("shape_integral"))
+        photo_luminance = as_float_or_none(
+            point.get("rgb_luminance_cd_m2", point.get("photodiode_luminance_cd_m2"))
+        )
+        integral_luminance = spectral_luminance_cd_m2(
+            photodiode_current,
+            calibration.coefficient,
             calibration.integral_coefficient,
             calibration.geometric_coefficient,
-            calibration.coefficient,
         )
-        deviation = None
+        luminance_difference = None
         if (
             photo_luminance is not None
             and photo_luminance != 0
             and integral_luminance is not None
         ):
-            deviation = (integral_luminance - photo_luminance) / photo_luminance * 100.0
+            luminance_difference = (
+                (integral_luminance - photo_luminance) / photo_luminance * 100.0
+            )
+        integral_deviation = None
+        if shape_integral is not None and calibration.coefficient != 0:
+            integral_deviation = (
+                (shape_integral - calibration.coefficient)
+                / calibration.coefficient
+                * 100.0
+            )
         values = [
             point.get("point"),
             point.get("voltage_V"),
-            point.get("photodiode_uA"),
+            photodiode_current,
             photo_luminance,
-            point.get("shape_integral"),
-            weighted,
+            shape_integral,
+            point.get("weighted_integral"),
+            (
+                None
+                if shape_integral is None
+                else shape_integral * calibration.integral_coefficient
+            ),
+            calibration.coefficient,
+            calibration.coefficient * calibration.integral_coefficient,
             integral_luminance,
-            deviation,
+            luminance_difference,
+            integral_deviation,
             point.get("status"),
         ]
         for column, value in enumerate(values, start=1):
@@ -414,13 +484,13 @@ def create_spectral_recalculation_workbook(
     last_row = header_row + len(points)
     if last_row > header_row + 1:
         chart = ScatterChart()
-        chart.title = "Светимость и CIE/BPW34-интеграл"
-        chart.x_axis.title = "Weighted integral (counts/s*nm)"
+        chart.title = "Светимость от тока фотодетектора"
+        chart.x_axis.title = "I photodiode (uA)"
         chart.y_axis.title = "Luminance (cd/m^2)"
         chart.x_axis.majorGridlines = ChartLines()
-        x_values = Reference(ws, min_col=6, min_row=header_row + 1, max_row=last_row)
+        x_values = Reference(ws, min_col=3, min_row=header_row + 1, max_row=last_row)
         photo_values = Reference(ws, min_col=4, min_row=header_row, max_row=last_row)
-        integral_values = Reference(ws, min_col=7, min_row=header_row, max_row=last_row)
+        integral_values = Reference(ws, min_col=10, min_row=header_row, max_row=last_row)
         chart.series.append(Series(photo_values, x_values, title_from_data=True))
         chart.series.append(Series(integral_values, x_values, title_from_data=True))
         chart.height = 10
@@ -428,9 +498,10 @@ def create_spectral_recalculation_workbook(
         ws.add_chart(chart, "K3")
 
     ws.freeze_panes = f"A{header_row + 1}"
-    ws.auto_filter.ref = f"A{header_row}:I{max(last_row, header_row)}"
+    ws.auto_filter.ref = f"A{header_row}:M{max(last_row, header_row)}"
     for row in range(header_row + 1, last_row + 1):
-        ws.cell(row, 8).number_format = "0.00"
+        ws.cell(row, 11).number_format = "0.00"
+        ws.cell(row, 12).number_format = "0.00"
     ws["A1"].fill = PatternFill("solid", fgColor="D9EAF7")
     autosize_columns(ws, max_width=52)
 

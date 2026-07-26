@@ -103,6 +103,28 @@ class SeriesManager:
         self.journal.config = self.config
 
     def luminance_coefficient_for_pixel(self, pixel_id: str, app_settings: Dict[str, Any]) -> float:
+        calibration = self.integral_calibration_for_pixel(pixel_id)
+        if (
+            calibration is not None
+            and calibration.get("method") == "normalized_shape_integral_median"
+        ):
+            try:
+                spectral_integral = float(calibration.get("coefficient"))
+                if spectral_integral > 0:
+                    return (
+                        spectral_integral
+                        * default_integral_conversion_coefficient(app_settings)
+                        * geometric_conversion_coefficient(app_settings)
+                    )
+            except (TypeError, ValueError):
+                pass
+        return self.rgb_luminance_coefficient_for_pixel(pixel_id, app_settings)
+
+    def rgb_luminance_coefficient_for_pixel(
+        self,
+        pixel_id: str,
+        app_settings: Dict[str, Any],
+    ) -> float:
         row = self.journal.get_pixel(pixel_id) or {}
         quarter_number = int(row.get("Quarter number") or 1)
         color = quarter_led_color(self.config, quarter_number)
@@ -111,7 +133,10 @@ class SeriesManager:
     def integral_coefficient_for_pixel(self, pixel_id: str, app_settings: Dict[str, Any]) -> float:
         configured = default_integral_conversion_coefficient(app_settings)
         calibration = self.integral_calibration_for_pixel(pixel_id)
-        if calibration is not None:
+        if (
+            calibration is not None
+            and calibration.get("method") == "normalized_shape_integral_median"
+        ):
             try:
                 return configured * float(calibration.get("coefficient"))
             except (TypeError, ValueError):

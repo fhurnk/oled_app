@@ -75,7 +75,7 @@
     "current_release": "v1.9.0-alpha",
     "previous_release": "v1.8.8",
     "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "On-demand CIE/BPW34 recalculation in a separate workbook, quarter calibration, geometry-aware luminance migration, spectrum queue, and IVL hover thumbnails.",
+    "release_scope": "On-demand CIE/BPW34 recalculation in a separate workbook; the calibrated quarter integral times the configured integral coefficient replaces R/G/B while photodiode current remains in the luminance formula; geometry-aware migration, spectrum queue, and IVL hover thumbnails.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

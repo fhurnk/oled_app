@@ -10,7 +10,7 @@ This file is written for Codex agents. Read it before editing the project.
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current prerelease is `v1.9.0-alpha`. It adds on-demand CIE/BPW34 spectral recalculation into a separate workbook, quarter-level integral calibration, geometry-aware luminance coefficients, series-wide XLSX/raw recalculation, spectrum-priority flags, and IVL hover thumbnails. The previous stable release is `v1.8.8`.
+The current prerelease is `v1.9.0-alpha`. It adds on-demand CIE/BPW34 spectral recalculation into a separate workbook, quarter-level integral calibration, geometry-aware luminance coefficients, series-wide XLSX/raw recalculation, spectrum-priority flags, and IVL hover thumbnails. Before calibration luminance uses the quarter's R/G/B coefficient; after calibration `quarter spectral integral × configured integral coefficient` replaces R/G/B while photodiode current and geometry remain in the formula. The previous stable release is `v1.8.8`.
 
 ## Main Entry Points
 
