@@ -210,7 +210,15 @@ class SeriesJournal:
                 return row
         return None
 
-    def set_spectrum_priority(self, pixel_id: str, enabled: bool) -> None:
+    def set_spectrum_priority(self, pixel_id: str, enabled: bool) -> int:
+        return self.set_spectrum_priorities([pixel_id], enabled)
+
+    def set_spectrum_priorities(self, pixel_ids: List[str], enabled: bool) -> int:
+        """Update the spectrum queue for unmeasured pixels and return the changed count."""
+
+        selected_ids = {str(pixel_id) for pixel_id in pixel_ids if pixel_id}
+        if not selected_ids:
+            return 0
         wb = load_workbook(self.path)
         try:
             ws = wb[PIXELS_SHEET]
@@ -221,11 +229,24 @@ class SeriesJournal:
                 ws.cell(row=1, column=column, value="Spectrum priority")
                 columns["Spectrum priority"] = column
                 style_header_row(ws, 1, column, column)
+            changed = 0
             for row in range(2, ws.max_row + 1):
-                if ws.cell(row=row, column=columns["Pixel ID"]).value == pixel_id:
-                    ws.cell(row=row, column=columns["Spectrum priority"], value=bool(enabled))
-                    break
-            wb.save(self.path)
+                pixel_id = str(ws.cell(row=row, column=columns["Pixel ID"]).value or "")
+                if pixel_id not in selected_ids:
+                    continue
+                if "Last spectrum file" in columns and ws.cell(
+                    row=row,
+                    column=columns["Last spectrum file"],
+                ).value:
+                    continue
+                priority_cell = ws.cell(row=row, column=columns["Spectrum priority"])
+                if bool(priority_cell.value) == bool(enabled):
+                    continue
+                priority_cell.value = bool(enabled)
+                changed += 1
+            if changed:
+                wb.save(self.path)
+            return changed
         finally:
             wb.close()
 

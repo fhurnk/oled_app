@@ -25,7 +25,7 @@ from .widgets import fit_toplevel_to_content
 def spectrum_selection_visibility(mode: str) -> tuple[bool, bool]:
     """Return visibility of the pixel and substrate selectors for a capture mode."""
 
-    return mode == "single", mode == "substrate"
+    return mode in {"single", "substrate"}, mode == "substrate"
 
 
 def open_spectrum_window(app) -> None:
@@ -78,10 +78,17 @@ def open_spectrum_window(app) -> None:
     substrate_info_label.grid(
         row=3, column=0, columnspan=2, sticky="w", pady=(0, 4)
     )
+    queued_only_var = tk.BooleanVar(value=False)
+    queued_only_check = ttk.Checkbutton(
+        frame,
+        text="Только отмеченные пиксели этой подложки",
+        variable=queued_only_var,
+    )
+    queued_only_check.grid(row=2, column=2, sticky="w", padx=(8, 0), pady=5)
     queue_info_label = ttk.Label(
         frame,
         text=(
-            "Приоритетные пиксели с флажком на карте идут первыми; "
+            "Пиксели с флажком в столбце «Спектры» идут первыми; "
             "после них — остальные доступные пиксели."
         ),
         foreground="#555555",
@@ -131,33 +138,47 @@ def open_spectrum_window(app) -> None:
         opening_info_var.set(f"V открытия: {opening:.3f} В" if opening is not None else "V открытия: нет")
 
     def update_substrate_info(_event=None) -> None:
-        selected = substrate_groups.get(substrate_var.get(), [])
+        selected = selected_substrate_pixels(
+            app,
+            substrate_groups.get(substrate_var.get(), []),
+            queued_only=bool(queued_only_var.get()),
+        )
+        pixel_combo.configure(values=selected)
+        if pixel_var.get() not in selected:
+            pixel_var.set(selected[0] if selected else "")
         substrate_info_var.set(
-            "Пиксели подложки, доступные для спектров: "
+            (
+                "Отмеченные пиксели подложки: "
+                if queued_only_var.get()
+                else "Пиксели подложки, доступные для спектров: "
+            )
             + (", ".join(selected) if selected else "нет доступных пикселей")
         )
+        update_opening_info()
 
     pixel_combo.bind("<<ComboboxSelected>>", update_opening_info)
     substrate_combo.bind("<<ComboboxSelected>>", update_substrate_info)
+    queued_only_var.trace_add("write", lambda *_args: update_substrate_info())
     update_substrate_info()
 
     def update_selection_visibility(*_args) -> None:
         show_pixel, show_substrate = spectrum_selection_visibility(mode_var.get())
+        pixel_label.configure(text="Начать с пикселя:" if show_substrate else "Пиксель:")
         for widget in (pixel_label, pixel_combo):
             widget.grid() if show_pixel else widget.grid_remove()
         for widget in (substrate_label, substrate_combo, substrate_info_label):
             widget.grid() if show_substrate else widget.grid_remove()
+        queued_only_check.grid() if show_substrate else queued_only_check.grid_remove()
         queue_info_label.grid() if mode_var.get() == "queue" else queue_info_label.grid_remove()
-        if show_pixel:
+        if mode_var.get() == "single":
+            pixel_combo.configure(values=pixels)
+            if pixel_var.get() not in pixels:
+                pixel_var.set(pixels[0] if pixels else "")
             update_opening_info()
+        elif show_substrate:
+            update_substrate_info()
         else:
-            selected = substrate_groups.get(substrate_var.get(), [])
-            if selected:
-                pixel = app.series.journal.get_pixel(selected[0]) if app.series is not None else None
-                opening = as_float_or_none(pixel.get("Opening voltage (V)")) if pixel else None
-                opening_info_var.set(
-                    f"V открытия первого пикселя: {opening:.3f} В" if opening is not None else "V открытия первого пикселя: нет"
-                )
+            opening_info_var.set("V открытия подставляется отдельно для каждого пикселя")
 
     mode_var.trace_add("write", update_selection_visibility)
     update_selection_visibility()
@@ -168,10 +189,17 @@ def open_spectrum_window(app) -> None:
             if selected_mode == "single":
                 selected_pixels = [pixel_var.get()]
             elif selected_mode == "substrate":
-                selected_pixels = substrate_groups.get(substrate_var.get(), [])
+                selected_pixels = selected_substrate_pixels(
+                    app,
+                    substrate_groups.get(substrate_var.get(), []),
+                    queued_only=bool(queued_only_var.get()),
+                )
+                selected_pixels = sequence_from_start(selected_pixels, pixel_var.get())
             else:
                 selected_pixels = list(pixels)
             if not selected_pixels:
+                if selected_mode == "substrate" and queued_only_var.get():
+                    raise ValueError("На выбранной подложке нет отмеченных пикселей без снятых спектров")
                 raise ValueError("Для выбранной подложки нет доступных пикселей")
 
             first_id = selected_pixels[0]
@@ -206,7 +234,8 @@ def open_spectrum_window(app) -> None:
     ttk.Label(
         frame,
         text=(
-            "При съёмке всей подложки V открытия подставляется отдельно для каждого пикселя. "
+            "Подложку можно начать с любого выбранного пикселя; более ранние пиксели будут пропущены. "
+            "V открытия подставляется отдельно для каждого пикселя. "
             "При ручном старте одно введённое напряжение применяется ко всем её пикселям."
         ),
         foreground="#555555",
@@ -241,7 +270,7 @@ def initial_spectrum_start_value(saved: Dict[str, Any], opening: Optional[float]
 def group_pixels_by_substrate(app, pixels: List[str]) -> Dict[str, List[str]]:
     """Return eligible pixels grouped in physical substrate order."""
 
-    groups: Dict[str, List[tuple[int, int, str]]] = {}
+    groups: Dict[str, List[tuple[int, str]]] = {}
     for pixel_id in pixels:
         row = app.series.journal.get_pixel(pixel_id) if app.series is not None else None
         if not row:
@@ -251,12 +280,29 @@ def group_pixels_by_substrate(app, pixels: List[str]) -> Dict[str, List[str]]:
             pixel_number = int(row.get("Pixel number") or str(pixel_id).rsplit("_", 1)[1])
         except (TypeError, ValueError, IndexError):
             pixel_number = 9999
-        priority = bool(row.get("Spectrum priority"))
-        groups.setdefault(substrate_id, []).append((0 if priority else 1, pixel_number, pixel_id))
+        groups.setdefault(substrate_id, []).append((pixel_number, pixel_id))
     return {
-        substrate_id: [pixel_id for _priority, _number, pixel_id in sorted(items)]
+        substrate_id: [pixel_id for _number, pixel_id in sorted(items)]
         for substrate_id, items in groups.items()
     }
+
+
+def selected_substrate_pixels(app, pixels: List[str], queued_only: bool) -> List[str]:
+    if not queued_only or app.series is None:
+        return list(pixels)
+    return [
+        pixel_id
+        for pixel_id in pixels
+        if bool((app.series.journal.get_pixel(pixel_id) or {}).get("Spectrum priority"))
+    ]
+
+
+def sequence_from_start(pixels: List[str], start_pixel: str) -> List[str]:
+    """Match the IVL-series behavior: begin at the selected item without wrapping."""
+
+    if start_pixel not in pixels:
+        return list(pixels)
+    return list(pixels[pixels.index(start_pixel) :])
 
 
 def params_for_pixel_opening(app, pixel_id: str, params: SpectrumParams) -> SpectrumParams:

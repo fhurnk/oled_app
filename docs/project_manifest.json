@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.9.0-alpha",
+    "current_version": "v1.9.0-alpha-2",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.9.0-alpha.md"
+    "docs/versions/v1.9.0-alpha-2.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -72,10 +72,10 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "alpha",
-    "current_release": "v1.9.0-alpha",
+    "current_release": "v1.9.0-alpha-2",
     "previous_release": "v1.8.8",
-    "previous_prerelease": "v1.8.0-beta",
-    "release_scope": "On-demand CIE/BPW34 recalculation in a separate workbook; the calibrated quarter integral times the configured integral coefficient replaces R/G/B while photodiode current remains in the luminance formula; geometry-aware migration, spectrum queue, and IVL hover thumbnails.",
+    "previous_prerelease": "v1.9.0-alpha",
+    "release_scope": "Spectrum queue flags in the date table, whole-substrate queue marking, arbitrary substrate start pixels, and queued-only substrate capture; retains the alpha spectral calibration and luminance recalculation workflow.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -92,7 +92,7 @@
   },
   "measurement_workflows": {
     "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing.",
-    "SPECTRUM": "Spectral measurement with pixel/substrate/priority-queue selection, live integration-time trial previews, persistent manual start voltage, and safe stop; CIE/BPW34 recalculation runs only from a separate button and writes SPECTRAL_RECALC_*.xlsx without modifying the source workbook.",
+    "SPECTRUM": "Spectral measurement with pixel/substrate/priority-queue selection, whole-substrate marking, arbitrary substrate start pixels, queued-only substrate capture, live integration-time trial previews, persistent manual start voltage, and safe stop; CIE/BPW34 recalculation runs only from a separate button and writes SPECTRAL_RECALC_*.xlsx without modifying the source workbook.",
     "STABILITY": "Mutable constant-current feedback or immediate constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
   },
   "git": {

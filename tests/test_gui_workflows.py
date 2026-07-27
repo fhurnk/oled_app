@@ -1,15 +1,25 @@
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from oled_app.gui.app import OLEDModularApp
-from oled_app.gui.measurement_menu import pixel_rect_inside_substrate
+from oled_app.gui.measurement_menu import (
+    pixel_rect_inside_substrate,
+    spectrum_queue_cell_text,
+    substrate_pixel_ids,
+)
 from oled_app.gui.spectrum_window import (
     group_pixels_by_substrate,
     initial_spectrum_start_value,
     params_for_pixel_opening,
+    selected_substrate_pixels,
+    sequence_from_start,
+    spectrum_selection_visibility,
 )
 from oled_app.gui.start_screen import setup_pixel_rect
 from oled_app.measurements.spectrum import SpectrumParams
+from oled_app.series.journal import SeriesJournal
 from oled_app.series.layout import build_holder_layout
 
 
@@ -78,9 +88,19 @@ class SpectrumSubstrateTests(unittest.TestCase):
 
     def setUp(self):
         rows = {
-            "CR1_2_3": {"Pixel number": 3, "Opening voltage (V)": 2.3, "Quarter number": 1},
+            "CR1_2_3": {
+                "Pixel number": 3,
+                "Opening voltage (V)": 2.3,
+                "Quarter number": 1,
+                "Spectrum priority": True,
+            },
             "CR1_2_1": {"Pixel number": 1, "Opening voltage (V)": 2.1, "Quarter number": 1},
-            "CR1_2_2": {"Pixel number": 2, "Opening voltage (V)": 2.2, "Quarter number": 1},
+            "CR1_2_2": {
+                "Pixel number": 2,
+                "Opening voltage (V)": 2.2,
+                "Quarter number": 1,
+                "Spectrum priority": True,
+            },
             "CR1_3_1": {"Pixel number": 1, "Opening voltage (V)": 2.4, "Quarter number": 1},
         }
         series = SimpleNamespace(
@@ -95,6 +115,21 @@ class SpectrumSubstrateTests(unittest.TestCase):
         groups = group_pixels_by_substrate(self.app, pixels)
         self.assertEqual(groups["CR1_2"], ["CR1_2_1", "CR1_2_2", "CR1_2_3"])
         self.assertEqual(groups["CR1_3"], ["CR1_3_1"])
+
+    def test_substrate_mode_shows_start_pixel_and_substrate(self):
+        self.assertEqual(spectrum_selection_visibility("substrate"), (True, True))
+
+    def test_substrate_sequence_starts_at_selected_pixel_without_wrapping(self):
+        pixels = ["CR1_2_1", "CR1_2_2", "CR1_2_3", "CR1_2_4"]
+        self.assertEqual(sequence_from_start(pixels, "CR1_2_3"), ["CR1_2_3", "CR1_2_4"])
+
+    def test_substrate_can_be_limited_to_queued_pixels(self):
+        selected = selected_substrate_pixels(
+            self.app,
+            ["CR1_2_1", "CR1_2_2", "CR1_2_3"],
+            queued_only=True,
+        )
+        self.assertEqual(selected, ["CR1_2_2", "CR1_2_3"])
 
     def test_each_pixel_uses_its_own_opening_voltage(self):
         params = SpectrumParams(
@@ -114,6 +149,62 @@ class SpectrumSubstrateTests(unittest.TestCase):
         updated = params_for_pixel_opening(self.app, "CR1_2_2", params)
         self.assertEqual(updated.voltage_start, 1.7)
         self.assertEqual(updated.opening_voltage, 2.2)
+
+
+class SpectrumQueueDisplayTests(unittest.TestCase):
+    def test_unmeasured_pixel_shows_checkbox_in_spectrum_date_cell(self):
+        self.assertEqual(
+            spectrum_queue_cell_text({"Spectrum priority": False, "Last spectrum file": ""}),
+            "☐ поставить",
+        )
+        self.assertEqual(
+            spectrum_queue_cell_text({"Spectrum priority": True, "Last spectrum file": ""}),
+            "☑ в очереди",
+        )
+
+    def test_measured_pixel_shows_date_instead_of_checkbox(self):
+        row = {
+            "Last spectrum file": "spectrum.xlsx",
+            "Last spectrum date": "2026-07-27 10:30:00",
+            "Spectrum priority": True,
+        }
+        self.assertEqual(
+            spectrum_queue_cell_text(row, 42000),
+            "2026-07-27 10:30:00 | max 42000",
+        )
+
+    def test_substrate_selection_excludes_pixels_with_spectra(self):
+        rows = [
+            {"Pixel ID": "CR1_2_1", "Last spectrum file": ""},
+            {"Pixel ID": "CR1_2_2", "Last spectrum file": "done.xlsx"},
+            {"Pixel ID": "CR1_3_1", "Last spectrum file": ""},
+        ]
+        self.assertEqual(substrate_pixel_ids(rows, "CR1_2_1"), ["CR1_2_1"])
+
+    def test_journal_batch_queue_only_marks_unmeasured_pixels(self):
+        with tempfile.TemporaryDirectory() as folder:
+            journal = SeriesJournal(Path(folder), {})
+            journal.initialize_or_update()
+            pixel_ids = [
+                str(row["Pixel ID"])
+                for row in journal.list_pixels()
+                if row.get("Quarter number") == 1 and row.get("Substrate number") == 1
+            ][:2]
+            journal.set_spectrum_priority(pixel_ids[1], True)
+            journal.update_after_measurement(
+                "SPECTRUM",
+                pixel_ids[1],
+                "WORKING",
+                Path(folder) / "done.xlsx",
+                {},
+            )
+
+            changed = journal.set_spectrum_priorities(pixel_ids, True)
+            rows = {row["Pixel ID"]: row for row in journal.list_pixels()}
+
+            self.assertEqual(changed, 1)
+            self.assertTrue(rows[pixel_ids[0]]["Spectrum priority"])
+            self.assertFalse(rows[pixel_ids[1]]["Spectrum priority"])
 
 
 if __name__ == "__main__":

@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.9.0-alpha`
+- Current app version: `v1.9.0-alpha-2`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current prerelease is `v1.9.0-alpha`. It adds on-demand CIE/BPW34 spectral recalculation into a separate workbook, quarter-level integral calibration, geometry-aware luminance coefficients, series-wide XLSX/raw recalculation, spectrum-priority flags, and IVL hover thumbnails. Before calibration luminance uses the quarter's R/G/B coefficient; after calibration `quarter spectral integral × configured integral coefficient` replaces R/G/B while photodiode current and geometry remain in the formula. The previous stable release is `v1.8.8`.
+The current prerelease is `v1.9.0-alpha-2`. It moves spectrum-priority flags into the spectrum-date table, supports whole-substrate queue marking, arbitrary start pixels for substrate capture, and queued-only substrate sequences. It retains the alpha line's on-demand CIE/BPW34 recalculation, quarter-level integral calibration, geometry-aware luminance coefficients, series-wide XLSX/raw recalculation, and IVL hover thumbnails. The previous prerelease is `v1.9.0-alpha`; the previous stable release is `v1.8.8`.
 
 ## Main Entry Points
 
@@ -43,7 +43,7 @@ During modularization, do not edit `oled_measurement_app_v2_5.py` unless the use
 ## Measurement Workflows
 
 - IVL / ВАЯХ: modular workflow is in `oled_app/measurements/ivl.py` and the modular GUI window is in `oled_app/gui/ivl_window.py`; it writes raw CSV during measurement and builds the compatible final XLSX through `oled_app/processing/ivl_results.py`; the reference GUI still uses `oled_measurement_app_v2_5.py`.
-- Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; it previews integration-time trials, supports safe stopping, writes raw summary/spectra CSV during measurement, builds the compatible final XLSX through `oled_app/processing/spectrum_results.py`, and prioritizes pixels marked in the journal. Spectral sensitivity correction is never automatic and is launched separately from the series menu.
+- Spectrum: modular workflow is in `oled_app/measurements/spectrum.py` and the modular GUI window is in `oled_app/gui/spectrum_window.py`; it previews integration-time trials, supports safe stopping, writes raw summary/spectra CSV during measurement, builds the compatible final XLSX through `oled_app/processing/spectrum_results.py`, prioritizes pixels marked in the journal, and can capture a substrate from an arbitrary starting pixel or only its marked pixels. Spectral sensitivity correction is never automatic and is launched separately from the series menu.
 - Stability: modular workflow is in `oled_app/measurements/stability.py` and the modular GUI window is in `oled_app/gui/stability_window.py`; it supports mutable constant-current feedback and immediate constant-voltage targets and records both target and applied values in raw CSV/XLSX.
 - Report: report builder logic is in `oled_app/reports/origin_report.py`, and the modular GUI window is in `oled_app/gui/report_window.py`; it runs `scripts/build_report_origin_workbook.py` for full, IVL-only, or spectra-only Origin `.opju` reports, supports excluding holder quarters 1–4 from every section, and uses one selected substrate and spectrum pixel per included series plus selectable voltage grids when spectra are included.
 - Series journal: `series_journal.xlsx` inside each series folder.

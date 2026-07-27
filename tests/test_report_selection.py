@@ -97,7 +97,7 @@ class ReportWindowSelectionTests(unittest.TestCase):
 
     def test_spectrum_mode_hides_irrelevant_selector(self):
         self.assertEqual(spectrum_selection_visibility("single"), (True, False))
-        self.assertEqual(spectrum_selection_visibility("substrate"), (False, True))
+        self.assertEqual(spectrum_selection_visibility("substrate"), (True, True))
 
     def test_candidates_are_grouped_by_series_then_substrate(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -88,6 +88,23 @@ def show_measurement_menu(app) -> None:
 
     latest_frame = ttk.LabelFrame(main, text="Последние даты и метрики")
     latest_frame.pack(fill="both", expand=True, pady=(0, 10))
+    spectrum_queue_controls = ttk.Frame(latest_frame)
+    spectrum_queue_controls.pack(fill="x", padx=6, pady=(6, 2))
+    ttk.Label(
+        spectrum_queue_controls,
+        text="Очередь спектров: флажок ставится в столбце «Спектры»",
+        foreground="#555555",
+    ).pack(side="left")
+    ttk.Button(
+        spectrum_queue_controls,
+        text="Отметить всю подложку",
+        command=lambda: set_selected_substrate_spectrum_priority(app, True),
+    ).pack(side="right", padx=(6, 0))
+    ttk.Button(
+        spectrum_queue_controls,
+        text="Снять отметки с подложки",
+        command=lambda: set_selected_substrate_spectrum_priority(app, False),
+    ).pack(side="right", padx=(6, 0))
     table_frame, app.tree = create_tree_with_scrollbars(
         latest_frame,
         columns=("pixel", "status", "opening", "ivl", "ivl_photo", "ivl_current", "spectrum", "spectrum_peaks", "spectrum_peak_nm", "stability"),
@@ -114,6 +131,7 @@ def show_measurement_menu(app) -> None:
     app.tree.column("spectrum_peak_nm", width=220, minwidth=150, stretch=False)
     app.tree.column("stability", width=190, minwidth=150, stretch=True)
     table_frame.pack(fill="both", expand=True)
+    app.tree.bind("<Button-1>", lambda event: handle_spectrum_queue_click(app, event), add="+")
 
     app.log_widget = None
     refresh_pixel_table(app)
@@ -137,9 +155,7 @@ def refresh_pixel_table(app) -> None:
             spectrum_peak_count = metrics.get("peak_count", "")
             spectrum_peaks_nm = metrics.get("peaks_nm", "")
             spectrum_max_intensity = metrics.get("max_intensity", spectrum_max_intensity)
-        spectrum_text = row.get("Last spectrum date", "") or ""
-        if spectrum_max_intensity not in (None, ""):
-            spectrum_text = f"{spectrum_text} | max {spectrum_max_intensity}" if spectrum_text else f"max {spectrum_max_intensity}"
+        spectrum_text = spectrum_queue_cell_text(row, spectrum_max_intensity)
         app.tree.insert(
             "",
             "end",
@@ -173,6 +189,94 @@ def pixel_ids(app, require_ivl: bool = False, require_opening: bool = False) -> 
         priority = bool(row.get("Spectrum priority"))
         result.append((0 if priority else 1, index, row["Pixel ID"]))
     return [pixel_id for _priority, _index, pixel_id in sorted(result)]
+
+
+def spectrum_queue_cell_text(row: Dict[str, Any], spectrum_max_intensity: Any = "") -> str:
+    """Show the queue checkbox exactly where the spectrum date will appear."""
+
+    if not row.get("Last spectrum file"):
+        return "☑ в очереди" if bool(row.get("Spectrum priority")) else "☐ поставить"
+    spectrum_text = str(row.get("Last spectrum date", "") or "")
+    if spectrum_max_intensity not in (None, ""):
+        return (
+            f"{spectrum_text} | max {spectrum_max_intensity}"
+            if spectrum_text
+            else f"max {spectrum_max_intensity}"
+        )
+    return spectrum_text
+
+
+def handle_spectrum_queue_click(app, event):
+    """Toggle the queue only when an unmeasured spectrum cell is clicked."""
+
+    tree = getattr(app, "tree", None)
+    if tree is None or tree.identify_region(event.x, event.y) != "cell":
+        return None
+    column_id = tree.identify_column(event.x)
+    try:
+        column_index = int(column_id.lstrip("#")) - 1
+        column_name = list(tree["columns"])[column_index]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if column_name != "spectrum":
+        return None
+    pixel_id = tree.identify_row(event.y)
+    if not pixel_id:
+        return None
+    row = app.series.journal.get_pixel(pixel_id) if app.series is not None else None
+    if not row or row.get("Last spectrum file"):
+        return "break"
+    toggle_spectrum_priority(app, pixel_id)
+    try:
+        tree.selection_set(pixel_id)
+        tree.focus(pixel_id)
+    except tk.TclError:
+        pass
+    return "break"
+
+
+def substrate_pixel_ids(rows: List[Dict[str, Any]], pixel_id: str) -> List[str]:
+    substrate_id = str(pixel_id).rsplit("_", 1)[0]
+    return [
+        str(row.get("Pixel ID"))
+        for row in rows
+        if row.get("Pixel ID")
+        and str(row.get("Pixel ID")).rsplit("_", 1)[0] == substrate_id
+        and not row.get("Last spectrum file")
+    ]
+
+
+def set_selected_substrate_spectrum_priority(app, enabled: bool) -> None:
+    if app.series is None or not hasattr(app, "tree"):
+        return
+    selection = app.tree.selection()
+    if not selection:
+        messagebox.showinfo(
+            "Очередь спектров",
+            "Сначала выберите пиксель нужной подложки в таблице.",
+            parent=app,
+        )
+        return
+    selected_pixel = str(selection[0])
+    eligible_pixels = substrate_pixel_ids(app.series.journal.list_pixels(), selected_pixel)
+    if not eligible_pixels:
+        messagebox.showinfo(
+            "Очередь спектров",
+            "На выбранной подложке нет пикселей без снятых спектров.",
+            parent=app,
+        )
+        return
+    changed = app.series.journal.set_spectrum_priorities(eligible_pixels, enabled)
+    substrate_id = selected_pixel.rsplit("_", 1)[0]
+    action = "добавлена в очередь" if enabled else "убрана из очереди"
+    app.log(
+        f"Подложка {substrate_id} {action}: изменено отметок {changed}, "
+        f"доступно пикселей {len(eligible_pixels)}."
+    )
+    refresh_pixel_table(app)
+    if app.tree.exists(selected_pixel):
+        app.tree.selection_set(selected_pixel)
+        app.tree.focus(selected_pixel)
 
 
 def build_hardware_status_bar(app, parent) -> None:
@@ -338,26 +442,6 @@ def render_status_holder_canvas(app) -> None:
                     ),
                 )
                 canvas.tag_bind(pixel_tag, "<Leave>", lambda _event: hide_ivl_hover_preview(app))
-                if not pixel_row.get("Last spectrum file"):
-                    priority = bool(pixel_row.get("Spectrum priority"))
-                    priority_tag = f"spectrum-priority::{pixel_id}"
-                    canvas.create_text(
-                        px + pw - 2,
-                        py + 1,
-                        text="☑" if priority else "☐",
-                        anchor="ne",
-                        font=("Segoe UI Symbol", 7, "bold"),
-                        fill="#0B61A4" if priority else "#4B5563",
-                        tags=(pixel_tag, priority_tag),
-                    )
-                    canvas.tag_bind(
-                        priority_tag,
-                        "<Button-1>",
-                        lambda _event, selected_pixel=pixel_id: toggle_spectrum_priority(
-                            app,
-                            selected_pixel,
-                        ),
-                    )
             canvas.create_text(x + w / 2, y + h + 11, text=substrate_id, font=("Segoe UI", 8, "bold"), fill="#17345F")
 
     draw_status_legend(canvas, height)
