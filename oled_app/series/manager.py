@@ -15,7 +15,12 @@ from oled_app.series.metadata import (
     normalize_quarter_payload,
     quarter_led_color,
 )
-from oled_app.utils import now_str, safe_filename
+from oled_app.utils import (
+    SPECTRAL_CALIBRATION_METHODS,
+    luminance_coefficient_at_voltage,
+    now_str,
+    safe_filename,
+)
 
 
 class SeriesManager:
@@ -102,23 +107,42 @@ class SeriesManager:
         temp_path.replace(self.config_path)
         self.journal.config = self.config
 
-    def luminance_coefficient_for_pixel(self, pixel_id: str, app_settings: Dict[str, Any]) -> float:
+    def luminance_model_for_pixel(
+        self,
+        pixel_id: str,
+        app_settings: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
         calibration = self.integral_calibration_for_pixel(pixel_id)
         if (
-            calibration is not None
-            and calibration.get("method") == "normalized_shape_integral_median"
+            calibration is None
+            or str(calibration.get("method") or "") not in SPECTRAL_CALIBRATION_METHODS
         ):
-            try:
-                spectral_integral = float(calibration.get("coefficient"))
-                if spectral_integral > 0:
-                    return (
-                        spectral_integral
-                        * default_integral_conversion_coefficient(app_settings)
-                        * geometric_conversion_coefficient(app_settings)
-                    )
-            except (TypeError, ValueError):
-                pass
-        return self.rgb_luminance_coefficient_for_pixel(pixel_id, app_settings)
+            return None
+        model = dict(calibration)
+        model["integral_coefficient"] = default_integral_conversion_coefficient(
+            app_settings
+        )
+        model["geometric_coefficient"] = geometric_conversion_coefficient(
+            app_settings
+        )
+        return model
+
+    def luminance_coefficient_for_pixel(
+        self,
+        pixel_id: str,
+        app_settings: Dict[str, Any],
+        voltage_V: Any = None,
+    ) -> float:
+        rgb_coefficient = self.rgb_luminance_coefficient_for_pixel(
+            pixel_id,
+            app_settings,
+        )
+        coefficient = luminance_coefficient_at_voltage(
+            rgb_coefficient,
+            voltage_V,
+            self.luminance_model_for_pixel(pixel_id, app_settings),
+        )
+        return float(coefficient if coefficient is not None else rgb_coefficient)
 
     def rgb_luminance_coefficient_for_pixel(
         self,
@@ -135,7 +159,7 @@ class SeriesManager:
         calibration = self.integral_calibration_for_pixel(pixel_id)
         if (
             calibration is not None
-            and calibration.get("method") == "normalized_shape_integral_median"
+            and str(calibration.get("method") or "") in SPECTRAL_CALIBRATION_METHODS
         ):
             try:
                 return configured * float(calibration.get("coefficient"))

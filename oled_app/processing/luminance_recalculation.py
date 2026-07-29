@@ -20,7 +20,7 @@ from oled_app.processing.stability_results import STABILITY_RAW_HEADERS
 from oled_app.utils import (
     as_float_or_none,
     current_density_mA_cm2,
-    luminance_cd_m2,
+    luminance_cd_m2_at_voltage,
     resolve_series_file,
 )
 
@@ -88,6 +88,7 @@ def _recalculate_existing_raw(
     fieldnames: Sequence[str],
     luminance_coefficient: float,
     pixel_area_mm2: float,
+    calibration_model: Optional[Dict[str, Any]] = None,
 ) -> None:
     rows = _read_raw_rows(path)
     for row in rows:
@@ -102,7 +103,15 @@ def _recalculate_existing_raw(
         if "current_density_mA_cm2" in fieldnames:
             row["current_density_mA_cm2"] = current_density_mA_cm2(current_mA, pixel_area_mm2)
         if "luminance_cd_m2" in fieldnames:
-            row["luminance_cd_m2"] = luminance_cd_m2(photo_uA, luminance_coefficient)
+            voltage = as_float_or_none(row.get("voltage_set_V"))
+            if voltage is None:
+                voltage = as_float_or_none(row.get("voltage_led_measured_V"))
+            row["luminance_cd_m2"] = luminance_cd_m2_at_voltage(
+                photo_uA,
+                luminance_coefficient,
+                voltage,
+                calibration_model,
+            )
     _write_raw_rows(path, fieldnames, rows)
 
 
@@ -158,6 +167,7 @@ def _update_ivl_workbook(
     workbook_path: Path,
     luminance_coefficient: float,
     geometric_coefficient: float,
+    calibration_model: Optional[Dict[str, Any]] = None,
 ) -> None:
     wb = load_workbook(workbook_path)
     try:
@@ -174,12 +184,30 @@ def _update_ivl_workbook(
             ws = wb[sheet_name]
             header_row, headers = _find_header_row(ws, "Photodiode current (uA)")
             lum_col = headers.get("Luminance (cd/m^2)")
+            voltage_col = headers.get(
+                "Voltage set (V)",
+                headers.get("Voltage OLED / LED measured (V)"),
+            )
             if lum_col is None:
                 continue
             for row in range(header_row + 1, ws.max_row + 1):
                 photo = ws.cell(row, headers["Photodiode current (uA)"]).value
                 if photo not in (None, ""):
-                    ws.cell(row, lum_col, luminance_cd_m2(photo, luminance_coefficient))
+                    voltage = (
+                        ws.cell(row, voltage_col).value
+                        if voltage_col is not None
+                        else None
+                    )
+                    ws.cell(
+                        row,
+                        lum_col,
+                        luminance_cd_m2_at_voltage(
+                            photo,
+                            luminance_coefficient,
+                            voltage,
+                            calibration_model,
+                        ),
+                    )
         _atomic_save_workbook(wb, workbook_path)
     finally:
         wb.close()
@@ -189,6 +217,7 @@ def _stability_rows_from_workbook(
     workbook_path: Path,
     luminance_coefficient: float,
     pixel_area_mm2: float,
+    calibration_model: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     wb = load_workbook(workbook_path, data_only=True, read_only=True)
@@ -205,6 +234,10 @@ def _stability_rows_from_workbook(
             current_target = ws.cell(row, headers.get("Current setpoint (mA)", 5)).value
             voltage_target = ws.cell(row, headers.get("Voltage setpoint (V)", 6)).value
             target = current_target if mode == "current" else voltage_target
+            calibration_voltage = ws.cell(
+                row,
+                headers.get("Applied voltage (V)", headers.get("Voltage OLED / LED (V)", 8)),
+            ).value
             rows.append(
                 {
                     "point": int(point),
@@ -224,7 +257,12 @@ def _stability_rows_from_workbook(
                     "current_led_mA": current_mA,
                     "current_density_mA_cm2": current_density_mA_cm2(current_mA, pixel_area_mm2),
                     "current_photodiode_uA": photo_uA,
-                    "luminance_cd_m2": luminance_cd_m2(photo_uA, luminance_coefficient),
+                    "luminance_cd_m2": luminance_cd_m2_at_voltage(
+                        photo_uA,
+                        luminance_coefficient,
+                        calibration_voltage,
+                        calibration_model,
+                    ),
                 }
             )
     finally:
@@ -236,6 +274,7 @@ def _update_stability_workbook(
     workbook_path: Path,
     luminance_coefficient: float,
     geometric_coefficient: float,
+    calibration_model: Optional[Dict[str, Any]] = None,
 ) -> None:
     wb = load_workbook(workbook_path)
     try:
@@ -247,7 +286,20 @@ def _update_stability_workbook(
         for row in range(header_row + 1, ws.max_row + 1):
             photo = ws.cell(row, headers["Photodiode current (uA)"]).value
             if photo not in (None, ""):
-                ws.cell(row, lum_col, luminance_cd_m2(photo, luminance_coefficient))
+                voltage = ws.cell(
+                    row,
+                    headers.get("Applied voltage (V)", headers.get("Voltage OLED / LED (V)", 8)),
+                ).value
+                ws.cell(
+                    row,
+                    lum_col,
+                    luminance_cd_m2_at_voltage(
+                        photo,
+                        luminance_coefficient,
+                        voltage,
+                        calibration_model,
+                    ),
+                )
         _atomic_save_workbook(wb, workbook_path)
     finally:
         wb.close()
@@ -257,6 +309,7 @@ def _spectrum_summary_rows_from_workbook(
     workbook_path: Path,
     luminance_coefficient: float,
     pixel_area_mm2: float,
+    calibration_model: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     wb = load_workbook(workbook_path, data_only=True, read_only=True)
@@ -270,6 +323,10 @@ def _spectrum_summary_rows_from_workbook(
             current_mA = as_float_or_none(ws.cell(row, headers.get("I LED (mA)", 4)).value) or 0.0
             photo_uA = as_float_or_none(ws.cell(row, headers["I photodiode (uA)"]).value) or 0.0
             t_ms = as_float_or_none(ws.cell(row, headers.get("T_int saved spectrum (ms)", 9)).value)
+            calibration_voltage = ws.cell(
+                row,
+                headers.get("V set (V)", headers.get("V LED measured (V)", 3)),
+            ).value
             rows.append(
                 {
                     "point": int(point),
@@ -285,7 +342,12 @@ def _spectrum_summary_rows_from_workbook(
                     ).value,
                     "current_photodiode_A": -float(photo_uA) / 1_000_000.0,
                     "current_photodiode_uA": photo_uA,
-                    "luminance_cd_m2": luminance_cd_m2(photo_uA, luminance_coefficient),
+                    "luminance_cd_m2": luminance_cd_m2_at_voltage(
+                        photo_uA,
+                        luminance_coefficient,
+                        calibration_voltage,
+                        calibration_model,
+                    ),
                     "integration_time_s": None if t_ms is None else float(t_ms) / 1000.0,
                     "status": ws.cell(row, headers.get("Status", 13)).value,
                     "peak_nm": ws.cell(row, headers.get("Peak (nm)", 10)).value,
@@ -358,6 +420,7 @@ def _update_spectrum_workbook(
     workbook_path: Path,
     luminance_coefficient: float,
     geometric_coefficient: float,
+    calibration_model: Optional[Dict[str, Any]] = None,
 ) -> None:
     wb = load_workbook(workbook_path)
     try:
@@ -369,7 +432,20 @@ def _update_spectrum_workbook(
         for row in range(header_row + 1, ws.max_row + 1):
             photo = ws.cell(row, headers["I photodiode (uA)"]).value
             if photo not in (None, ""):
-                ws.cell(row, lum_col, luminance_cd_m2(photo, luminance_coefficient))
+                voltage = ws.cell(
+                    row,
+                    headers.get("V set (V)", headers.get("V LED measured (V)", 3)),
+                ).value
+                ws.cell(
+                    row,
+                    lum_col,
+                    luminance_cd_m2_at_voltage(
+                        photo,
+                        luminance_coefficient,
+                        voltage,
+                        calibration_model,
+                    ),
+                )
         _atomic_save_workbook(wb, workbook_path)
     finally:
         wb.close()
@@ -388,8 +464,21 @@ def recalculate_series_luminance(
     pixel_area = float(units.get("pixel_area_mm2", 1.0) or 1.0)
     raw_folder_name = str(raw_data_settings(app_settings)["folder_name"])
     seen: set[Path] = set()
+    measurements = list(series.journal.list_measurements())
+    latest_ivl_by_pixel: Dict[str, Tuple[float, int, Path]] = {}
+    for order, measurement in enumerate(measurements):
+        if str(measurement.get("Type") or "").upper() != "IVL":
+            continue
+        pixel_id = str(measurement.get("Pixel ID") or "")
+        candidate = resolve_series_file(series.series_folder, measurement.get("File"))
+        if candidate is None:
+            continue
+        sort_key = (candidate.stat().st_mtime, order, candidate)
+        previous = latest_ivl_by_pixel.get(pixel_id)
+        if previous is None or sort_key[:2] > previous[:2]:
+            latest_ivl_by_pixel[pixel_id] = sort_key
 
-    for measurement in series.journal.list_measurements():
+    for measurement in measurements:
         measurement_type = str(measurement.get("Type") or "").upper()
         if measurement_type not in {"IVL", "SPECTRUM", "STABILITY"}:
             continue
@@ -400,6 +489,12 @@ def recalculate_series_luminance(
             continue
         seen.add(workbook_path)
         luminance_coefficient = series.luminance_coefficient_for_pixel(pixel_id, app_settings)
+        model_resolver = getattr(series, "luminance_model_for_pixel", None)
+        calibration_model = (
+            model_resolver(pixel_id, app_settings)
+            if callable(model_resolver)
+            else None
+        )
         try:
             if measurement_type == "IVL":
                 raw_path, existed = _existing_or_default_raw_path(
@@ -413,14 +508,22 @@ def recalculate_series_luminance(
                         IVL_RAW_HEADERS,
                         luminance_coefficient,
                         pixel_area,
+                        calibration_model,
                     )
                     report.raw_files_updated += 1
                 else:
                     _write_raw_rows(raw_path, IVL_RAW_HEADERS, _ivl_rows_from_workbook(workbook_path))
                     report.raw_files_restored += 1
-                _update_ivl_workbook(workbook_path, luminance_coefficient, geometry)
-                create_ivl_thumbnail_from_workbook(workbook_path)
-                report.thumbnails_created += 1
+                _update_ivl_workbook(
+                    workbook_path,
+                    luminance_coefficient,
+                    geometry,
+                    calibration_model,
+                )
+                latest_ivl = latest_ivl_by_pixel.get(pixel_id)
+                if latest_ivl is not None and workbook_path == latest_ivl[2]:
+                    create_ivl_thumbnail_from_workbook(workbook_path)
+                    report.thumbnails_created += 1
             elif measurement_type == "STABILITY":
                 raw_path, existed = _existing_or_default_raw_path(
                     workbook_path,
@@ -433,6 +536,7 @@ def recalculate_series_luminance(
                         STABILITY_RAW_HEADERS,
                         luminance_coefficient,
                         pixel_area,
+                        calibration_model,
                     )
                     report.raw_files_updated += 1
                 else:
@@ -440,10 +544,16 @@ def recalculate_series_luminance(
                         workbook_path,
                         luminance_coefficient,
                         pixel_area,
+                        calibration_model,
                     )
                     _write_raw_rows(raw_path, STABILITY_RAW_HEADERS, rows)
                     report.raw_files_restored += 1
-                _update_stability_workbook(workbook_path, luminance_coefficient, geometry)
+                _update_stability_workbook(
+                    workbook_path,
+                    luminance_coefficient,
+                    geometry,
+                    calibration_model,
+                )
             else:
                 summary_path, summary_existed = _existing_or_default_raw_path(
                     workbook_path,
@@ -461,6 +571,7 @@ def recalculate_series_luminance(
                         SPECTRUM_SUMMARY_RAW_HEADERS,
                         luminance_coefficient,
                         pixel_area,
+                        calibration_model,
                     )
                     report.raw_files_updated += 1
                 else:
@@ -468,6 +579,7 @@ def recalculate_series_luminance(
                         workbook_path,
                         luminance_coefficient,
                         pixel_area,
+                        calibration_model,
                     )
                     _write_raw_rows(summary_path, SPECTRUM_SUMMARY_RAW_HEADERS, summary_rows)
                     report.raw_files_restored += 1
@@ -484,6 +596,7 @@ def recalculate_series_luminance(
                     workbook_path,
                     luminance_coefficient,
                     geometry,
+                    calibration_model,
                 )
             report.workbooks_updated += 1
             if log is not None:

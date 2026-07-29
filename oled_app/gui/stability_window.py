@@ -308,4 +308,14 @@ def params_for_pixel_luminance(app, pixel_id: str, params: StabilityParams) -> S
     if app.series is None:
         return params
     coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
-    return replace(params, luminance_cd_m2_per_uA=coeff)
+    model_resolver = getattr(app.series, "luminance_model_for_pixel", None)
+    model = (
+        model_resolver(pixel_id, app.app_settings)
+        if callable(model_resolver)
+        else None
+    )
+    return replace(
+        params,
+        luminance_cd_m2_per_uA=coeff,
+        luminance_calibration_model=model,
+    )

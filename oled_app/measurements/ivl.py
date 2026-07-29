@@ -14,12 +14,15 @@ from oled_app.measurements.raw_io import RawCsvWriter, cleanup_raw_files, raw_cs
 from oled_app.processing.ivl_results import (
     IVL_RAW_HEADERS,
     build_ivl_workbook_from_raw_csv,
+    confirmed_burned_cycle,
+    describe_ivl_first_measurement as describe_ivl_result,
+    final_ivl_status,
     save_ivl_workbook as write_ivl_workbook,
 )
 from oled_app.processing.ivl_preview import create_ivl_thumbnail, ivl_thumbnail_path
 from oled_app.utils import (
     current_density_mA_cm2,
-    luminance_cd_m2,
+    luminance_cd_m2_at_voltage,
     now_str,
     safe_filename,
     timestamp_for_file,
@@ -50,6 +53,7 @@ class IVLParams:
     pixel_area_mm2: float = 1.0
     luminance_cd_m2_per_uA: float = 1.0
     geometric_coefficient: float = 1.0
+    luminance_calibration_model: Optional[Dict[str, Any]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
@@ -81,25 +85,7 @@ def detect_opening_voltage(cycle_data: List[Dict[str, Any]], threshold_uA: float
 
 
 def describe_ivl_first_measurement(cycles: List[Dict[str, Any]]) -> str:
-    if not cycles:
-        return "ВАЯХ не выполнена"
-    burned = next((cycle for cycle in cycles if cycle.get("status") == "BURNED"), None)
-    if burned is not None:
-        cycle_number = int(burned.get("cycle", 1) or 1)
-        if cycle_number == 1:
-            return "Светодиод сгорел/пробился на первом цикле ВАЯХ"
-        return f"Светодиод сгорел/пробился на цикле {cycle_number} ВАЯХ"
-
-    first = str(cycles[0].get("status", "") or "").upper()
-    if first == "WORKING":
-        return "На первом промере светодиод рабочий"
-    if first == "NONWORKING":
-        return "Светодиод сразу нерабочий: ток есть, фототока нет"
-    if first == "NO_CONTACT":
-        return "На первом промере нет контакта с подложкой"
-    if first == "BURNED":
-        return "Светодиод сгорел/пробился на первом цикле ВАЯХ"
-    return f"Первый промер завершился статусом {first or 'UNKNOWN'}"
+    return describe_ivl_result(cycles)
 
 
 def run_ivl_cycle(
@@ -162,7 +148,12 @@ def run_ivl_cycle(
             "Current density (mA/cm^2)": current_density_mA_cm2(current_led_mA, params.pixel_area_mm2),
             "Voltage photodiode measured (V)": float(voltage_pd),
             "Photodiode current (uA)": float(current_pd_uA),
-            "Luminance (cd/m^2)": luminance_cd_m2(current_pd_uA, params.luminance_cd_m2_per_uA),
+            "Luminance (cd/m^2)": luminance_cd_m2_at_voltage(
+                current_pd_uA,
+                params.luminance_cd_m2_per_uA,
+                set_v,
+                params.luminance_calibration_model,
+            ),
             "Measurement time (s)": float(measurement_elapsed_s),
         }
         if raw_writer is not None:
@@ -279,17 +270,17 @@ def run_ivl_measurement(
                 cycle += 1
 
     filename = build_ivl_workbook_from_raw_csv(raw_file, filename, pixel_id, params, cycles)
-    thumbnail = create_ivl_thumbnail(ivl_thumbnail_path(filename), cycles)
+    thumbnail = create_ivl_thumbnail(
+        ivl_thumbnail_path(filename, pixel_id),
+        cycles,
+    )
     kept_raw_files = cleanup_raw_files([raw_file], app_settings, log)
     best_opening = next((cycle.get("opening_voltage") for cycle in cycles if cycle.get("opening_voltage") is not None), None)
     max_current = max([cycle["max_current_mA"] for cycle in cycles], default=0.0)
     max_photo = max([cycle["max_photo_uA"] for cycle in cycles], default=0.0)
     ivl_diagnosis = describe_ivl_first_measurement(cycles)
-    burned_cycle = next(
-        (int(cycle.get("cycle", 1) or 1) for cycle in cycles if cycle.get("status") == "BURNED"),
-        None,
-    )
-    final_status = "BURNED" if burned_cycle is not None else cycles[-1]["status"] if cycles else "FAILED"
+    burned_cycle = confirmed_burned_cycle(cycles)
+    final_status = final_ivl_status(cycles)
     events = []
     for cycle_result in cycles:
         event_time = cycle_result.get("current_limit_elapsed_s")

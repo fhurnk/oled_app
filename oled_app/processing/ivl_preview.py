@@ -3,21 +3,65 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 from openpyxl import load_workbook
 from PIL import Image, ImageDraw
 
-from oled_app.utils import as_float_or_none
+from oled_app.utils import as_float_or_none, safe_filename
 
 
 THUMBNAIL_SUFFIX = "_thumbnail.png"
+THUMBNAIL_FOLDER = "thumbnails"
+IVL_TIMESTAMP_SUFFIX_RE = re.compile(
+    r"(?:_\d{2}-\d{2}-\d{4}_\d{1,2}h\d{2}m\d{2}s|_\d{8}_\d{6})$",
+    re.IGNORECASE,
+)
 
 
-def ivl_thumbnail_path(workbook_path: Path) -> Path:
+def _pixel_id_from_workbook(workbook_path: Path) -> str:
+    stem = Path(workbook_path).stem
+    if stem.upper().startswith("IVL_"):
+        stem = stem[4:]
+    return IVL_TIMESTAMP_SUFFIX_RE.sub("", stem)
+
+
+def ivl_thumbnail_path(
+    workbook_path: Path,
+    pixel_id: str | None = None,
+) -> Path:
     workbook_path = Path(workbook_path)
-    return workbook_path.with_name(f"{workbook_path.stem}{THUMBNAIL_SUFFIX}")
+    pixel = safe_filename(
+        pixel_id or _pixel_id_from_workbook(workbook_path),
+        fallback=workbook_path.stem,
+    )
+    return workbook_path.parent / THUMBNAIL_FOLDER / f"{pixel}{THUMBNAIL_SUFFIX}"
+
+
+def _representative_cycles(
+    cycles: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Exclude dead confirmation sweeps that otherwise cross out the preview."""
+
+    candidates = [cycle for cycle in cycles if cycle.get("data")]
+    for index, cycle in enumerate(candidates):
+        if str(cycle.get("status") or "").upper() != "BURNED":
+            continue
+        if index + 1 >= len(candidates):
+            return [cycle]
+        next_status = str(candidates[index + 1].get("status") or "").upper()
+        if next_status in {"BURNED", "NONWORKING", "NO_CONTACT"}:
+            return [cycle]
+    working = [
+        cycle
+        for cycle in candidates
+        if str(cycle.get("status") or "").upper() == "WORKING"
+    ]
+    if working:
+        return [working[-1]]
+    return candidates[-1:] if candidates else []
 
 
 def _series_points(
@@ -67,7 +111,7 @@ def create_ivl_thumbnail(
     colors = ("#C43C30", "#2F80ED", "#7A4FB3", "#2FA66A")
 
     any_points = False
-    for cycle_index, cycle in enumerate(cycles):
+    for cycle_index, cycle in enumerate(_representative_cycles(cycles)):
         rows = list(cycle.get("data") or [])
         voltages = [
             as_float_or_none(
@@ -136,6 +180,7 @@ def create_ivl_thumbnail_from_workbook(workbook_path: Path, output_path: Path | 
             if not sheet_name.startswith("Cycle_"):
                 continue
             ws = wb[sheet_name]
+            status = str(ws.cell(1, 1).value or "").rsplit("|", 1)[-1].strip().upper()
             header_row = None
             headers: Dict[str, int] = {}
             for row in range(1, min(ws.max_row, 20) + 1):
@@ -167,7 +212,7 @@ def create_ivl_thumbnail_from_workbook(workbook_path: Path, output_path: Path | 
                 }
                 if any(value not in (None, "") for value in point.values()):
                     data.append(point)
-            cycles.append({"data": data})
+            cycles.append({"status": status, "data": data})
     finally:
         wb.close()
     return create_ivl_thumbnail(output_path or ivl_thumbnail_path(workbook_path), cycles)

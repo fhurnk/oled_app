@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from oled_app.reports.origin_report import (
     REPORT_MODE_SPECTRA,
     ReportData,
     SpectrumRecord,
+    apply_quarter_descriptions,
     build_workbook,
     collect_iv_records,
     collect_report_data,
@@ -43,12 +45,17 @@ class _OriginSheet:
     def __init__(self):
         self.name = ""
         self.formulas = {}
+        self.notes = {}
+        self.columns = {}
 
-    def from_list(self, *_args, **_kwargs):
-        pass
+    def from_list(self, column, values, **kwargs):
+        self.columns[column] = {"values": values, **kwargs}
 
     def set_formula(self, column: int, formula: str):
         self.formulas[column] = formula
+
+    def set_cell_note(self, row: int, column: int, text: str):
+        self.notes[(row, column)] = text
 
 
 class _OriginBook:
@@ -210,6 +217,52 @@ class ReportBuilderSelectionTests(unittest.TestCase):
             result = create_origin_iv_book(_OriginApp(), records)
 
         self.assertEqual(result["jl"].formulas, {0: "Sheet1!B", 1: "Sheet1!C"})
+        self.assertEqual(result["iv"].notes, {(0, 0): "CG1_1_1"})
+        self.assertEqual(result["jl"].notes, {(0, 0): "CG1_1_1"})
+        self.assertEqual(result["iv"].columns[2]["units"], "cd/m\\+(2)")
+        self.assertEqual(result["jl"].columns[1]["units"], "cd/m\\+(2)")
+
+    def test_quarter_description_becomes_visible_origin_series_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            series_folder = Path(temp_dir)
+            measurements = series_folder / "measurements"
+            measurements.mkdir()
+            (series_folder / "series_config.json").write_text(
+                json.dumps(
+                    {"quarter_descriptions": {"1": "ETM1 10nm"}},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            iv_record = IvRecord(
+                Path("ivl.xlsx"),
+                "2026-07-19",
+                "CLR1",
+                "CLR1_2",
+                "CLR1_2_1",
+                "Cycle_1",
+                "WORKING",
+                [],
+            )
+            spectrum_record = SpectrumRecord(
+                Path("spectrum.xlsx"),
+                "2026-07-19",
+                "CLR1",
+                "CLR1_2",
+                "CLR1_2_1",
+                [2.0],
+                [500.0],
+                [[1.0]],
+            )
+
+            apply_quarter_descriptions(
+                measurements,
+                [iv_record],
+                [spectrum_record],
+            )
+
+            self.assertEqual(iv_record.series, "ETM1 10nm (CLR1)")
+            self.assertEqual(spectrum_record.series, "ETM1 10nm (CLR1)")
 
     def test_series_selection_keeps_one_substrate_and_pixel(self):
         timestamp = datetime(2026, 7, 18, 12, 0, 0)

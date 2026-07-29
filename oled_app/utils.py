@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import date, datetime
 from pathlib import Path
@@ -54,6 +55,76 @@ def luminance_cd_m2(photo_uA: Any, conversion_cd_m2_per_uA: Any) -> Optional[flo
     if photo is None or coeff is None:
         return None
     return float(photo) * float(coeff)
+
+
+SPECTRAL_CALIBRATION_METHODS = {
+    "normalized_shape_integral_median",
+    "normalized_shape_integral_filtered_median",
+    "normalized_shape_integral_robust_median",
+    "normalized_shape_integral_linear_voltage",
+}
+
+
+def spectral_integral_at_voltage(
+    calibration: Any,
+    voltage_V: Any = None,
+) -> Optional[float]:
+    """Resolve the quarter spectral integral, including a voltage fit when present."""
+
+    if not isinstance(calibration, dict):
+        return None
+    method = str(calibration.get("method") or "")
+    if method not in SPECTRAL_CALIBRATION_METHODS:
+        return None
+
+    fallback = as_float_or_none(calibration.get("coefficient"))
+    if method != "normalized_shape_integral_linear_voltage":
+        return fallback if fallback is not None and fallback > 0 else None
+
+    voltage = as_float_or_none(voltage_V)
+    if voltage is None:
+        voltage = as_float_or_none(calibration.get("reference_voltage_V"))
+    slope = as_float_or_none(calibration.get("slope_integral_per_V"))
+    intercept = as_float_or_none(calibration.get("intercept_integral"))
+    if voltage is None or slope is None or intercept is None:
+        return fallback if fallback is not None and fallback > 0 else None
+    predicted = float(slope) * float(voltage) + float(intercept)
+    if not math.isfinite(predicted) or predicted <= 0:
+        return fallback if fallback is not None and fallback > 0 else None
+    return predicted
+
+
+def luminance_coefficient_at_voltage(
+    default_coefficient: Any,
+    voltage_V: Any = None,
+    calibration: Any = None,
+) -> Optional[float]:
+    """Return the RGB or calibrated spectral coefficient for one voltage."""
+
+    default = as_float_or_none(default_coefficient)
+    integral = spectral_integral_at_voltage(calibration, voltage_V)
+    if integral is None:
+        return default
+    integral_coefficient = as_float_or_none(calibration.get("integral_coefficient"))
+    geometry = as_float_or_none(calibration.get("geometric_coefficient"))
+    if integral_coefficient is None or geometry is None:
+        return default
+    coefficient = float(integral) * float(integral_coefficient) * float(geometry)
+    return coefficient if math.isfinite(coefficient) and coefficient > 0 else default
+
+
+def luminance_cd_m2_at_voltage(
+    photo_uA: Any,
+    default_coefficient: Any,
+    voltage_V: Any = None,
+    calibration: Any = None,
+) -> Optional[float]:
+    coefficient = luminance_coefficient_at_voltage(
+        default_coefficient,
+        voltage_V,
+        calibration,
+    )
+    return luminance_cd_m2(photo_uA, coefficient)
 
 
 def relative_to_or_abs(path: Path, base: Path) -> str:

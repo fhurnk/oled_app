@@ -455,6 +455,12 @@ def params_for_pixel(app, pixel_id: str, params: SpectrumParams) -> SpectrumPara
     if app.series is None:
         return params
     coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
+    model_resolver = getattr(app.series, "luminance_model_for_pixel", None)
+    model = (
+        model_resolver(pixel_id, app.app_settings)
+        if callable(model_resolver)
+        else None
+    )
     led_type = params.led_type
     if not led_type or str(led_type).strip().lower() == "auto":
         row = app.series.journal.get_pixel(pixel_id) or {}
@@ -471,4 +477,5 @@ def params_for_pixel(app, pixel_id: str, params: SpectrumParams) -> SpectrumPara
         luminance_cd_m2_per_uA=coeff,
         led_type=led_type,
         geometric_coefficient=geometric_coefficient,
+        luminance_calibration_model=model,
     )

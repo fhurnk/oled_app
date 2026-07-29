@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.9.0-alpha-2`
+- Current app version: `v1.9.0-beta`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current prerelease is `v1.9.0-alpha-2`. It moves spectrum-priority flags into the spectrum-date table, supports whole-substrate queue marking, arbitrary start pixels for substrate capture, and queued-only substrate sequences. It retains the alpha line's on-demand CIE/BPW34 recalculation, quarter-level integral calibration, geometry-aware luminance coefficients, series-wide XLSX/raw recalculation, and IVL hover thumbnails. The previous prerelease is `v1.9.0-alpha`; the previous stable release is `v1.8.8`.
+The current prerelease is `v1.9.0-beta`. It adds adaptive quarter calibration: a filtered median when most spectral integrals stay within 10% of the median, or a voltage-linear integral model with R² for a systematic trend. Origin series names include quarter descriptions, luminance units use `cd/m\+(2)`, and per-pixel data blocks carry cell notes. IVL thumbnails use one overwritten file per pixel, and `BURNED` requires a nonworking confirmation outcome. The previous prerelease is `v1.9.0-alpha-2`; the previous stable release is `v1.8.8`.
 
 ## Main Entry Points
 

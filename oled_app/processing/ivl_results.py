@@ -14,7 +14,7 @@ from oled_app.measurements.raw_io import read_csv_dicts
 from oled_app.utils import (
     autosize_columns,
     current_density_mA_cm2,
-    luminance_cd_m2,
+    luminance_cd_m2_at_voltage,
     now_str,
     style_header_row,
 )
@@ -82,6 +82,9 @@ def raw_row_to_workbook_point(row: Dict[str, str], params: Any) -> Dict[str, Any
 
     pixel_area = _params_value(params, "pixel_area_mm2", 1.0)
     luminance_coeff = _params_value(params, "luminance_cd_m2_per_uA", 1.0)
+    calibration_voltage = _float_or_none(row.get("voltage_set_V"))
+    if calibration_voltage is None:
+        calibration_voltage = _float_or_none(row.get("voltage_led_measured_V"))
     return {
         "Point": _int_or_default(row.get("point"), 0),
         "Voltage set (V)": _float_or_none(row.get("voltage_set_V")) or 0.0,
@@ -90,7 +93,12 @@ def raw_row_to_workbook_point(row: Dict[str, str], params: Any) -> Dict[str, Any
         "Current density (mA/cm^2)": current_density_mA_cm2(current_led_mA, pixel_area),
         "Voltage photodiode measured (V)": _float_or_none(row.get("voltage_photodiode_measured_V")) or 0.0,
         "Photodiode current (uA)": float(current_pd_uA),
-        "Luminance (cd/m^2)": luminance_cd_m2(current_pd_uA, luminance_coeff),
+        "Luminance (cd/m^2)": luminance_cd_m2_at_voltage(
+            current_pd_uA,
+            luminance_coeff,
+            calibration_voltage,
+            _params_value(params, "luminance_calibration_model"),
+        ),
         "Measurement time (s)": _float_or_none(row.get("elapsed_s")),
     }
 
@@ -128,17 +136,44 @@ def merge_ivl_raw_cycles(
     return merged
 
 
+def confirmed_burned_cycle(cycles: List[Dict[str, Any]]) -> Optional[int]:
+    """Return a burnout cycle only when the next cycle confirms loss of function."""
+
+    for index, cycle in enumerate(cycles):
+        if str(cycle.get("status") or "").upper() != "BURNED":
+            continue
+        cycle_number = int(cycle.get("cycle", index + 1) or index + 1)
+        if index + 1 >= len(cycles):
+            return cycle_number
+        confirmation_status = str(
+            cycles[index + 1].get("status") or ""
+        ).upper()
+        if confirmation_status in {"BURNED", "NONWORKING", "NO_CONTACT"}:
+            return cycle_number
+    return None
+
+
+def final_ivl_status(cycles: List[Dict[str, Any]]) -> str:
+    if not cycles:
+        return "FAILED"
+    if confirmed_burned_cycle(cycles) is not None:
+        return "BURNED"
+    return str(cycles[-1].get("status") or "FAILED").upper()
+
+
 def describe_ivl_first_measurement(cycles: List[Dict[str, Any]]) -> str:
     if not cycles:
         return "ВАЯХ не выполнена"
-    burned = next((cycle for cycle in cycles if cycle.get("status") == "BURNED"), None)
-    if burned is not None:
-        cycle_number = int(burned.get("cycle", 1) or 1)
+    burned_cycle = confirmed_burned_cycle(cycles)
+    if burned_cycle is not None:
+        cycle_number = burned_cycle
         if cycle_number == 1:
             return "Светодиод сгорел/пробился на первом цикле ВАЯХ"
         return f"Светодиод сгорел/пробился на цикле {cycle_number} ВАЯХ"
 
     first = str(cycles[0].get("status", "") or "").upper()
+    if first == "BURNED" and final_ivl_status(cycles) == "WORKING":
+        return "Превышение тока не подтвердилось: на контрольном цикле светодиод рабочий"
     if first == "WORKING":
         return "На первом промере светодиод рабочий"
     if first == "NONWORKING":

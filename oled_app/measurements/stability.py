@@ -24,7 +24,7 @@ from oled_app.processing.stability_results import (
 from oled_app.utils import (
     as_float_or_none,
     current_density_mA_cm2,
-    luminance_cd_m2,
+    luminance_cd_m2_at_voltage,
     now_str,
     safe_filename,
     timestamp_for_file,
@@ -51,6 +51,7 @@ class StabilityParams:
     pixel_area_mm2: float = 1.0
     luminance_cd_m2_per_uA: float = 1.0
     geometric_coefficient: float = 1.0
+    luminance_calibration_model: Optional[Dict[str, Any]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
@@ -308,7 +309,12 @@ def run_stability_measurement(
                     i_led_mA = i_led * 1000.0
                     i_pd_uA = -i_pd * 1_000_000.0
                     j_led = current_density_mA_cm2(i_led_mA, params.pixel_area_mm2)
-                    lum = luminance_cd_m2(i_pd_uA, params.luminance_cd_m2_per_uA)
+                    lum = luminance_cd_m2_at_voltage(
+                        i_pd_uA,
+                        params.luminance_cd_m2_per_uA,
+                        voltage_set_for_point,
+                        params.luminance_calibration_model,
+                    )
 
                     max_photo = max(max_photo, i_pd_uA)
                     point_number += 1

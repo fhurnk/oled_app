@@ -13,8 +13,15 @@ from oled_app.gui.measurement_menu import pixel_ids
 from oled_app.measurements.ivl import IVLParams
 from oled_app.measurements.spectrum import SpectrumHelper, SpectrumParams
 from oled_app.measurements.stability import StabilityParams
-from oled_app.processing.ivl_preview import ivl_thumbnail_path
-from oled_app.processing.ivl_results import save_ivl_workbook
+from oled_app.processing.ivl_preview import (
+    _representative_cycles,
+    ivl_thumbnail_path,
+)
+from oled_app.processing.ivl_results import (
+    confirmed_burned_cycle,
+    final_ivl_status,
+    save_ivl_workbook,
+)
 from oled_app.processing.luminance_recalculation import recalculate_series_luminance
 from oled_app.processing.spectral_calibration import (
     calibrate_quarter_spectral_integral,
@@ -56,9 +63,9 @@ class SpectralSensitivityTests(unittest.TestCase):
 
     def test_quarter_calibration_uses_median_normalized_integral(self):
         points = [
-            {"shape_integral": 2.9, "photodiode_uA": 1.0, "status": "GOOD"},
-            {"shape_integral": 3.0, "photodiode_uA": 2.0, "status": "GOOD"},
-            {"shape_integral": 3.1, "photodiode_uA": 3.0, "status": "OK"},
+            {"voltage_V": 2.0, "shape_integral": 2.9, "photodiode_uA": 1.0, "status": "GOOD"},
+            {"voltage_V": 3.0, "shape_integral": 3.0, "photodiode_uA": 2.0, "status": "GOOD"},
+            {"voltage_V": 4.0, "shape_integral": 3.1, "photodiode_uA": 3.0, "status": "OK"},
         ]
 
         calibration = calibrate_quarter_spectral_integral(
@@ -74,6 +81,66 @@ class SpectralSensitivityTests(unittest.TestCase):
         self.assertAlmostEqual(calibration.effective_coefficient, 9.0)
         self.assertAlmostEqual(calibration.integral_min, 2.9)
         self.assertAlmostEqual(calibration.integral_max, 3.1)
+        self.assertEqual(
+            calibration.method,
+            "normalized_shape_integral_filtered_median",
+        )
+
+    def test_quarter_calibration_removes_ten_percent_outlier(self):
+        points = [
+            {
+                "point": index,
+                "voltage_V": voltage,
+                "shape_integral": integral,
+                "photodiode_uA": float(index),
+                "status": "GOOD",
+            }
+            for index, (voltage, integral) in enumerate(
+                [(2.0, 3.0), (3.0, 3.05), (4.0, 2.95), (5.0, 8.0)],
+                start=1,
+            )
+        ]
+
+        calibration = calibrate_quarter_spectral_integral(
+            points,
+            geometric_coefficient=1.0,
+            source_pixel="P1",
+            source_file="spectrum.xlsx",
+        )
+
+        self.assertAlmostEqual(calibration.coefficient, 3.0)
+        self.assertEqual(calibration.points_used, 3)
+        self.assertEqual(calibration.points_rejected, 1)
+        self.assertEqual(calibration.included_point_numbers, (1, 2, 3))
+
+    def test_quarter_calibration_fits_systematic_voltage_trend(self):
+        points = [
+            {
+                "point": index,
+                "voltage_V": voltage,
+                "shape_integral": 0.8 * voltage + 0.5,
+                "photodiode_uA": float(index),
+                "status": "GOOD",
+            }
+            for index, voltage in enumerate((2.0, 3.0, 4.0, 5.0), start=1)
+        ]
+
+        calibration = calibrate_quarter_spectral_integral(
+            points,
+            geometric_coefficient=2.0,
+            source_pixel="P1",
+            source_file="spectrum.xlsx",
+            integral_coefficient=3.0,
+        )
+
+        self.assertEqual(
+            calibration.method,
+            "normalized_shape_integral_linear_voltage",
+        )
+        self.assertAlmostEqual(calibration.slope_integral_per_V, 0.8)
+        self.assertAlmostEqual(calibration.intercept_integral, 0.5)
+        self.assertAlmostEqual(calibration.r_squared, 1.0)
+        self.assertAlmostEqual(calibration.integral_at_voltage(4.0), 3.7)
 
     def test_rgb_coefficient_is_multiplied_by_geometry(self):
         settings = {
@@ -115,6 +182,22 @@ class SpectralSensitivityTests(unittest.TestCase):
         self.assertAlmostEqual(
             manager.luminance_coefficient_for_pixel("CR1_1_1", settings),
             24.0,
+        )
+
+        manager.config["quarter_integral_calibrations"]["1"] = {
+            "method": "normalized_shape_integral_linear_voltage",
+            "coefficient": 3.0,
+            "reference_voltage_V": 3.0,
+            "slope_integral_per_V": 1.0,
+            "intercept_integral": 0.0,
+        }
+        self.assertAlmostEqual(
+            manager.luminance_coefficient_for_pixel(
+                "CR1_1_1",
+                settings,
+                voltage_V=4.0,
+            ),
+            32.0,
         )
 
     def test_on_demand_recalculation_saves_separate_workbook(self):
@@ -210,6 +293,38 @@ class SpectrumPriorityTests(unittest.TestCase):
         )
 
         self.assertEqual(pixel_ids(app), ["P2", "P1", "P3"])
+
+
+class IvlStatusAndThumbnailTests(unittest.TestCase):
+    def test_alive_confirmation_clears_preliminary_burned_status(self):
+        cycles = [
+            {"cycle": 1, "status": "BURNED", "data": [{"Point": 1}]},
+            {"cycle": 2, "status": "WORKING", "data": [{"Point": 1}]},
+        ]
+
+        self.assertIsNone(confirmed_burned_cycle(cycles))
+        self.assertEqual(final_ivl_status(cycles), "WORKING")
+        self.assertEqual(_representative_cycles(cycles), [cycles[1]])
+
+    def test_nonworking_confirmation_keeps_burned_curve_and_status(self):
+        cycles = [
+            {"cycle": 1, "status": "BURNED", "data": [{"Point": 1}]},
+            {"cycle": 2, "status": "NONWORKING", "data": [{"Point": 1}]},
+        ]
+
+        self.assertEqual(confirmed_burned_cycle(cycles), 1)
+        self.assertEqual(final_ivl_status(cycles), "BURNED")
+        self.assertEqual(_representative_cycles(cycles), [cycles[0]])
+
+    def test_thumbnail_path_is_fixed_per_pixel(self):
+        first = Path("folder/IVL_CR1_2_1_01-01-2026_10h00m00s.xlsx")
+        second = Path("folder/IVL_CR1_2_1_02-01-2026_11h00m00s.xlsx")
+
+        self.assertEqual(ivl_thumbnail_path(first), ivl_thumbnail_path(second))
+        self.assertEqual(
+            ivl_thumbnail_path(first),
+            Path("folder/thumbnails/CR1_2_1_thumbnail.png"),
+        )
 
 
 class ExistingSeriesRecalculationTests(unittest.TestCase):
@@ -377,6 +492,70 @@ class ExistingSeriesRecalculationTests(unittest.TestCase):
             finally:
                 spectrum_result.close()
                 stability_result.close()
+
+    def test_ivl_recalculation_uses_voltage_linear_integral(self):
+        cycle = {
+            "cycle": 1,
+            "status": "WORKING",
+            "status_desc": "ok",
+            "current_limit_reached": False,
+            "max_photo_uA": 1.0,
+            "max_current_mA": 1.0,
+            "opening_voltage": 2.0,
+            "data": [
+                {
+                    "Point": point,
+                    "Voltage set (V)": voltage,
+                    "Voltage OLED / LED measured (V)": voltage - 0.05,
+                    "Current OLED / LED (mA)": 1.0,
+                    "Current density (mA/cm^2)": 100.0,
+                    "Voltage photodiode measured (V)": -5.0,
+                    "Photodiode current (uA)": 1.0,
+                    "Luminance (cd/m^2)": 1.0,
+                    "Measurement time (s)": 0.1 * point,
+                }
+                for point, voltage in ((1, 2.0), (2, 4.0))
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workbook = root / "IVL_P1_20260101_000000.xlsx"
+            save_ivl_workbook("P1", workbook, IVLParams(), [cycle])
+            model = {
+                "method": "normalized_shape_integral_linear_voltage",
+                "coefficient": 3.0,
+                "reference_voltage_V": 3.0,
+                "slope_integral_per_V": 1.0,
+                "intercept_integral": 0.0,
+                "integral_coefficient": 2.0,
+                "geometric_coefficient": 3.0,
+            }
+            series = SimpleNamespace(
+                series_folder=root,
+                journal=SimpleNamespace(
+                    list_measurements=lambda: [
+                        {"Type": "IVL", "Pixel ID": "P1", "File": str(workbook)}
+                    ]
+                ),
+                luminance_coefficient_for_pixel=lambda _pixel, _settings: 18.0,
+                luminance_model_for_pixel=lambda _pixel, _settings: model,
+                geometric_coefficient=lambda _settings: 3.0,
+            )
+            settings = {
+                "measurement_units": {"pixel_area_mm2": 1.0},
+                "raw_data": {"folder_name": "raw_data"},
+            }
+
+            report = recalculate_series_luminance(series, settings)
+
+            self.assertEqual(report.errors, 0)
+            result = load_workbook(workbook, data_only=True)
+            try:
+                ws = result["Cycle_1"]
+                self.assertAlmostEqual(ws["H5"].value, 12.0)
+                self.assertAlmostEqual(ws["H6"].value, 24.0)
+            finally:
+                result.close()
 
 
 if __name__ == "__main__":

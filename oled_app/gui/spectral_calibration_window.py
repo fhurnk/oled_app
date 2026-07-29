@@ -11,7 +11,11 @@ from oled_app.processing.spectral_calibration import (
     read_spectrum_integral_points,
     spectral_recalculation_output_path,
 )
-from oled_app.utils import as_float_or_none, luminance_cd_m2, resolve_series_file
+from oled_app.utils import (
+    SPECTRAL_CALIBRATION_METHODS,
+    luminance_cd_m2,
+    resolve_series_file,
+)
 
 
 def calibrate_quarter_from_latest_spectrum(app) -> None:
@@ -65,7 +69,8 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
         stored_calibration = app.series.integral_calibration_for_pixel(pixel_id)
         if (
             stored_calibration is not None
-            and stored_calibration.get("method") != "normalized_shape_integral_median"
+            and str(stored_calibration.get("method") or "")
+            not in SPECTRAL_CALIBRATION_METHODS
         ):
             stored_calibration = None
         use_stored_calibration = False
@@ -87,23 +92,10 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             use_stored_calibration = bool(choice)
 
         if use_stored_calibration:
-            coefficient = as_float_or_none(stored_calibration.get("coefficient"))
-            if coefficient is None or coefficient <= 0:
-                raise ValueError("Сохранённый спектральный интеграл четверти некорректен.")
-            calibration = QuarterIntegralCalibration(
+            calibration = QuarterIntegralCalibration.from_dict(
+                stored_calibration,
                 integral_coefficient=configured_integral,
-                coefficient=float(coefficient),
                 geometric_coefficient=geometry,
-                effective_coefficient=float(coefficient) * configured_integral * geometry,
-                points_used=int(stored_calibration.get("points_used") or 0),
-                relative_std_percent=as_float_or_none(
-                    stored_calibration.get("relative_std_percent")
-                ),
-                integral_min=float(stored_calibration.get("integral_min") or coefficient),
-                integral_max=float(stored_calibration.get("integral_max") or coefficient),
-                source_pixel=str(stored_calibration.get("source_pixel") or ""),
-                source_file=str(stored_calibration.get("source_file") or ""),
-                calculated_at=str(stored_calibration.get("calculated_at") or ""),
             )
         else:
             calibration = calibrate_quarter_spectral_integral(
@@ -141,6 +133,11 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             if calibration.relative_std_percent is not None
             else "не определён"
         )
+        fit_text = (
+            f"; {calibration.equation}, R²={calibration.r_squared:.6f}"
+            if calibration.r_squared is not None
+            else f"; {calibration.equation}"
+        )
         action_text = (
             f"применён к {pixel_id}"
             if use_stored_calibration
@@ -152,7 +149,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             f"{configured_integral:.9g}; произведение "
             f"{calibration.coefficient * configured_integral:.9g} "
             f"заменяет R/G/B и {action_text}; точек {calibration.points_used}, "
-            f"разброс={relative_std}. "
+            f"разброс={relative_std}{fit_text}. "
             f"Результат: {output_path.name}"
         )
         result_intro = (
@@ -171,6 +168,9 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
                 f"Прежний коэффициент R/G/B с геометрией: {rgb_photo_coefficient:.9g}\n"
                 f"Геометрический коэффициент: {geometry:.9g}\n"
                 f"Точек: {calibration.points_used}\n"
+                f"Метод: {calibration.method}\n"
+                f"Уравнение: {calibration.equation or 'не требуется'}\n"
+                f"R²: {calibration.r_squared if calibration.r_squared is not None else 'не требуется'}\n"
                 f"Относительный разброс интеграла: {relative_std}\n\n"
                 f"Результаты сохранены отдельно:\n{output_path}\n\n"
                 "Чтобы применить новый коэффициент к ранее снятым XLSX серии, "

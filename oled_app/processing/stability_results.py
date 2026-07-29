@@ -14,7 +14,7 @@ from oled_app.measurements.raw_io import read_csv_dicts
 from oled_app.utils import (
     autosize_columns,
     current_density_mA_cm2,
-    luminance_cd_m2,
+    luminance_cd_m2_at_voltage,
     now_str,
     style_header_row,
 )
@@ -97,7 +97,15 @@ def raw_row_to_workbook_row(row: Dict[str, str], params: Any) -> List[Any]:
 
     luminance = _float_or_none(row.get("luminance_cd_m2"))
     if luminance is None:
-        luminance = luminance_cd_m2(current_pd_uA, _params_value(params, "luminance_cd_m2_per_uA", 1.0))
+        calibration_voltage = _float_or_none(row.get("voltage_set_V"))
+        if calibration_voltage is None:
+            calibration_voltage = _float_or_none(row.get("voltage_led_measured_V"))
+        luminance = luminance_cd_m2_at_voltage(
+            current_pd_uA,
+            _params_value(params, "luminance_cd_m2_per_uA", 1.0),
+            calibration_voltage,
+            _params_value(params, "luminance_calibration_model"),
+        )
 
     return [
         _int_or_default(row.get("point"), 0),

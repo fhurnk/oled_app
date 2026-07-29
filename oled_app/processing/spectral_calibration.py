@@ -20,6 +20,7 @@ from oled_app.utils import (
     autosize_columns,
     now_str,
     safe_filename,
+    spectral_integral_at_voltage,
     style_header_row,
     timestamp_for_file,
 )
@@ -55,10 +56,69 @@ class QuarterIntegralCalibration:
     source_pixel: str
     source_file: str
     calculated_at: str
-    method: str = "normalized_shape_integral_median"
+    method: str = "normalized_shape_integral_filtered_median"
+    points_total: int = 0
+    points_rejected: int = 0
+    inlier_threshold_percent: float = 10.0
+    reference_voltage_V: Optional[float] = None
+    slope_integral_per_V: Optional[float] = None
+    intercept_integral: Optional[float] = None
+    r_squared: Optional[float] = None
+    equation: str = ""
+    included_point_numbers: Tuple[int, ...] = ()
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: Dict[str, Any],
+        *,
+        integral_coefficient: Optional[float] = None,
+        geometric_coefficient: Optional[float] = None,
+    ) -> "QuarterIntegralCalibration":
+        coefficient = float(payload.get("coefficient"))
+        configured_integral = float(
+            integral_coefficient
+            if integral_coefficient is not None
+            else payload.get("integral_coefficient", 1.0)
+        )
+        geometry = float(
+            geometric_coefficient
+            if geometric_coefficient is not None
+            else payload.get("geometric_coefficient", 1.0)
+        )
+        return cls(
+            integral_coefficient=configured_integral,
+            coefficient=coefficient,
+            geometric_coefficient=geometry,
+            effective_coefficient=coefficient * configured_integral * geometry,
+            points_used=int(payload.get("points_used") or 0),
+            relative_std_percent=as_float_or_none(payload.get("relative_std_percent")),
+            integral_min=float(payload.get("integral_min", coefficient) or coefficient),
+            integral_max=float(payload.get("integral_max", coefficient) or coefficient),
+            source_pixel=str(payload.get("source_pixel") or ""),
+            source_file=str(payload.get("source_file") or ""),
+            calculated_at=str(payload.get("calculated_at") or ""),
+            method=str(payload.get("method") or "normalized_shape_integral_median"),
+            points_total=int(payload.get("points_total") or payload.get("points_used") or 0),
+            points_rejected=int(payload.get("points_rejected") or 0),
+            inlier_threshold_percent=float(payload.get("inlier_threshold_percent") or 10.0),
+            reference_voltage_V=as_float_or_none(payload.get("reference_voltage_V")),
+            slope_integral_per_V=as_float_or_none(payload.get("slope_integral_per_V")),
+            intercept_integral=as_float_or_none(payload.get("intercept_integral")),
+            r_squared=as_float_or_none(payload.get("r_squared")),
+            equation=str(payload.get("equation") or ""),
+            included_point_numbers=tuple(
+                int(value)
+                for value in (payload.get("included_point_numbers") or ())
+            ),
+        )
+
+    def integral_at_voltage(self, voltage_V: Any = None) -> float:
+        value = spectral_integral_at_voltage(self.as_dict(), voltage_V)
+        return float(value if value is not None else self.coefficient)
 
 
 @lru_cache(maxsize=8)
@@ -270,7 +330,7 @@ def calibrate_quarter_spectral_integral(
     source_file: str,
     integral_coefficient: float = 1.0,
 ) -> QuarterIntegralCalibration:
-    """Assign the median normalized spectral integral to a quarter."""
+    """Choose a filtered median or a linear integral-versus-voltage model."""
 
     geometry = float(geometric_coefficient)
     if geometry <= 0 or not math.isfinite(geometry):
@@ -279,48 +339,142 @@ def calibrate_quarter_spectral_integral(
     if configured_integral <= 0 or not math.isfinite(configured_integral):
         raise ValueError("Интегральный коэффициент должен быть положительным.")
 
-    shape_integrals: List[float] = []
-    photodiode_currents: List[float] = []
+    valid_points: List[Tuple[int, float, float, float]] = []
     rejected_statuses = {"FAILED", "SATURATED", "NEEDS_REVIEW", "STOPPED", "NO_PEAK"}
     for point in points:
         status = str(point.get("status") or "").strip().upper()
         shape_integral = as_float_or_none(point.get("shape_integral"))
         photodiode_current = as_float_or_none(point.get("photodiode_uA"))
+        voltage = as_float_or_none(point.get("voltage_V"))
         if (
             status in rejected_statuses
             or shape_integral is None
             or photodiode_current is None
+            or voltage is None
             or shape_integral <= 0
             or photodiode_current <= 0
         ):
             continue
-        shape_integrals.append(float(shape_integral))
-        photodiode_currents.append(float(photodiode_current))
-    if len(shape_integrals) < 2:
-        raise ValueError("Для калибровки нужны минимум две пригодные точки спектра с разной светимостью.")
-    if math.isclose(min(photodiode_currents), max(photodiode_currents)):
-        raise ValueError("Для калибровки нужны точки с различным током фотодетектора.")
+        point_number = int(as_float_or_none(point.get("point")) or len(valid_points) + 1)
+        valid_points.append(
+            (
+                point_number,
+                float(voltage),
+                float(shape_integral),
+                float(photodiode_current),
+            )
+        )
 
-    integral_values = np.asarray(shape_integrals, dtype=np.float64)
-    coefficient = float(np.median(integral_values))
+    if len(valid_points) < 2:
+        raise ValueError("Для калибровки нужны минимум две пригодные точки спектра с разной светимостью.")
+    if math.isclose(
+        min(point[3] for point in valid_points),
+        max(point[3] for point in valid_points),
+    ):
+        raise ValueError("Для калибровки нужны точки с различным током фотодетектора.")
+    voltages = np.asarray([point[1] for point in valid_points], dtype=np.float64)
+    if math.isclose(float(np.min(voltages)), float(np.max(voltages))):
+        raise ValueError("Для калибровки нужны спектры при разных напряжениях.")
+
+    integral_values = np.asarray([point[2] for point in valid_points], dtype=np.float64)
+    median_integral = float(np.median(integral_values))
+    stable_mask = np.abs(integral_values - median_integral) <= abs(median_integral) * 0.10
+    stable_majority = int(np.count_nonzero(stable_mask)) > len(integral_values) / 2
+    reference_voltage = float(np.median(voltages))
+    slope: Optional[float] = None
+    intercept: Optional[float] = None
+    r_squared: Optional[float] = None
+
+    if stable_majority:
+        selected_mask = stable_mask
+        selected_values = integral_values[selected_mask]
+        coefficient = float(np.median(selected_values))
+        method = "normalized_shape_integral_filtered_median"
+        equation = f"integral = {coefficient:.12g}"
+    else:
+        low_values = integral_values[voltages < reference_voltage]
+        high_values = integral_values[voltages > reference_voltage]
+        tolerance = max(abs(median_integral) * 1e-9, 1e-12)
+        ascending = (
+            low_values.size > 0
+            and high_values.size > 0
+            and bool(np.all(low_values <= median_integral + tolerance))
+            and bool(np.all(high_values >= median_integral - tolerance))
+        )
+        descending = (
+            low_values.size > 0
+            and high_values.size > 0
+            and bool(np.all(low_values >= median_integral - tolerance))
+            and bool(np.all(high_values <= median_integral + tolerance))
+        )
+        if ascending or descending:
+            slope, intercept = (
+                float(value)
+                for value in np.polyfit(voltages, integral_values, 1)
+            )
+            predicted = slope * voltages + intercept
+            residual_sum = float(np.sum((integral_values - predicted) ** 2))
+            total_sum = float(np.sum((integral_values - np.mean(integral_values)) ** 2))
+            r_squared = (
+                1.0
+                if math.isclose(total_sum, 0.0)
+                else 1.0 - residual_sum / total_sum
+            )
+            coefficient = float(slope * reference_voltage + intercept)
+            selected_mask = np.ones(len(integral_values), dtype=bool)
+            selected_values = integral_values
+            method = "normalized_shape_integral_linear_voltage"
+            equation = f"integral(V) = {slope:.12g} * V + {intercept:.12g}"
+        else:
+            absolute_deviation = np.abs(integral_values - median_integral)
+            mad = float(np.median(absolute_deviation))
+            selected_mask = (
+                np.ones(len(integral_values), dtype=bool)
+                if math.isclose(mad, 0.0)
+                else absolute_deviation <= 3.5 * mad
+            )
+            selected_values = integral_values[selected_mask]
+            if selected_values.size < 2:
+                selected_mask = np.ones(len(integral_values), dtype=bool)
+                selected_values = integral_values
+            coefficient = float(np.median(selected_values))
+            method = "normalized_shape_integral_robust_median"
+            equation = f"integral = {coefficient:.12g}"
+
+    if not math.isfinite(coefficient) or coefficient <= 0:
+        raise ValueError("Рассчитанный спектральный интеграл некорректен.")
     effective = configured_integral * coefficient * geometry
     relative_std_percent = (
         None
         if coefficient == 0
-        else float(np.std(integral_values) / coefficient * 100.0)
+        else float(np.std(selected_values) / coefficient * 100.0)
+    )
+    included_numbers = tuple(
+        point[0]
+        for point, included in zip(valid_points, selected_mask)
+        if bool(included)
     )
     return QuarterIntegralCalibration(
         integral_coefficient=configured_integral,
         coefficient=coefficient,
         geometric_coefficient=geometry,
         effective_coefficient=effective,
-        points_used=len(shape_integrals),
+        points_used=int(np.count_nonzero(selected_mask)),
         relative_std_percent=relative_std_percent,
-        integral_min=float(np.min(integral_values)),
-        integral_max=float(np.max(integral_values)),
+        integral_min=float(np.min(selected_values)),
+        integral_max=float(np.max(selected_values)),
         source_pixel=str(source_pixel),
         source_file=str(source_file),
         calculated_at=now_str(),
+        method=method,
+        points_total=len(valid_points),
+        points_rejected=len(valid_points) - int(np.count_nonzero(selected_mask)),
+        reference_voltage_V=reference_voltage,
+        slope_integral_per_V=slope,
+        intercept_integral=intercept,
+        r_squared=r_squared,
+        equation=equation,
+        included_point_numbers=included_numbers,
     )
 
 
@@ -398,13 +552,20 @@ def create_spectral_recalculation_workbook(
         ("Calibration source pixel", calibration.source_pixel),
         ("Calibration source file", calibration.source_file),
         ("Calibration date", calibration.calculated_at),
+        ("Calibration method", calibration.method),
+        ("Integral equation", calibration.equation),
+        ("Linear fit R^2", calibration.r_squared),
+        ("Reference voltage (V)", calibration.reference_voltage_V),
         ("Points used", calibration.points_used),
+        ("Points total", calibration.points_total),
+        ("Points rejected", calibration.points_rejected),
+        ("Median inlier threshold (%)", calibration.inlier_threshold_percent),
         ("Integral relative std (%)", calibration.relative_std_percent),
         ("Integral minimum", calibration.integral_min),
         ("Integral maximum", calibration.integral_max),
         (
             "Formula",
-            "L = I_photodiode_uA * quarter_spectral_integral * integral_coefficient * geometric_coefficient",
+            "L = I_photodiode_uA * integral(V) * integral_coefficient * geometric_coefficient",
         ),
     ]
     for row, (label, value) in enumerate(metadata, start=3):
@@ -419,11 +580,12 @@ def create_spectral_recalculation_workbook(
         "Shape integral (CIE/BPW34)",
         "Weighted integral (counts/s*nm)",
         "Point coefficient replacing RGB",
-        "Quarter spectral integral",
+        "Quarter spectral integral at V",
         "Quarter coefficient replacing RGB",
         "Luminance by quarter calibration (cd/m^2)",
         "Difference from previous RGB luminance (%)",
-        "Point integral deviation from quarter (%)",
+        "Point integral deviation from model (%)",
+        "Used in calibration",
         "Status",
     ]
     header_row = 3 + len(metadata) + 2
@@ -437,9 +599,10 @@ def create_spectral_recalculation_workbook(
         photo_luminance = as_float_or_none(
             point.get("rgb_luminance_cd_m2", point.get("photodiode_luminance_cd_m2"))
         )
+        model_integral = calibration.integral_at_voltage(point.get("voltage_V"))
         integral_luminance = spectral_luminance_cd_m2(
             photodiode_current,
-            calibration.coefficient,
+            model_integral,
             calibration.integral_coefficient,
             calibration.geometric_coefficient,
         )
@@ -453,12 +616,13 @@ def create_spectral_recalculation_workbook(
                 (integral_luminance - photo_luminance) / photo_luminance * 100.0
             )
         integral_deviation = None
-        if shape_integral is not None and calibration.coefficient != 0:
+        if shape_integral is not None and model_integral != 0:
             integral_deviation = (
-                (shape_integral - calibration.coefficient)
-                / calibration.coefficient
+                (shape_integral - model_integral)
+                / model_integral
                 * 100.0
             )
+        point_number = int(as_float_or_none(point.get("point")) or 0)
         values = [
             point.get("point"),
             point.get("voltage_V"),
@@ -471,11 +635,12 @@ def create_spectral_recalculation_workbook(
                 if shape_integral is None
                 else shape_integral * calibration.integral_coefficient
             ),
-            calibration.coefficient,
-            calibration.coefficient * calibration.integral_coefficient,
+            model_integral,
+            model_integral * calibration.integral_coefficient,
             integral_luminance,
             luminance_difference,
             integral_deviation,
+            "YES" if point_number in calibration.included_point_numbers else "NO",
             point.get("status"),
         ]
         for column, value in enumerate(values, start=1):
@@ -489,16 +654,70 @@ def create_spectral_recalculation_workbook(
         chart.y_axis.title = "Luminance (cd/m^2)"
         chart.x_axis.majorGridlines = ChartLines()
         x_values = Reference(ws, min_col=3, min_row=header_row + 1, max_row=last_row)
-        photo_values = Reference(ws, min_col=4, min_row=header_row, max_row=last_row)
-        integral_values = Reference(ws, min_col=10, min_row=header_row, max_row=last_row)
-        chart.series.append(Series(photo_values, x_values, title_from_data=True))
-        chart.series.append(Series(integral_values, x_values, title_from_data=True))
+        photo_values = Reference(
+            ws,
+            min_col=4,
+            min_row=header_row + 1,
+            max_row=last_row,
+        )
+        integral_values = Reference(
+            ws,
+            min_col=10,
+            min_row=header_row + 1,
+            max_row=last_row,
+        )
+        chart.series.append(
+            Series(
+                photo_values,
+                x_values,
+                title="Previous RGB luminance",
+            )
+        )
+        chart.series.append(
+            Series(
+                integral_values,
+                x_values,
+                title="Quarter calibration",
+            )
+        )
         chart.height = 10
         chart.width = 18
-        ws.add_chart(chart, "K3")
+        ws.add_chart(chart, "P3")
+
+        integral_chart = ScatterChart()
+        integral_chart.title = "Спектральный интеграл от напряжения"
+        integral_chart.x_axis.title = "Voltage (V)"
+        integral_chart.y_axis.title = "Integral (CIE/BPW34)"
+        voltage_values = Reference(
+            ws,
+            min_col=2,
+            min_row=header_row + 1,
+            max_row=last_row,
+        )
+        measured_integrals = Reference(
+            ws,
+            min_col=5,
+            min_row=header_row + 1,
+            max_row=last_row,
+        )
+        model_integrals = Reference(
+            ws,
+            min_col=8,
+            min_row=header_row + 1,
+            max_row=last_row,
+        )
+        integral_chart.series.append(
+            Series(measured_integrals, voltage_values, title="Measured integral")
+        )
+        integral_chart.series.append(
+            Series(model_integrals, voltage_values, title="Calibration model")
+        )
+        integral_chart.height = 10
+        integral_chart.width = 18
+        ws.add_chart(integral_chart, "P23")
 
     ws.freeze_panes = f"A{header_row + 1}"
-    ws.auto_filter.ref = f"A{header_row}:M{max(last_row, header_row)}"
+    ws.auto_filter.ref = f"A{header_row}:N{max(last_row, header_row)}"
     for row in range(header_row + 1, last_row + 1):
         ws.cell(row, 11).number_format = "0.00"
         ws.cell(row, 12).number_format = "0.00"

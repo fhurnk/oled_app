@@ -7,6 +7,7 @@ Python, or write an xlsx preview workbook for debugging.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -234,6 +235,33 @@ def series_quarter_number(series: str) -> int | None:
 
 def measurement_sort_key(record) -> tuple:
     return (*pixel_position_key(record.pixel), natural_key(record.series), natural_key(record.subseries))
+
+
+def apply_quarter_descriptions(
+    measurements_dir: Path,
+    iv_records: list[IvRecord],
+    spectrum_records: list[SpectrumRecord],
+) -> None:
+    """Use ``Description (code)`` as the visible Origin series name."""
+
+    config_path = Path(measurements_dir).parent / "series_config.json"
+    if not config_path.exists():
+        return
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    descriptions = config.get("quarter_descriptions")
+    if not isinstance(descriptions, dict):
+        return
+
+    for record in [*iv_records, *spectrum_records]:
+        quarter = series_quarter_number(record.series)
+        if quarter is None:
+            continue
+        description = str(descriptions.get(str(quarter), "") or "").strip()
+        if description and description != record.series:
+            record.series = f"{description} ({record.series})"
 
 
 def read_iv_record(meta: MeasurementPath, warnings: list[str]) -> IvRecord | None:
@@ -1162,6 +1190,12 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
     else:
         common_voltage = None
 
+    apply_quarter_descriptions(
+        measurements_dir,
+        iv_records,
+        spectrum_records,
+    )
+
     if args.strict and warnings:
         raise RuntimeError("Strict mode failed:\n" + "\n".join(warnings))
 
@@ -1443,7 +1477,15 @@ def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
 
 
 def series_names(records: list[IvRecord]) -> list[str]:
-    return sorted({record.series for record in records}, key=pixel_position_key)
+    names = {record.series for record in records}
+    return sorted(
+        names,
+        key=lambda series: min(
+            pixel_position_key(record.pixel)
+            for record in records
+            if record.series == series
+        ),
+    )
 
 
 def origin_series_values(records: list[IvRecord], series: str, field: str) -> list[float | None]:
@@ -1454,6 +1496,25 @@ def origin_series_values(records: list[IvRecord], series: str, field: str) -> li
     while values and values[-1] is None:
         values.pop()
     return values
+
+
+def origin_series_values_and_notes(
+    records: list[IvRecord],
+    series: str,
+    field: str,
+) -> tuple[list[float | None], list[tuple[int, str]]]:
+    values: list[float | None] = []
+    notes: list[tuple[int, str]] = []
+    for record in sorted(
+        [item for item in records if item.series == series],
+        key=measurement_sort_key,
+    ):
+        notes.append((len(values), record.pixel))
+        values.extend(row[field] for row in record.rows)
+        values.extend([None, None, None])
+    while values and values[-1] is None:
+        values.pop()
+    return values, notes
 
 
 def create_origin_iv_book(op, records: list[IvRecord]):
@@ -1475,10 +1536,15 @@ def create_origin_iv_book(op, records: list[IvRecord]):
 
     for idx, series in enumerate(series_names(records)):
         base = idx * 3
+        voltage_values, pixel_notes = origin_series_values_and_notes(
+            records,
+            series,
+            "voltage",
+        )
         origin_write_column(
             sheet_iv,
             base,
-            origin_series_values(records, series, "voltage"),
+            voltage_values,
             "V",
             "V",
             "X",
@@ -1497,15 +1563,23 @@ def create_origin_iv_book(op, records: list[IvRecord]):
             base + 2,
             origin_series_values(records, series, "luminance"),
             "I\\-(lum)",
-            "cd/m^2",
+            "cd/m\\+(2)",
             comments=series,
         )
+        for row, pixel in pixel_notes:
+            sheet_iv.set_cell_note(row, base, pixel)
 
         jl_base = idx * 2
-        density_values = origin_series_values(records, series, "density")
+        density_values, jl_pixel_notes = origin_series_values_and_notes(
+            records,
+            series,
+            "density",
+        )
         luminance_values = origin_series_values(records, series, "luminance")
         origin_write_column(sheet_jl, jl_base, density_values, "j", "mA/cm^2", "X", comments=series)
-        origin_write_column(sheet_jl, jl_base + 1, luminance_values, "I\\-(lum)", "cd/m^2", comments=series)
+        origin_write_column(sheet_jl, jl_base + 1, luminance_values, "I\\-(lum)", "cd/m\\+(2)", comments=series)
+        for row, pixel in jl_pixel_notes:
+            sheet_jl.set_cell_note(row, jl_base, pixel)
         try:
             sheet_jl.set_formula(jl_base, f"Sheet1!{origin_col_name(base + 1)}")
             sheet_jl.set_formula(jl_base + 1, f"Sheet1!{origin_col_name(base + 2)}")
