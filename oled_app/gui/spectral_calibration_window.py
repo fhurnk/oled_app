@@ -13,6 +13,7 @@ from oled_app.processing.spectral_calibration import (
 )
 from oled_app.utils import (
     SPECTRAL_CALIBRATION_METHODS,
+    as_float_or_none,
     luminance_cd_m2,
     resolve_series_file,
 )
@@ -66,6 +67,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
         geometry = app.series.geometric_coefficient(app.app_settings)
         configured_integral = app.series.configured_integral_coefficient(app.app_settings)
         quarter_number = int(row.get("Quarter number") or 1)
+        opening_voltage = as_float_or_none(row.get("Opening voltage (V)"))
         stored_calibration = app.series.integral_calibration_for_pixel(pixel_id)
         if (
             stored_calibration is not None
@@ -96,6 +98,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
                 stored_calibration,
                 integral_coefficient=configured_integral,
                 geometric_coefficient=geometry,
+                activation_voltage_V=opening_voltage,
             )
         else:
             calibration = calibrate_quarter_spectral_integral(
@@ -104,6 +107,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
                 source_pixel=pixel_id,
                 source_file=str(workbook_path),
                 integral_coefficient=configured_integral,
+                activation_voltage_V=opening_voltage,
             )
         output_path = create_spectral_recalculation_workbook(
             spectral_recalculation_output_path(workbook_path, pixel_id),
@@ -138,6 +142,14 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
             if calibration.r_squared is not None
             else f"; {calibration.equation}"
         )
+        activation_text = (
+            f"{calibration.activation_voltage_V:.9g} В"
+            if (
+                calibration.method == "normalized_shape_integral_linear_voltage"
+                and calibration.activation_voltage_V is not None
+            )
+            else "не требуется"
+        )
         action_text = (
             f"применён к {pixel_id}"
             if use_stored_calibration
@@ -171,6 +183,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
                 f"Метод: {calibration.method}\n"
                 f"Уравнение: {calibration.equation or 'не требуется'}\n"
                 f"R²: {calibration.r_squared if calibration.r_squared is not None else 'не требуется'}\n"
+                f"Линейная модель действует с: {activation_text}\n"
                 f"Относительный разброс интеграла: {relative_std}\n\n"
                 f"Результаты сохранены отдельно:\n{output_path}\n\n"
                 "Чтобы применить новый коэффициент к ранее снятым XLSX серии, "

@@ -106,12 +106,14 @@ class SpectralSensitivityTests(unittest.TestCase):
             geometric_coefficient=1.0,
             source_pixel="P1",
             source_file="spectrum.xlsx",
+            activation_voltage_V=4.0,
         )
 
         self.assertAlmostEqual(calibration.coefficient, 3.0)
         self.assertEqual(calibration.points_used, 3)
         self.assertEqual(calibration.points_rejected, 1)
         self.assertEqual(calibration.included_point_numbers, (1, 2, 3))
+        self.assertIsNone(calibration.activation_voltage_V)
 
     def test_quarter_calibration_fits_systematic_voltage_trend(self):
         points = [
@@ -141,6 +143,38 @@ class SpectralSensitivityTests(unittest.TestCase):
         self.assertAlmostEqual(calibration.intercept_integral, 0.5)
         self.assertAlmostEqual(calibration.r_squared, 1.0)
         self.assertAlmostEqual(calibration.integral_at_voltage(4.0), 3.7)
+        self.assertAlmostEqual(calibration.activation_voltage_V, 2.0)
+
+    def test_linear_calibration_ignores_points_before_opening_voltage(self):
+        points = [
+            {
+                "point": index,
+                "voltage_V": voltage,
+                "shape_integral": voltage,
+                "photodiode_uA": float(index),
+                "status": "GOOD",
+            }
+            for index, voltage in enumerate((2.0, 3.0, 4.0, 5.0), start=1)
+        ]
+
+        calibration = calibrate_quarter_spectral_integral(
+            points,
+            geometric_coefficient=1.0,
+            source_pixel="P1",
+            source_file="spectrum.xlsx",
+            activation_voltage_V=3.0,
+        )
+
+        self.assertEqual(
+            calibration.method,
+            "normalized_shape_integral_linear_voltage",
+        )
+        self.assertAlmostEqual(calibration.activation_voltage_V, 3.0)
+        self.assertEqual(calibration.points_total, 4)
+        self.assertEqual(calibration.points_used, 3)
+        self.assertEqual(calibration.points_rejected, 1)
+        self.assertIsNone(calibration.integral_at_voltage(2.99))
+        self.assertAlmostEqual(calibration.integral_at_voltage(3.0), 3.0)
 
     def test_rgb_coefficient_is_multiplied_by_geometry(self):
         settings = {
@@ -191,6 +225,28 @@ class SpectralSensitivityTests(unittest.TestCase):
             "slope_integral_per_V": 1.0,
             "intercept_integral": 0.0,
         }
+        manager.journal = SimpleNamespace(
+            get_pixel=lambda _pixel: {
+                "Quarter number": 1,
+                "Opening voltage (V)": 3.0,
+            }
+        )
+        self.assertAlmostEqual(
+            manager.luminance_coefficient_for_pixel(
+                "CR1_1_1",
+                settings,
+                voltage_V=2.99,
+            ),
+            10.0,
+        )
+        self.assertAlmostEqual(
+            manager.luminance_coefficient_for_pixel(
+                "CR1_1_1",
+                settings,
+                voltage_V=3.0,
+            ),
+            24.0,
+        )
         self.assertAlmostEqual(
             manager.luminance_coefficient_for_pixel(
                 "CR1_1_1",
@@ -524,6 +580,7 @@ class ExistingSeriesRecalculationTests(unittest.TestCase):
             model = {
                 "method": "normalized_shape_integral_linear_voltage",
                 "coefficient": 3.0,
+                "activation_voltage_V": 3.0,
                 "reference_voltage_V": 3.0,
                 "slope_integral_per_V": 1.0,
                 "intercept_integral": 0.0,
@@ -538,6 +595,7 @@ class ExistingSeriesRecalculationTests(unittest.TestCase):
                     ]
                 ),
                 luminance_coefficient_for_pixel=lambda _pixel, _settings: 18.0,
+                rgb_luminance_coefficient_for_pixel=lambda _pixel, _settings: 10.0,
                 luminance_model_for_pixel=lambda _pixel, _settings: model,
                 geometric_coefficient=lambda _settings: 3.0,
             )
@@ -552,7 +610,7 @@ class ExistingSeriesRecalculationTests(unittest.TestCase):
             result = load_workbook(workbook, data_only=True)
             try:
                 ws = result["Cycle_1"]
-                self.assertAlmostEqual(ws["H5"].value, 12.0)
+                self.assertAlmostEqual(ws["H5"].value, 10.0)
                 self.assertAlmostEqual(ws["H6"].value, 24.0)
             finally:
                 result.close()

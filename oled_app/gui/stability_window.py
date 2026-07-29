@@ -307,12 +307,17 @@ def build_stability_params(
 def params_for_pixel_luminance(app, pixel_id: str, params: StabilityParams) -> StabilityParams:
     if app.series is None:
         return params
-    coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
     model_resolver = getattr(app.series, "luminance_model_for_pixel", None)
     model = (
         model_resolver(pixel_id, app.app_settings)
         if callable(model_resolver)
         else None
+    )
+    rgb_resolver = getattr(app.series, "rgb_luminance_coefficient_for_pixel", None)
+    coeff = (
+        rgb_resolver(pixel_id, app.app_settings)
+        if model is not None and callable(rgb_resolver)
+        else app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
     )
     return replace(
         params,

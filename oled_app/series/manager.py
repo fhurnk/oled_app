@@ -17,6 +17,7 @@ from oled_app.series.metadata import (
 )
 from oled_app.utils import (
     SPECTRAL_CALIBRATION_METHODS,
+    as_float_or_none,
     luminance_coefficient_at_voltage,
     now_str,
     safe_filename,
@@ -125,6 +126,10 @@ class SeriesManager:
         model["geometric_coefficient"] = geometric_conversion_coefficient(
             app_settings
         )
+        row = self.journal.get_pixel(pixel_id) or {}
+        opening_voltage = as_float_or_none(row.get("Opening voltage (V)"))
+        if opening_voltage is not None:
+            model["activation_voltage_V"] = float(opening_voltage)
         return model
 
     def luminance_coefficient_for_pixel(

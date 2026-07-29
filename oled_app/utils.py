@@ -84,6 +84,15 @@ def spectral_integral_at_voltage(
     voltage = as_float_or_none(voltage_V)
     if voltage is None:
         voltage = as_float_or_none(calibration.get("reference_voltage_V"))
+    activation_voltage = as_float_or_none(
+        calibration.get("activation_voltage_V")
+    )
+    if (
+        voltage is not None
+        and activation_voltage is not None
+        and voltage < activation_voltage
+    ):
+        return None
     slope = as_float_or_none(calibration.get("slope_integral_per_V"))
     intercept = as_float_or_none(calibration.get("intercept_integral"))
     if voltage is None or slope is None or intercept is None:

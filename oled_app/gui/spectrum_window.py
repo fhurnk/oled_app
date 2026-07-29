@@ -454,12 +454,17 @@ def build_spectrum_params(app, vars_: Dict[str, tk.StringVar], opening: float, u
 def params_for_pixel(app, pixel_id: str, params: SpectrumParams) -> SpectrumParams:
     if app.series is None:
         return params
-    coeff = app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
     model_resolver = getattr(app.series, "luminance_model_for_pixel", None)
     model = (
         model_resolver(pixel_id, app.app_settings)
         if callable(model_resolver)
         else None
+    )
+    rgb_resolver = getattr(app.series, "rgb_luminance_coefficient_for_pixel", None)
+    coeff = (
+        rgb_resolver(pixel_id, app.app_settings)
+        if model is not None and callable(rgb_resolver)
+        else app.series.luminance_coefficient_for_pixel(pixel_id, app.app_settings)
     )
     led_type = params.led_type
     if not led_type or str(led_type).strip().lower() == "auto":

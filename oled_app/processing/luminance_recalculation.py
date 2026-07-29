@@ -488,12 +488,17 @@ def recalculate_series_luminance(
             report.skipped += 1
             continue
         seen.add(workbook_path)
-        luminance_coefficient = series.luminance_coefficient_for_pixel(pixel_id, app_settings)
         model_resolver = getattr(series, "luminance_model_for_pixel", None)
         calibration_model = (
             model_resolver(pixel_id, app_settings)
             if callable(model_resolver)
             else None
+        )
+        rgb_resolver = getattr(series, "rgb_luminance_coefficient_for_pixel", None)
+        luminance_coefficient = (
+            rgb_resolver(pixel_id, app_settings)
+            if calibration_model is not None and callable(rgb_resolver)
+            else series.luminance_coefficient_for_pixel(pixel_id, app_settings)
         )
         try:
             if measurement_type == "IVL":
