@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.9.0-beta-1`
+- Current app version: `v1.9.0-beta-2`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current prerelease is `v1.9.0-beta-1`. A voltage-linear quarter calibration is now fitted and applied only from each pixel's saved opening voltage; lower-voltage points retain the original R/G/B luminance coefficient. The threshold is used by new IVL, spectrum and stability measurements, existing-series raw/XLSX recalculation, and the separate spectral recalculation workbook. The previous prerelease is `v1.9.0-beta`; the previous stable release is `v1.8.8`.
+The current prerelease is `v1.9.0-beta-2`. IVL thumbnails now plot OLED current and photodiode current on one shared linear scale, use the same colors as the live IVL graph, and automatically replace legacy thumbnail renders on hover. The previous prerelease is `v1.9.0-beta-1`; the previous stable release is `v1.8.8`.
 
 ## Main Entry Points
 

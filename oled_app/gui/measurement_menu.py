@@ -13,6 +13,7 @@ from PIL import Image, ImageTk
 from oled_app.hardware.probe import probe_hardware
 from oled_app.processing.ivl_preview import (
     create_ivl_thumbnail_from_workbook,
+    ivl_thumbnail_needs_refresh,
     ivl_thumbnail_path,
 )
 from oled_app.series import (
@@ -482,8 +483,16 @@ def show_ivl_hover_preview(app, pixel_id: str, event) -> None:
         return
     preview_path = ivl_thumbnail_path(workbook_path)
     try:
-        if not preview_path.exists():
-            create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
+        if ivl_thumbnail_needs_refresh(preview_path):
+            try:
+                create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
+            except Exception as refresh_exc:
+                if not preview_path.exists():
+                    raise
+                app.log(
+                    f"Старая миниатюра ВАЯХ {pixel_id} пока не обновлена: "
+                    f"{refresh_exc}"
+                )
         with Image.open(preview_path) as source:
             image = source.copy()
         photo = ImageTk.PhotoImage(image)

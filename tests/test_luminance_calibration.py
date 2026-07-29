@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import numpy as np
 from openpyxl import load_workbook
+from PIL import Image
 
 from oled_app.gui.measurement_menu import pixel_ids
 from oled_app.measurements.ivl import IVLParams
@@ -15,6 +16,8 @@ from oled_app.measurements.spectrum import SpectrumHelper, SpectrumParams
 from oled_app.measurements.stability import StabilityParams
 from oled_app.processing.ivl_preview import (
     _representative_cycles,
+    create_ivl_thumbnail,
+    ivl_thumbnail_needs_refresh,
     ivl_thumbnail_path,
 )
 from oled_app.processing.ivl_results import (
@@ -381,6 +384,57 @@ class IvlStatusAndThumbnailTests(unittest.TestCase):
             ivl_thumbnail_path(first),
             Path("folder/thumbnails/CR1_2_1_thumbnail.png"),
         )
+
+    def test_thumbnail_uses_live_colors_and_one_linear_scale(self):
+        cycle = {
+            "cycle": 1,
+            "status": "WORKING",
+            "data": [
+                {
+                    "Voltage OLED / LED measured (V)": 0.0,
+                    "Current OLED / LED (mA)": 0.0,
+                    "Photodiode current (uA)": 0.0,
+                },
+                {
+                    "Voltage OLED / LED measured (V)": 1.0,
+                    "Current OLED / LED (mA)": 1.0,
+                    "Photodiode current (uA)": 2.0,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            thumbnail = Path(folder) / "preview.png"
+            create_ivl_thumbnail(thumbnail, [cycle])
+
+            with Image.open(thumbnail) as image:
+                self.assertFalse(ivl_thumbnail_needs_refresh(thumbnail))
+                rgb = image.convert("RGB")
+                blue = (11, 97, 164)
+                red = (196, 60, 48)
+                right_edge = rgb.width - 18
+                blue_end = [
+                    y
+                    for x in range(right_edge - 3, right_edge + 1)
+                    for y in range(18, rgb.height - 20)
+                    if rgb.getpixel((x, y)) == blue
+                ]
+                red_end = [
+                    y
+                    for x in range(right_edge - 3, right_edge + 1)
+                    for y in range(18, rgb.height - 20)
+                    if rgb.getpixel((x, y)) == red
+                ]
+
+            self.assertTrue(blue_end)
+            self.assertTrue(red_end)
+            self.assertGreater(min(blue_end), min(red_end) + 40)
+
+    def test_legacy_thumbnail_is_refreshed_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            thumbnail = Path(folder) / "legacy.png"
+            Image.new("RGB", (10, 10), "white").save(thumbnail)
+
+            self.assertTrue(ivl_thumbnail_needs_refresh(thumbnail))
 
 
 class ExistingSeriesRecalculationTests(unittest.TestCase):

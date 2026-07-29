@@ -9,12 +9,17 @@ from typing import Any, Dict, Iterable, List, Sequence
 
 from openpyxl import load_workbook
 from PIL import Image, ImageDraw
+from PIL.PngImagePlugin import PngInfo
 
 from oled_app.utils import as_float_or_none, safe_filename
 
 
 THUMBNAIL_SUFFIX = "_thumbnail.png"
 THUMBNAIL_FOLDER = "thumbnails"
+OLED_CURRENT_COLOR = "#0B61A4"
+PHOTODIODE_CURRENT_COLOR = "#C43C30"
+THUMBNAIL_RENDER_VERSION = "2"
+THUMBNAIL_RENDER_VERSION_KEY = "OLED IVL thumbnail version"
 IVL_TIMESTAMP_SUFFIX_RE = re.compile(
     r"(?:_\d{2}-\d{2}-\d{4}_\d{1,2}h\d{2}m\d{2}s|_\d{8}_\d{6})$",
     re.IGNORECASE,
@@ -38,6 +43,22 @@ def ivl_thumbnail_path(
         fallback=workbook_path.stem,
     )
     return workbook_path.parent / THUMBNAIL_FOLDER / f"{pixel}{THUMBNAIL_SUFFIX}"
+
+
+def ivl_thumbnail_needs_refresh(thumbnail_path: Path) -> bool:
+    """Return true for missing, legacy, or unreadable thumbnail files."""
+
+    thumbnail_path = Path(thumbnail_path)
+    if not thumbnail_path.exists():
+        return True
+    try:
+        with Image.open(thumbnail_path) as image:
+            return (
+                str(image.info.get(THUMBNAIL_RENDER_VERSION_KEY) or "")
+                != THUMBNAIL_RENDER_VERSION
+            )
+    except Exception:
+        return True
 
 
 def _representative_cycles(
@@ -71,20 +92,14 @@ def _series_points(
     top: int,
     width: int,
     height: int,
-    logarithmic: bool,
+    y_min: float,
+    y_max: float,
 ) -> List[tuple[int, int]]:
     if len(voltages) < 2 or len(values) != len(voltages):
         return []
     x_min, x_max = min(voltages), max(voltages)
     if math.isclose(x_min, x_max):
         return []
-    if logarithmic:
-        positive = [abs(value) for value in values if value and math.isfinite(value)]
-        floor = max(min(positive, default=1e-9) * 0.1, 1e-12)
-        transformed = [math.log10(max(abs(value), floor)) for value in values]
-    else:
-        transformed = list(values)
-    y_min, y_max = min(transformed), max(transformed)
     if math.isclose(y_min, y_max):
         y_max = y_min + 1.0
     return [
@@ -92,7 +107,7 @@ def _series_points(
             int(left + (voltage - x_min) / (x_max - x_min) * width),
             int(top + height - (value - y_min) / (y_max - y_min) * height),
         )
-        for voltage, value in zip(voltages, transformed)
+        for voltage, value in zip(voltages, values)
     ]
 
 
@@ -108,10 +123,9 @@ def create_ivl_thumbnail(
     draw = ImageDraw.Draw(image)
     left, top, right, bottom = 28, 18, width - 18, height - 24
     draw.rectangle((left, top, right, bottom), outline="#B7C2CC", width=1)
-    colors = ("#C43C30", "#2F80ED", "#7A4FB3", "#2FA66A")
 
     any_points = False
-    for cycle_index, cycle in enumerate(_representative_cycles(cycles)):
+    for cycle in _representative_cycles(cycles):
         rows = list(cycle.get("data") or [])
         voltages = [
             as_float_or_none(
@@ -124,7 +138,14 @@ def create_ivl_thumbnail(
         valid = [
             (float(v), float(i), float(p))
             for v, i, p in zip(voltages, currents, photo)
-            if v is not None and i is not None and p is not None
+            if (
+                v is not None
+                and i is not None
+                and p is not None
+                and math.isfinite(float(v))
+                and math.isfinite(float(i))
+                and math.isfinite(float(p))
+            )
         ]
         if len(valid) < 2:
             continue
@@ -132,6 +153,15 @@ def create_ivl_thumbnail(
         v_values = [item[0] for item in valid]
         i_values = [item[1] for item in valid]
         p_values = [item[2] for item in valid]
+        combined_values = i_values + p_values
+        y_min = min(min(combined_values), 0.0)
+        y_max = max(max(combined_values), 0.0)
+        y_span = y_max - y_min
+        if math.isclose(y_span, 0.0):
+            y_span = 1.0
+        y_padding = y_span * 0.04
+        y_min -= y_padding
+        y_max += y_padding
         current_points = _series_points(
             v_values,
             i_values,
@@ -139,7 +169,8 @@ def create_ivl_thumbnail(
             top,
             right - left,
             bottom - top,
-            logarithmic=True,
+            y_min,
+            y_max,
         )
         photo_points = _series_points(
             v_values,
@@ -148,17 +179,26 @@ def create_ivl_thumbnail(
             top,
             right - left,
             bottom - top,
-            logarithmic=False,
+            y_min,
+            y_max,
         )
         if current_points:
-            draw.line(current_points, fill=colors[cycle_index % len(colors)], width=3)
+            draw.line(current_points, fill=OLED_CURRENT_COLOR, width=3)
         if photo_points:
-            draw.line(photo_points, fill="#2F80ED", width=2)
+            draw.line(photo_points, fill=PHOTODIODE_CURRENT_COLOR, width=3)
 
     if any_points:
-        draw.line((left + 8, top + 10, left + 34, top + 10), fill="#C43C30", width=3)
+        draw.line(
+            (left + 8, top + 10, left + 34, top + 10),
+            fill=OLED_CURRENT_COLOR,
+            width=3,
+        )
         draw.text((left + 40, top + 4), "I OLED", fill="#45515C")
-        draw.line((left + 100, top + 10, left + 126, top + 10), fill="#2F80ED", width=2)
+        draw.line(
+            (left + 100, top + 10, left + 126, top + 10),
+            fill=PHOTODIODE_CURRENT_COLOR,
+            width=3,
+        )
         draw.text((left + 132, top + 4), "PD", fill="#45515C")
     else:
         draw.text((width // 2 - 42, height // 2 - 8), "Нет данных ВАЯХ", fill="#6B7280")
@@ -166,7 +206,9 @@ def create_ivl_thumbnail(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f".{output_path.stem}.tmp.png")
-    image.save(temp_path, format="PNG", optimize=True)
+    metadata = PngInfo()
+    metadata.add_text(THUMBNAIL_RENDER_VERSION_KEY, THUMBNAIL_RENDER_VERSION)
+    image.save(temp_path, format="PNG", optimize=True, pnginfo=metadata)
     temp_path.replace(output_path)
     return output_path
 
