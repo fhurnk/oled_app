@@ -41,6 +41,22 @@ Useful options:
 .\env\Scripts\python.exe .\scripts\create_github_release.py vX.Y.Z --dry-run
 ```
 
+## Mutable v2.0 Alpha
+
+The v2 migration uses one prerelease until parity and hardware testing are
+complete. Do not create `alpha-2`, `alpha-3`, or similar releases. After every
+checked and committed checkpoint, move the same explicit tag and update the
+existing GitHub Release:
+
+```powershell
+git tag -f v2.0.0-alpha
+git push --force oled_app refs/tags/v2.0.0-alpha
+.\env\Scripts\python.exe .\scripts\create_github_release.py v2.0.0-alpha --prerelease --latest false --update-existing
+```
+
+The `--update-existing` option creates the release on the first publication and
+edits its title, notes and prerelease metadata on later publications.
+
 ## Codex Execution Environment
 
 Run all network publication operations outside the restricted Codex sandbox. This includes:

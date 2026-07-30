@@ -11,7 +11,12 @@ When a new Codex chat starts in this repository, read these files before changin
 
 ## Versioning, Changelog, And GitHub Releases
 
-The current project release is `v1.9.1`. Keep `APP_VERSION`, `CHANGELOG.md`, `docs/versions/v1.9.1.md`, visible docs, tag, and GitHub Release synchronized. Create a later version only when the user explicitly requests the next project version.
+The current project release is the mutable prerelease `v2.0.0-alpha`, based on
+stable `v1.9.1`. Keep `APP_VERSION`, `CHANGELOG.md`,
+`docs/versions/v2.0.0-alpha.md`, visible docs, tag, and GitHub Release
+synchronized. During the v2 migration, update this same prerelease and move its
+tag; do not create `alpha-2`, `alpha-3`, or a later project version unless the
+user explicitly requests it.
 
 For every user-visible behavior change, bug fix, documentation change, or release preparation:
 
@@ -29,6 +34,12 @@ For every user-visible behavior change, bug fix, documentation change, or releas
 9. Create a git tag for the exact version, for example `v1.5.4`, and push it.
 10. Create a GitHub Release for every version tag using `scripts/create_github_release.py vX.Y.Z`, or `gh release create` if GitHub CLI is available. The release title should be the version, and the body should summarize the matching `CHANGELOG.md` entry and link or mention `docs/versions/vX.Y.Z.md`.
 
+For repeated `v2.0.0-alpha` checkpoints, use
+`scripts/create_github_release.py v2.0.0-alpha --prerelease --latest false --update-existing`
+after force-updating the explicit alpha tag. The stable Tkinter entrypoint
+`oled_modular_app.py` must remain functional and default until the full v2
+parity/hardware checklist passes and the user decides to switch it.
+
 Do not leave a code change without a matching version/changelog entry unless the user explicitly asks for an unversioned scratch change.
 
 ## Repository Hygiene
@@ -43,7 +54,7 @@ Do not leave a code change without a matching version/changelog entry unless the
 
 - `APP_VERSION` in `oled_app/constants.py` matches the release version.
 - `CHANGELOG.md` has a top entry for the release.
-- `docs/versions/vX.Y.Z.md` exists.
+- `docs/versions/vX.Y.Z[-PRERELEASE].md` exists.
 - `README.md` and `PROJECT_OVERVIEW.md` show the current version.
 - Syntax checks or focused behavior checks have passed.
 - Commit is pushed.

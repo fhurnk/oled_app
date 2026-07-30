@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.9.1",
+    "current_version": "v2.0.0-alpha",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.9.1.md"
+    "docs/versions/v2.0.0-alpha.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -69,15 +69,22 @@
     "raw_csv_measurement_pipeline_plan": "docs/raw_csv_measurement_pipeline_plan.md",
     "camera_quality_research": "docs/camera_quality_research.md",
     "v2_interface_plan": "docs/v2_interface_plan.md",
+    "v2_migration_status": "docs/v2_migration_status.md",
+    "v2_functional_parity_checklist": "docs/v2_functional_parity_checklist.md",
     "version_archive_dir": "docs/versions"
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
-    "release_channel": "stable",
-    "current_release": "v1.9.1",
-    "previous_release": "v1.9.0",
+    "release_channel": "alpha",
+    "current_release": "v2.0.0-alpha",
+    "previous_release": "v1.9.1",
     "previous_prerelease": "v1.9.0-beta-3",
-    "release_scope": "Add saved-profile Windows Wi-Fi switching for the Raspberry Pi camera, configurable spectral calibration model thresholds, and persistent photodiode-current confirmation for IVL opening voltage.",
+    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; the first checkpoint freezes v1.9.1 behavior and data contracts.",
+    "mutable_prerelease": {
+      "enabled": true,
+      "tag": "v2.0.0-alpha",
+      "policy": "Move this tag and update the same GitHub prerelease for every migration checkpoint until the user explicitly closes or renames the alpha."
+    },
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -87,7 +94,7 @@
       "CHANGELOG.md",
       "docs/versions/vX.Y.Z[-PRERELEASE].md"
     ],
-    "release_command": ".\\env\\Scripts\\python.exe .\\scripts\\create_github_release.py vX.Y.Z",
+    "release_command": ".\\env\\Scripts\\python.exe .\\scripts\\create_github_release.py v2.0.0-alpha --prerelease --latest false --update-existing",
     "publication_execution": "Run gh authentication checks, branch/tag pushes, and GitHub Release create/edit outside the restricted Codex sandbox with access to the system keyring.",
     "tag_required": true,
     "github_release_required": true

@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.9.1`
+Версия: `v2.0.0-alpha`
 
 ## Назначение
 
@@ -17,6 +17,9 @@
 - симуляторный режим позволяет проверять интерфейс без оборудования.
 - `oled_measurement_app_v2_5.py` оставлен нетронутым референсом рабочего приложения.
 - новый основной вход модульного GUI находится в `oled_modular_app.py`.
+- переход к v2 начат в едином prerelease `v2.0.0-alpha`; пока этапы v2
+  реализуются отдельно, `oled_modular_app.py` продолжает запускать рабочий
+  Tkinter-интерфейс.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -132,6 +135,8 @@ oled_app_v2_5_package/
     raw_csv_measurement_pipeline_plan.md
     camera_quality_research.md
     v2_interface_plan.md
+    v2_migration_status.md
+    v2_functional_parity_checklist.md
     project_manifest.json
     versions/
       v1.5.2.md
@@ -166,6 +171,7 @@ oled_app_v2_5_package/
       v1.9.0-beta-3.md
       v1.9.0.md
       v1.9.1.md
+      v2.0.0-alpha.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

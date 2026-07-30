@@ -4,19 +4,28 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.9.1`
+- Current app version: `v2.0.0-alpha`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.9.1`. The camera workflow can switch Windows to a saved Raspberry Pi Wi-Fi profile, wait for the camera service, and restore the previous profile. Spectral calibration exposes the median tolerance and the outlier percentage required before considering a linear voltage model. IVL opening voltage uses a separate photodiode threshold and requires configurable following points to remain above it. The previous stable release is `v1.9.0`.
+The active prerelease is the mutable `v2.0.0-alpha`, which begins the v2
+interface migration from stable `v1.9.1`. All migration checkpoints update the
+same tag, version note and GitHub prerelease; do not create `alpha-2`,
+`alpha-3`, or another project version unless the user explicitly asks. Stage 0
+is recorded in `docs/v2_functional_parity_checklist.md`, and current progress is
+in `docs/v2_migration_status.md`. The modular Tkinter launcher remains the
+default application until v2 passes the full parity and hardware checklist.
 
 ## Main Entry Points
 
 - Modular application launcher: `oled_modular_app.py`
 - Reference application: `oled_measurement_app_v2_5.py`
 - Modular package: `oled_app/`
+- v2 implementation plan: `docs/v2_interface_plan.md`
+- v2 migration status: `docs/v2_migration_status.md`
+- v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`
 - Status-only smoke check: `python oled_modular_app.py --status`
 - GUI framework: `tkinter` / `ttk`
 - Excel output and journals: `openpyxl`
@@ -52,7 +61,7 @@ Generated measurement data belongs in `OLED_series/` and must not be committed.
 
 ## Version And Release Workflow
 
-For each release:
+For a normal release:
 
 1. Bump `APP_VERSION`.
 2. Update `README.md`, `PROJECT_OVERVIEW.md`, `CODEX_PROJECT.md`, and `docs/project_manifest.json`.
@@ -68,6 +77,13 @@ For each release:
 ```
 
 The release script uses `gh` when available, otherwise GitHub REST API with `GITHUB_TOKEN` or `GH_TOKEN`.
+
+During the v2 migration, keep `APP_VERSION` at `2.0.0-alpha`, move the existing
+`v2.0.0-alpha` tag to each published checkpoint, and update the same prerelease:
+
+```powershell
+.\env\Scripts\python.exe .\scripts\create_github_release.py v2.0.0-alpha --prerelease --latest false --update-existing
+```
 
 Run every network publication command outside the restricted Codex sandbox: `gh auth status`, branch and tag pushes, and GitHub Release creation or editing. From Codex, request unsandboxed/escalated execution so the process can use the real `%APPDATA%`, Windows Credential Manager, and keyring. A failed authentication check inside the sandbox is not authoritative; repeat it outside the sandbox before asking the user to log in again.
 

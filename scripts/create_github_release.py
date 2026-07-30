@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -57,11 +58,17 @@ def default_notes_path(tag: str) -> Path:
     return ROOT / "docs" / "versions" / f"{tag}.md"
 
 
-def run_gh_release(args: argparse.Namespace, notes_path: Path) -> int:
+def build_gh_release_command(
+    args: argparse.Namespace,
+    notes_path: Path,
+    action: str,
+) -> list[str]:
+    if action not in {"create", "edit"}:
+        raise ValueError(f"Unsupported GitHub release action: {action}")
     command = [
         "gh",
         "release",
-        "create",
+        action,
         args.tag,
         "--repo",
         args.repo,
@@ -77,14 +84,61 @@ def run_gh_release(args: argparse.Namespace, notes_path: Path) -> int:
     if args.prerelease:
         command.append("--prerelease")
     if args.latest:
-        command.extend(["--latest", args.latest])
+        command.append(f"--latest={args.latest}")
+    return command
+
+
+def run_gh_release(args: argparse.Namespace, notes_path: Path) -> int:
+    if args.dry_run and args.update_existing:
+        print("Existing release: " + " ".join(build_gh_release_command(args, notes_path, "edit")))
+        print("Missing release: " + " ".join(build_gh_release_command(args, notes_path, "create")))
+        return 0
+
+    action = "create"
+    if args.update_existing:
+        probe = subprocess.run(
+            ["gh", "release", "view", args.tag, "--repo", args.repo],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if probe.returncode == 0:
+            action = "edit"
+
+    command = build_gh_release_command(args, notes_path, action)
     if args.dry_run:
         print(" ".join(command))
         return 0
     return subprocess.call(command)
 
 
-def create_release_via_api(args: argparse.Namespace, notes: str) -> str:
+def _existing_release_via_api(args: argparse.Namespace, token: str) -> Optional[dict]:
+    if not args.update_existing:
+        return None
+    tag = urllib.parse.quote(args.tag, safe="")
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{args.repo}/releases/tags/{tag}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "oled-app-release-script",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"GitHub API release lookup failed with HTTP {exc.code}: {detail}"
+        ) from exc
+
+
+def create_or_update_release_via_api(args: argparse.Namespace, notes: str) -> str:
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if not token:
         raise RuntimeError(
@@ -104,8 +158,16 @@ def create_release_via_api(args: argparse.Namespace, notes: str) -> str:
     if args.latest:
         payload["make_latest"] = args.latest
 
+    existing = _existing_release_via_api(args, token)
+    if existing is None:
+        endpoint = f"https://api.github.com/repos/{args.repo}/releases"
+        method = "POST"
+    else:
+        endpoint = f"https://api.github.com/repos/{args.repo}/releases/{existing['id']}"
+        method = "PATCH"
+
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{args.repo}/releases",
+        endpoint,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Accept": "application/vnd.github+json",
@@ -114,7 +176,7 @@ def create_release_via_api(args: argparse.Namespace, notes: str) -> str:
             "User-Agent": "oled-app-release-script",
             "X-GitHub-Api-Version": "2022-11-28",
         },
-        method="POST",
+        method=method,
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -138,6 +200,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--draft", action="store_true", help="Create a draft release.")
     parser.add_argument("--prerelease", action="store_true", help="Mark release as prerelease.")
     parser.add_argument("--latest", choices=["true", "false", "legacy"], help="GitHub make_latest value.")
+    parser.add_argument(
+        "--update-existing",
+        action="store_true",
+        help="Edit the release when the tag already has one; otherwise create it.",
+    )
     parser.add_argument("--api-only", action="store_true", help="Skip gh CLI and use GitHub REST API.")
     parser.add_argument("--dry-run", action="store_true", help="Print the gh command or API payload intent.")
     return parser.parse_args()
@@ -163,8 +230,9 @@ def main() -> int:
     if args.dry_run:
         print(json.dumps({"repo": args.repo, "tag": args.tag, "notes": str(notes_path)}, ensure_ascii=False, indent=2))
         return 0
-    url = create_release_via_api(args, notes)
-    print(f"Created GitHub Release: {url}")
+    url = create_or_update_release_via_api(args, notes)
+    verb = "Created or updated" if args.update_existing else "Created"
+    print(f"{verb} GitHub Release: {url}")
     return 0
 
 
