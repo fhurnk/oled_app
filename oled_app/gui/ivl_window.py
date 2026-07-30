@@ -114,6 +114,15 @@ def open_ivl_window(
 def build_ivl_params(app, vars_: Dict[str, tk.StringVar]) -> IVLParams:
     adv = app.app_settings.get("ivl_advanced", DEFAULT_APP_SETTINGS["ivl_advanced"])
     units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
+    opening_threshold = float(adv.get("opening_photodiode_threshold_uA", 0.5))
+    opening_confirmation_points = int(adv.get("opening_confirmation_points", 5))
+    if opening_threshold < 0:
+        raise ValueError("Порог открытия по фототоку не может быть отрицательным.")
+    if not 1 <= opening_confirmation_points <= 100:
+        raise ValueError(
+            "Количество следующих точек для подтверждения открытия "
+            "должно быть от 1 до 100."
+        )
     return IVLParams(
         com_port=effective_com_port(app.app_settings, app.log),
         sweep_start=parse_float(vars_["Sweep start, V"].get(), "Sweep start"),
@@ -126,6 +135,8 @@ def build_ivl_params(app, vars_: Dict[str, tk.StringVar]) -> IVLParams:
         photodiode_bias_V=float(adv.get("photodiode_bias_V", -5.0)),
         photodiode_range=int(adv.get("photodiode_range", 4)),
         photodiode_threshold_uA=float(adv.get("photodiode_threshold_uA", 0.5)),
+        opening_photodiode_threshold_uA=opening_threshold,
+        opening_confirmation_points=opening_confirmation_points,
         burnout_current_threshold_mA=float(adv.get("burnout_current_threshold_mA", 10.0)),
         mark_current_limit_as_burnout=bool(adv.get("mark_current_limit_as_burnout", False)),
         no_contact_max_led_current_mA=float(adv.get("no_contact_max_led_current_mA", 0.05)),
@@ -165,12 +176,21 @@ def measure_one_ivl(app, pixel_id: str, params: IVLParams, return_to_menu: bool 
         measurement_session["events"] = list(result.get("events") or [])
         progress.set_status(f"Пиксель {pixel_id}: измерение завершено, статус {result.get('status', '')}")
         opening = result.get("opening_voltage")
-        if result["status"] == "WORKING":
+        if result["status"] == "WORKING" and opening is None:
             opening = simpledialog.askfloat(
                 "Напряжение открытия",
-                f"Пиксель {pixel_id}\nЗадайте напряжение открытия, при котором пиксель начинает светить.",
-                initialvalue=round(float(opening), 3) if opening is not None else None,
+                (
+                    f"Пиксель {pixel_id}\n"
+                    "Устойчивое превышение порога фототока не найдено. "
+                    "Задайте напряжение открытия вручную."
+                ),
                 parent=app,
+            )
+        elif opening is not None:
+            app.log(
+                f"Напряжение открытия {pixel_id}: {float(opening):.3f} В "
+                f"(порог ФД {pixel_params.opening_photodiode_threshold_uA:g} мкА, "
+                f"следующих точек: {pixel_params.opening_confirmation_points})."
             )
         app.series.journal.update_after_measurement(
             "IVL",

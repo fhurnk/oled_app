@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.9.0`
+Версия: `v1.9.1`
 
 ## Назначение
 
@@ -20,7 +20,7 @@
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
-- клиент Canon через Raspberry Pi находится в `oled_app/camera/client.py`, локальная сборка телеметрического видео — в `oled_app/camera/telemetry_video.py`, а свободный и привязанный к серии режимы — в `oled_app/gui/camera_window.py`.
+- клиент Canon через Raspberry Pi находится в `oled_app/camera/client.py`, переключение сохранённых Wi-Fi-профилей Windows — в `oled_app/camera/wifi.py`, локальная сборка телеметрического видео — в `oled_app/camera/telemetry_video.py`, а свободный и привязанный к серии режимы — в `oled_app/gui/camera_window.py`.
 - в камере серии выбор станции и пикселя открывает параметры с фиксированным пикселем и запускает сопровождаемый цикл `фото до → подтверждение → видео + измерение → подтверждение → фото после`; при токовом лимите стабильности видео получает безопасный 5-секундный post-roll.
 - для стабильности пользователь выбирает, создавать ли отдельный `*_telemetry.mp4`; при объединении локальный FFmpeg добавляет сверху полосу с временем, уставкой напряжения, измеренным током и отметкой лимита тока, сохраняя исходный кадр и исходный MP4 без изменений.
 - отдельный сервис Raspberry Pi находится в `raspberry_camera_service/`; он получает единый MJPEG-поток через `gphoto2`, отдаёт LiveView по HTTP, динамически сообщает JPEG-варианты и доступные для записи ISO, выдержку, диафрагму и экспокоррекцию, направляет кадры в FFmpeg при записи и умеет безопасно удалять скачанный файл по запросу клиента.
@@ -64,6 +64,7 @@ oled_app_v2_5_package/
       __init__.py
       client.py
       telemetry_video.py
+      wifi.py
     gui/
       app.py
       camera_window.py
@@ -130,6 +131,7 @@ oled_app_v2_5_package/
     modularization_plan.md
     raw_csv_measurement_pipeline_plan.md
     camera_quality_research.md
+    v2_interface_plan.md
     project_manifest.json
     versions/
       v1.5.2.md
@@ -163,6 +165,7 @@ oled_app_v2_5_package/
       v1.9.0-beta-2.md
       v1.9.0-beta-3.md
       v1.9.0.md
+      v1.9.1.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

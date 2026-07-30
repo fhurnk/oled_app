@@ -26,6 +26,8 @@ from oled_app.camera import (
     CameraClient,
     CameraClientError,
     RemoteFile,
+    WifiConnectionSession,
+    WindowsWifiController,
     build_camera_service_url,
     normalize_center_crop,
     safe_capture_stem,
@@ -83,6 +85,66 @@ def first_available_video_control(controls: list[Dict[str, Any]]) -> Dict[str, A
         if str(control.get("path") or "") and [str(value) for value in control.get("choices") or []]:
             return control
     return {}
+
+
+def connect_camera_service_with_wifi(
+    client: CameraClient,
+    camera_settings: Dict[str, Any],
+    *,
+    existing_session: Optional[WifiConnectionSession] = None,
+    wifi_controller: Optional[WindowsWifiController] = None,
+    progress: Optional[Callable[[str], None]] = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> Optional[WifiConnectionSession]:
+    """Reach the camera directly or switch to its saved Windows Wi-Fi profile."""
+
+    direct_error: Optional[Exception] = None
+    try:
+        client.health()
+        return existing_session
+    except Exception as exc:
+        direct_error = exc
+        if not bool(camera_settings.get("auto_connect_wifi", False)):
+            raise
+
+    profile = str(camera_settings.get("wifi_profile") or "").strip()
+    interface_name = str(camera_settings.get("wifi_interface") or "").strip()
+    timeout_s = float(camera_settings.get("wifi_connect_timeout_s", 25.0))
+    controller = wifi_controller or WindowsWifiController()
+    if progress is not None:
+        progress(f"Подключение Windows к Wi-Fi-профилю «{profile}»…")
+    switched_session = controller.connect_saved_profile(
+        profile,
+        interface_name=interface_name,
+        timeout_s=timeout_s,
+    )
+    session = existing_session or switched_session
+    if existing_session is not None and not existing_session.previous_profile:
+        session = switched_session
+
+    if progress is not None:
+        progress("Wi-Fi подключён. Ожидание сервиса Raspberry Pi…")
+    deadline = monotonic() + max(timeout_s, 1.0)
+    last_error: Exception = direct_error
+    while monotonic() < deadline:
+        try:
+            client.health()
+            return session
+        except Exception as exc:
+            last_error = exc
+            sleep(0.5)
+
+    restore_error = ""
+    try:
+        controller.restore(session, timeout_s=timeout_s)
+    except Exception as exc:
+        restore_error = f"\nНе удалось вернуть прежнюю Wi-Fi-сеть: {exc}"
+    raise CameraClientError(
+        "Wi-Fi Raspberry Pi подключён, но сервис камеры не ответил.",
+        "CAMERA_WIFI_SERVICE_UNAVAILABLE",
+        f"{last_error}{restore_error}",
+    ) from last_error
 
 
 def stability_current_limit_reached(result: Optional[Dict[str, Any]]) -> bool:
@@ -302,6 +364,7 @@ class CameraTestWindow(tk.Toplevel):
         self.video_source_var = tk.StringVar(value="LiveView: ожидание первого кадра")
         self.video_quality_var = tk.StringVar(value="Камера не подключена")
         self.video_fps_var = tk.StringVar(value="Камера не подключена")
+        self.wifi_status_var = tk.StringVar(value=self._initial_wifi_status(settings))
         self.snapshot_name_var = tk.StringVar()
         self.station_var = tk.StringVar(value=SERIES_CAMERA_STATIONS["ivl"]["label"])
         series_pixels = app.pixel_ids() if self.series_bound and app.series is not None else []
@@ -353,6 +416,7 @@ class CameraTestWindow(tk.Toplevel):
         self._recording_context: Dict[str, Any] = {}
         self._guided_measurement_active = False
         self._guided_create_telemetry = False
+        self._wifi_session: Optional[WifiConnectionSession] = None
         self._series_capture_dir: Optional[Path] = None
         self._series_capture_context: Optional[tuple[str, str, str]] = None
         self.station_combo = None
@@ -365,6 +429,8 @@ class CameraTestWindow(tk.Toplevel):
         self.bind("<Destroy>", self._on_destroy, add="+")
         self._frame_after_id = self.after(50, self._consume_frames)
         self._update_buttons()
+        if bool(settings.get("auto_connect_wifi", False)):
+            self.after(300, self.connect)
 
     def _build_ui(self) -> None:
         outer = ttk.Frame(self, padding=12)
@@ -394,6 +460,13 @@ class CameraTestWindow(tk.Toplevel):
         self.connect_button.grid(row=1, column=0, columnspan=2, padx=(0, 4), pady=(8, 0), sticky="ew")
         self.initialize_button = ttk.Button(connection, text="Переинициализировать камеру", command=self.initialize_camera)
         self.initialize_button.grid(row=1, column=2, columnspan=2, padx=(4, 0), pady=(8, 0), sticky="ew")
+        ttk.Label(
+            connection,
+            textvariable=self.wifi_status_var,
+            foreground="#555555",
+            wraplength=1020,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(7, 0))
         connection.columnconfigure(1, weight=1)
         connection.columnconfigure(3, weight=1)
 
@@ -653,6 +726,23 @@ class CameraTestWindow(tk.Toplevel):
 
         self._log("Ожидание подключения")
 
+    @staticmethod
+    def _initial_wifi_status(settings: Dict[str, Any]) -> str:
+        if not bool(settings.get("auto_connect_wifi", False)):
+            return "Wi-Fi: автоматическое переключение выключено"
+        profile = str(settings.get("wifi_profile") or "").strip()
+        return (
+            f"Wi-Fi: при подключении будет выбран профиль «{profile}»"
+            if profile
+            else "Wi-Fi: задайте профиль Raspberry Pi в настройках"
+        )
+
+    def _set_wifi_status_from_worker(self, text: str) -> None:
+        try:
+            self.after(0, lambda value=str(text): self.wifi_status_var.set(value))
+        except tk.TclError:
+            pass
+
     def connect(self) -> None:
         try:
             self._save_camera_settings()
@@ -664,16 +754,57 @@ class CameraTestWindow(tk.Toplevel):
 
         def work():
             assert self.client is not None
-            self.client.health()
-            status = self.client.status()
-            if not status.get("camera_connected"):
-                status = self.client.initialize()
-            return status, self._capabilities_or_legacy(self.client)
+            camera_settings = dict(
+                self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
+            )
+            wifi_controller = WindowsWifiController()
+            wifi_session = connect_camera_service_with_wifi(
+                self.client,
+                camera_settings,
+                existing_session=self._wifi_session,
+                wifi_controller=wifi_controller,
+                progress=self._set_wifi_status_from_worker,
+            )
+            try:
+                status = self.client.status()
+                if not status.get("camera_connected"):
+                    status = self.client.initialize()
+                capabilities = self._capabilities_or_legacy(self.client)
+            except Exception:
+                if self._wifi_session is None and wifi_session is not None:
+                    try:
+                        wifi_controller.restore(
+                            wifi_session,
+                            timeout_s=float(
+                                camera_settings.get("wifi_connect_timeout_s", 25.0)
+                            ),
+                        )
+                    except Exception:
+                        pass
+                raise
+            return status, capabilities, wifi_session
 
-        self._run_async("Подключение к сервису", work, self._connected)
+        self._run_async(
+            "Подключение к сервису",
+            work,
+            self._connected,
+            failed=self._camera_connect_failed,
+        )
 
     def _connected(self, result) -> None:
-        status, capabilities = result
+        status, capabilities, wifi_session = result
+        if wifi_session is not None:
+            self._wifi_session = wifi_session
+            if wifi_session.switched:
+                self.wifi_status_var.set(
+                    f"Wi-Fi: подключён профиль «{wifi_session.target_profile}»"
+                )
+            else:
+                self.wifi_status_var.set(
+                    f"Wi-Fi: профиль «{wifi_session.target_profile}» уже был подключён"
+                )
+        else:
+            self.wifi_status_var.set("Сервис Raspberry Pi доступен через текущую сеть")
         self._apply_status(status)
         self._apply_capabilities(capabilities)
         if capabilities.get("legacy_service"):
@@ -681,6 +812,12 @@ class CameraTestWindow(tk.Toplevel):
         self._log(f"Сервис камеры доступен: {self.client.base_url if self.client else ''}")
         self.refresh_files(silent=True)
         self._schedule_status_poll()
+
+    def _camera_connect_failed(self, exc: Exception) -> None:
+        self.client = None
+        self.status = {}
+        self.wifi_status_var.set(f"Wi-Fi/сервис камеры: {exc}")
+        self._update_buttons()
 
     def initialize_camera(self) -> None:
         client = self._require_client()
@@ -2020,9 +2157,31 @@ class CameraTestWindow(tk.Toplevel):
                 self.after_cancel(self._frame_after_id)
             except tk.TclError:
                 pass
-        client = self.client
-        if client:
-            threading.Thread(target=self._stop_remote_quietly, args=(client,), daemon=True).start()
+        client = (
+            self.client
+            if bool(self.status.get("liveview_active"))
+            else None
+        )
+        wifi_session = self._wifi_session
+        self._wifi_session = None
+        camera_settings = dict(
+            self.app.app_settings.get("camera", DEFAULT_APP_SETTINGS["camera"])
+        )
+        should_restore_wifi = bool(
+            wifi_session is not None
+            and camera_settings.get("restore_previous_wifi", True)
+        )
+        if client or should_restore_wifi:
+            threading.Thread(
+                target=self._stop_remote_and_restore_quietly,
+                args=(
+                    client,
+                    wifi_session if should_restore_wifi else None,
+                    float(camera_settings.get("wifi_connect_timeout_s", 25.0)),
+                ),
+                name="camera-shutdown",
+                daemon=False,
+            ).start()
         if getattr(self.app, "_camera_test_window", None) is self:
             self.app._camera_test_window = None
         if destroy_window:
@@ -2032,11 +2191,24 @@ class CameraTestWindow(tk.Toplevel):
                 pass
 
     @staticmethod
-    def _stop_remote_quietly(client: CameraClient) -> None:
-        try:
-            client.stop_liveview()
-        except Exception:
-            pass
+    def _stop_remote_and_restore_quietly(
+        client: Optional[CameraClient],
+        wifi_session: Optional[WifiConnectionSession],
+        timeout_s: float,
+    ) -> None:
+        if client is not None:
+            try:
+                client.stop_liveview()
+            except Exception:
+                pass
+        if wifi_session is not None:
+            try:
+                WindowsWifiController().restore(
+                    wifi_session,
+                    timeout_s=timeout_s,
+                )
+            except Exception:
+                pass
 
     def _log(self, text: str) -> None:
         self.activity_var.set(str(text))

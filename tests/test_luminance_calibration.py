@@ -16,7 +16,10 @@ from PIL import Image
 
 from oled_app.gui.measurement_menu import pixel_ids, refresh_ivl_thumbnails
 from oled_app.gui import spectral_calibration_window as spectral_calibration_gui
-from oled_app.gui.spectral_calibration_window import quarter_spectral_candidates
+from oled_app.gui.spectral_calibration_window import (
+    quarter_spectral_candidates,
+    spectral_calibration_thresholds,
+)
 from oled_app.measurements.ivl import IVLParams
 from oled_app.measurements.spectrum import SpectrumHelper, SpectrumParams
 from oled_app.measurements.stability import StabilityParams
@@ -277,6 +280,103 @@ class SpectralSensitivityTests(unittest.TestCase):
         self.assertAlmostEqual(calibration.r_squared, 1.0)
         self.assertAlmostEqual(calibration.integral_at_voltage(4.0), 3.7)
         self.assertAlmostEqual(calibration.activation_voltage_V, 2.0)
+
+    def test_median_tolerance_can_keep_a_wider_group_of_integrals(self):
+        points = [
+            {
+                "point": index,
+                "voltage_V": voltage,
+                "shape_integral": integral,
+                "photodiode_uA": float(index),
+                "status": "GOOD",
+            }
+            for index, (voltage, integral) in enumerate(
+                [(2.0, 1.0), (3.0, 1.2), (4.0, 1.4), (5.0, 1.6)],
+                start=1,
+            )
+        ]
+
+        calibration = calibrate_quarter_spectral_integral(
+            points,
+            geometric_coefficient=1.0,
+            source_pixel="P1",
+            source_file="spectrum.xlsx",
+            median_tolerance_percent=30.0,
+            linear_model_outlier_percent=50.0,
+        )
+
+        self.assertEqual(
+            calibration.method,
+            "normalized_shape_integral_filtered_median",
+        )
+        self.assertAlmostEqual(calibration.coefficient, 1.3)
+        self.assertEqual(calibration.inlier_threshold_percent, 30.0)
+        self.assertEqual(calibration.outlier_percent, 0.0)
+
+    def test_linear_model_requires_configured_percentage_outside_tolerance(self):
+        points = [
+            {
+                "point": index,
+                "voltage_V": voltage,
+                "shape_integral": integral,
+                "photodiode_uA": float(index),
+                "status": "GOOD",
+            }
+            for index, (voltage, integral) in enumerate(
+                [(2.0, 1.0), (3.0, 1.2), (4.0, 1.4), (5.0, 1.6)],
+                start=1,
+            )
+        ]
+
+        median = calibrate_quarter_spectral_integral(
+            points,
+            geometric_coefficient=1.0,
+            source_pixel="P1",
+            source_file="spectrum.xlsx",
+            median_tolerance_percent=10.0,
+            linear_model_outlier_percent=75.0,
+        )
+        linear = calibrate_quarter_spectral_integral(
+            points,
+            geometric_coefficient=1.0,
+            source_pixel="P1",
+            source_file="spectrum.xlsx",
+            median_tolerance_percent=10.0,
+            linear_model_outlier_percent=50.0,
+        )
+
+        self.assertEqual(
+            median.method,
+            "normalized_shape_integral_filtered_median",
+        )
+        self.assertEqual(
+            linear.method,
+            "normalized_shape_integral_linear_voltage",
+        )
+        self.assertEqual(linear.outlier_percent, 50.0)
+        self.assertEqual(linear.linear_model_outlier_threshold_percent, 50.0)
+
+    def test_spectral_calibration_thresholds_are_validated(self):
+        self.assertEqual(
+            spectral_calibration_thresholds(
+                {
+                    "spectral_calibration": {
+                        "median_tolerance_percent": 15,
+                        "linear_model_outlier_percent": 60,
+                    }
+                }
+            ),
+            (15.0, 60.0),
+        )
+        with self.assertRaisesRegex(ValueError, "Допуск интеграла"):
+            spectral_calibration_thresholds(
+                {
+                    "spectral_calibration": {
+                        "median_tolerance_percent": 0,
+                        "linear_model_outlier_percent": 60,
+                    }
+                }
+            )
 
     def test_linear_calibration_ignores_points_before_opening_voltage(self):
         points = [

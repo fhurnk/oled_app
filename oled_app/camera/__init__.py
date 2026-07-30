@@ -8,6 +8,13 @@ from .client import (
     normalize_center_crop,
     safe_capture_stem,
 )
+from .wifi import (
+    WifiConnectionError,
+    WifiConnectionSession,
+    WifiInterfaceState,
+    WindowsWifiController,
+    parse_netsh_wlan_interfaces,
+)
 
 __all__ = [
     "CameraClient",
@@ -16,4 +23,9 @@ __all__ = [
     "build_camera_service_url",
     "normalize_center_crop",
     "safe_capture_stem",
+    "WifiConnectionError",
+    "WifiConnectionSession",
+    "WifiInterfaceState",
+    "WindowsWifiController",
+    "parse_netsh_wlan_interfaces",
 ]

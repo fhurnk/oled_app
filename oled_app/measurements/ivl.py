@@ -46,6 +46,8 @@ class IVLParams:
     photodiode_bias_V: float = -5.0
     photodiode_range: int = 4
     photodiode_threshold_uA: float = 0.5
+    opening_photodiode_threshold_uA: float = 0.5
+    opening_confirmation_points: int = 5
     burnout_current_threshold_mA: float = 10.0
     mark_current_limit_as_burnout: bool = False
     no_contact_max_led_current_mA: float = 0.05
@@ -77,9 +79,28 @@ def define_ivl_pixel_status(
     return "NONWORKING", "Нерабочий: ток есть, фототока нет"
 
 
-def detect_opening_voltage(cycle_data: List[Dict[str, Any]], threshold_uA: float) -> Optional[float]:
-    for row in cycle_data:
-        if row.get("Photodiode current (uA)", 0) >= threshold_uA:
+def detect_opening_voltage(
+    cycle_data: List[Dict[str, Any]],
+    threshold_uA: float,
+    confirmation_points: int = 0,
+) -> Optional[float]:
+    """Return the first threshold crossing confirmed by following points.
+
+    ``confirmation_points`` is the number of points *after* the candidate that
+    must also remain at or above the photodiode-current threshold.
+    """
+
+    if threshold_uA < 0:
+        raise ValueError("Порог фототока для открытия не может быть отрицательным.")
+    if confirmation_points < 0:
+        raise ValueError("Количество подтверждающих точек не может быть отрицательным.")
+
+    window_size = int(confirmation_points) + 1
+    last_candidate = len(cycle_data) - window_size
+    for candidate_idx in range(last_candidate + 1):
+        window = cycle_data[candidate_idx : candidate_idx + window_size]
+        if all(float(row.get("Photodiode current (uA)", 0.0)) >= threshold_uA for row in window):
+            row = cycle_data[candidate_idx]
             return float(row.get("Voltage OLED / LED measured (V)", row.get("Voltage set (V)", 0)))
     return None
 
@@ -199,7 +220,11 @@ def run_ivl_cycle(
     max_photo = max([row["Photodiode current (uA)"] for row in data], default=0.0)
     max_current = max([row["Current OLED / LED (mA)"] for row in data], default=0.0)
     status, status_desc = define_ivl_pixel_status(max_photo, max_current, current_limit_reached, params)
-    opening = detect_opening_voltage(data, params.photodiode_threshold_uA)
+    opening = detect_opening_voltage(
+        data,
+        params.opening_photodiode_threshold_uA,
+        params.opening_confirmation_points,
+    )
 
     log(f"  Цикл {cycle_number}: статус {status}, max I={max_current:.3f} мА, max PD={max_photo:.3f} мкА")
     return {

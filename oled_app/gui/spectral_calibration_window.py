@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -16,14 +17,43 @@ from oled_app.processing.spectral_calibration import (
 )
 from oled_app.series import ensure_quarter_calibration_folder
 from oled_app.series.metadata import quarter_code, quarter_description
+from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
 from oled_app.utils import (
     SPECTRAL_CALIBRATION_METHODS,
     as_float_or_none,
     luminance_cd_m2,
+    parse_float,
     resolve_series_file,
 )
 
 from .widgets import fit_toplevel_to_content
+
+
+def spectral_calibration_thresholds(settings: Dict[str, Any]) -> tuple[float, float]:
+    """Read and validate the median and linear-model thresholds."""
+
+    defaults = DEFAULT_APP_SETTINGS["spectral_calibration"]
+    configured = settings.get("spectral_calibration", {}) if isinstance(settings, dict) else {}
+    median_tolerance = float(
+        configured.get(
+            "median_tolerance_percent",
+            defaults["median_tolerance_percent"],
+        )
+    )
+    linear_outlier = float(
+        configured.get(
+            "linear_model_outlier_percent",
+            defaults["linear_model_outlier_percent"],
+        )
+    )
+    if not math.isfinite(median_tolerance) or not 0 < median_tolerance <= 100:
+        raise ValueError("Допуск интеграла от медианы должен быть больше 0 и не больше 100%.")
+    if not math.isfinite(linear_outlier) or not 0 < linear_outlier <= 100:
+        raise ValueError(
+            "Доля точек вне допуска для линейной модели должна быть "
+            "больше 0 и не больше 100%."
+        )
+    return median_tolerance, linear_outlier
 
 
 def quarter_spectral_candidates(
@@ -91,6 +121,26 @@ def ask_quarter_calibration_pixels(
     pixel_vars: Dict[int, tk.StringVar] = {}
     pixel_combos: Dict[int, ttk.Combobox] = {}
     config = app.series.config if app.series is not None else {}
+    calibration_settings = getattr(app, "app_settings", {}).get(
+        "spectral_calibration",
+        DEFAULT_APP_SETTINGS["spectral_calibration"],
+    )
+    median_tolerance_var = tk.StringVar(
+        value=str(
+            calibration_settings.get(
+                "median_tolerance_percent",
+                DEFAULT_APP_SETTINGS["spectral_calibration"]["median_tolerance_percent"],
+            )
+        )
+    )
+    linear_outlier_var = tk.StringVar(
+        value=str(
+            calibration_settings.get(
+                "linear_model_outlier_percent",
+                DEFAULT_APP_SETTINGS["spectral_calibration"]["linear_model_outlier_percent"],
+            )
+        )
+    )
 
     def update_combo_state(quarter_number: int) -> None:
         combo = pixel_combos[quarter_number]
@@ -165,11 +215,86 @@ def ask_quarter_calibration_pixels(
                 parent=dialog,
             )
             return
+        try:
+            median_tolerance = parse_float(
+                median_tolerance_var.get(),
+                "Допуск интеграла от медианы",
+            )
+            linear_outlier = parse_float(
+                linear_outlier_var.get(),
+                "Доля точек вне допуска для линейной модели",
+            )
+            spectral_calibration_thresholds(
+                {
+                    "spectral_calibration": {
+                        "median_tolerance_percent": median_tolerance,
+                        "linear_model_outlier_percent": linear_outlier,
+                    }
+                }
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Параметры интегрального пересчёта",
+                str(exc),
+                parent=dialog,
+            )
+            return
+        app.app_settings.setdefault("spectral_calibration", {})
+        app.app_settings["spectral_calibration"].update(
+            {
+                "median_tolerance_percent": median_tolerance,
+                "linear_model_outlier_percent": linear_outlier,
+            }
+        )
+        save_app_settings(app.app_settings)
         result["pixels"] = selected_pixels
         dialog.destroy()
 
+    thresholds = ttk.LabelFrame(main, text="Выбор медианы или линейной модели", padding=8)
+    thresholds.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+    ttk.Label(thresholds, text="Допуск интеграла от медианы, %:").grid(
+        row=0,
+        column=0,
+        sticky="e",
+        padx=(0, 8),
+        pady=3,
+    )
+    ttk.Entry(thresholds, textvariable=median_tolerance_var, width=12).grid(
+        row=0,
+        column=1,
+        sticky="w",
+        pady=3,
+    )
+    ttk.Label(
+        thresholds,
+        text="Точек вне допуска для перехода к линейной модели, %:",
+    ).grid(
+        row=1,
+        column=0,
+        sticky="e",
+        padx=(0, 8),
+        pady=3,
+    )
+    ttk.Entry(thresholds, textvariable=linear_outlier_var, width=12).grid(
+        row=1,
+        column=1,
+        sticky="w",
+        pady=3,
+    )
+    ttk.Label(
+        thresholds,
+        text=(
+            "Если доля точек вне допуска достигает второго порога, приложение "
+            "проверяет систематический тренд по напряжению и при его наличии "
+            "строит линейную модель."
+        ),
+        foreground="#555555",
+        wraplength=620,
+        justify="left",
+    ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
     buttons = ttk.Frame(main)
-    buttons.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+    buttons.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(12, 0))
     ttk.Button(buttons, text="Выбрать все доступные", command=lambda: set_all(True)).pack(
         side="left"
     )
@@ -184,7 +309,7 @@ def ask_quarter_calibration_pixels(
     )
     main.columnconfigure(2, weight=1)
     dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-    fit_toplevel_to_content(dialog, 720, 330)
+    fit_toplevel_to_content(dialog, 760, 470)
     app.wait_window(dialog)
     return result["pixels"]
 
@@ -205,13 +330,21 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
     pixel_ids = ask_quarter_calibration_pixels(app, candidates_by_quarter)
     if not pixel_ids:
         return
+    median_tolerance, linear_outlier = spectral_calibration_thresholds(
+        getattr(app, "app_settings", {})
+    )
 
     completed: List[Dict[str, Any]] = []
     skipped: List[str] = []
     errors: List[str] = []
     for pixel_id in pixel_ids:
         try:
-            result = _calibrate_quarter_pixel(app, pixel_id)
+            result = _calibrate_quarter_pixel(
+                app,
+                pixel_id,
+                median_tolerance_percent=median_tolerance,
+                linear_model_outlier_percent=linear_outlier,
+            )
             if result is None:
                 skipped.append(pixel_id)
             else:
@@ -254,7 +387,13 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
         )
 
 
-def _calibrate_quarter_pixel(app, pixel_id: str) -> Optional[Dict[str, Any]]:
+def _calibrate_quarter_pixel(
+    app,
+    pixel_id: str,
+    *,
+    median_tolerance_percent: Optional[float] = None,
+    linear_model_outlier_percent: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
     row = app.series.journal.get_pixel(pixel_id) or {}
     workbook_path = resolve_series_file(
         app.series.series_folder,
@@ -277,6 +416,14 @@ def _calibrate_quarter_pixel(app, pixel_id: str) -> Optional[Dict[str, Any]]:
         )
     geometry = app.series.geometric_coefficient(app.app_settings)
     configured_integral = app.series.configured_integral_coefficient(app.app_settings)
+    if median_tolerance_percent is None or linear_model_outlier_percent is None:
+        configured_median, configured_linear = spectral_calibration_thresholds(
+            app.app_settings
+        )
+        if median_tolerance_percent is None:
+            median_tolerance_percent = configured_median
+        if linear_model_outlier_percent is None:
+            linear_model_outlier_percent = configured_linear
     quarter_number = int(row.get("Quarter number") or 1)
     opening_voltage = as_float_or_none(row.get("Opening voltage (V)"))
     stored_calibration = app.series.integral_calibration_for_pixel(pixel_id)
@@ -319,6 +466,8 @@ def _calibrate_quarter_pixel(app, pixel_id: str) -> Optional[Dict[str, Any]]:
             source_file=str(workbook_path),
             integral_coefficient=configured_integral,
             activation_voltage_V=opening_voltage,
+            median_tolerance_percent=median_tolerance_percent,
+            linear_model_outlier_percent=linear_model_outlier_percent,
         )
     calibration_folder = ensure_quarter_calibration_folder(
         app.series.series_folder,
@@ -373,7 +522,11 @@ def _calibrate_quarter_pixel(app, pixel_id: str) -> Optional[Dict[str, Any]]:
         f"{configured_integral:.9g}; произведение "
         f"{calibration.coefficient * configured_integral:.9g} "
         f"заменяет R/G/B и {action_text}; точек {calibration.points_used}, "
-        f"разброс={relative_std}{fit_text}. "
+        f"разброс={relative_std}; допуск медианы "
+        f"{calibration.inlier_threshold_percent:g}%, вне допуска "
+        f"{calibration.outlier_percent:g}% при пороге линейной модели "
+        f"{calibration.linear_model_outlier_threshold_percent:g}%"
+        f"{fit_text}. "
         f"Результат: {output_path.name}"
     )
     return {

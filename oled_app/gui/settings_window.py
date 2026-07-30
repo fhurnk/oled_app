@@ -133,20 +133,57 @@ def open_settings_window(app) -> None:
     camera_port_var = tk.StringVar(value=str(camera_settings.get("port", 8765)))
     camera_timeout_var = tk.StringVar(value=str(camera_settings.get("request_timeout_s", 8.0)))
     camera_stream_timeout_var = tk.StringVar(value=str(camera_settings.get("stream_timeout_s", 12.0)))
+    camera_auto_wifi_var = tk.BooleanVar(value=bool(camera_settings.get("auto_connect_wifi", False)))
+    camera_wifi_profile_var = tk.StringVar(value=str(camera_settings.get("wifi_profile", "")))
+    camera_wifi_interface_var = tk.StringVar(value=str(camera_settings.get("wifi_interface", "")))
+    camera_wifi_timeout_var = tk.StringVar(value=str(camera_settings.get("wifi_connect_timeout_s", 25.0)))
+    camera_restore_wifi_var = tk.BooleanVar(value=bool(camera_settings.get("restore_previous_wifi", True)))
     camera_download_var = tk.StringVar(value=str(camera_settings.get("download_dir", SCRIPT_DIR / "camera_downloads")))
     camera_keep_remote_var = tk.BooleanVar(value=bool(camera_settings.get("keep_remote_files_after_download", True)))
     add_settings_entry(camera_tab, 0, "IP-адрес или имя Raspberry Pi", camera_host_var, width=32)
     add_settings_entry(camera_tab, 1, "Порт сервиса", camera_port_var)
     add_settings_entry(camera_tab, 2, "Тайм-аут запросов, с", camera_timeout_var)
     add_settings_entry(camera_tab, 3, "Тайм-аут кадра LiveView, с", camera_stream_timeout_var)
-    ttk.Label(camera_tab, text="Папка скачивания:").grid(row=4, column=0, sticky="e", pady=3, padx=(0, 8))
-    ttk.Entry(camera_tab, textvariable=camera_download_var, width=52).grid(row=4, column=1, sticky="we", pady=3)
-    ttk.Button(camera_tab, text="Обзор", command=lambda: browse_root(camera_download_var)).grid(row=4, column=2, padx=(8, 0))
+    wifi_box = ttk.LabelFrame(camera_tab, text="Автоподключение к Wi-Fi Raspberry Pi", padding=10)
+    wifi_box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 6))
+    ttk.Checkbutton(
+        wifi_box,
+        text="Подключаться автоматически при открытии окна камеры",
+        variable=camera_auto_wifi_var,
+    ).grid(row=0, column=0, columnspan=3, sticky="w")
+    add_settings_entry(wifi_box, 1, "Профиль Windows", camera_wifi_profile_var, width=32)
+    add_settings_entry(
+        wifi_box,
+        2,
+        "Wi-Fi-адаптер (пусто = автоматически)",
+        camera_wifi_interface_var,
+        width=32,
+    )
+    add_settings_entry(wifi_box, 3, "Тайм-аут подключения, с", camera_wifi_timeout_var)
+    ttk.Checkbutton(
+        wifi_box,
+        text="Возвращать прежнюю Wi-Fi-сеть после закрытия камеры",
+        variable=camera_restore_wifi_var,
+    ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Label(
+        wifi_box,
+        text=(
+            "Сначала один раз подключитесь к сети Raspberry Pi средствами Windows. "
+            "Приложение хранит только имя сохранённого профиля, но не пароль."
+        ),
+        foreground="#555555",
+        wraplength=590,
+        justify="left",
+    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    wifi_box.columnconfigure(1, weight=1)
+    ttk.Label(camera_tab, text="Папка скачивания:").grid(row=5, column=0, sticky="e", pady=3, padx=(0, 8))
+    ttk.Entry(camera_tab, textvariable=camera_download_var, width=52).grid(row=5, column=1, sticky="we", pady=3)
+    ttk.Button(camera_tab, text="Обзор", command=lambda: browse_root(camera_download_var)).grid(row=5, column=2, padx=(8, 0))
     ttk.Checkbutton(
         camera_tab,
         text="Оставлять фото и видео на Raspberry Pi после успешного скачивания",
         variable=camera_keep_remote_var,
-    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
     ttk.Label(
         camera_tab,
         text=(
@@ -156,7 +193,7 @@ def open_settings_window(app) -> None:
         foreground="#555555",
         wraplength=620,
         justify="left",
-    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(12, 0))
     camera_tab.columnconfigure(1, weight=1)
 
     def make_vars(section: str) -> Dict[str, tk.StringVar]:
@@ -167,15 +204,27 @@ def open_settings_window(app) -> None:
     ivl_labels = [
         ("photodiode_bias_V", "Смещение фотодиода, В"),
         ("photodiode_range", "Диапазон фотодиода"),
-        ("photodiode_threshold_uA", "Порог фототока, мкА"),
+        ("photodiode_threshold_uA", "Порог рабочего фототока, мкА"),
+        ("opening_photodiode_threshold_uA", "Порог открытия по фототоку, мкА"),
+        ("opening_confirmation_points", "Следующих точек для подтверждения открытия"),
         ("burnout_current_threshold_mA", "Ток пробоя/сгорания, мА"),
         ("no_contact_max_led_current_mA", "Макс. ток при отсутствии контакта, мА"),
         ("burned_confirmation_cycles", "Доп. циклов после BURNED"),
     ]
     for row, (key, label) in enumerate(ivl_labels):
         add_settings_entry(ivl_tab, row, label, ivl_vars[key])
-    ttk.Label(ivl_tab, text="BURNED ставится только при достижении тока пробоя/сгорания.", foreground="#555555").grid(row=len(ivl_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
-    ttk.Label(ivl_tab, text="Эти параметры убраны из основного окна ВАЯХ, чтобы оно не было перегружено.", foreground="#555555").grid(row=len(ivl_labels) + 1, column=0, columnspan=2, sticky="w", pady=(12, 0))
+    ttk.Label(
+        ivl_tab,
+        text=(
+            "Точка открытия — первая точка выше порога, после которой заданное "
+            "число следующих точек также не опускается ниже порога."
+        ),
+        foreground="#555555",
+        wraplength=620,
+        justify="left",
+    ).grid(row=len(ivl_labels), column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ttk.Label(ivl_tab, text="BURNED ставится только при достижении тока пробоя/сгорания.", foreground="#555555").grid(row=len(ivl_labels) + 1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ttk.Label(ivl_tab, text="Эти параметры убраны из основного окна ВАЯХ, чтобы оно не было перегружено.", foreground="#555555").grid(row=len(ivl_labels) + 2, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
     spec_vars = make_vars("spectrum_advanced")
     integration_time_keys = ("t_int_initial_s", "t_int_min_s", "t_int_max_s")
@@ -262,17 +311,46 @@ def open_settings_window(app) -> None:
             camera_port = parse_int(camera_port_var.get(), "Порт сервиса камеры")
             if not 1 <= camera_port <= 65535:
                 raise ValueError("Порт сервиса камеры должен быть от 1 до 65535.")
-            settings["camera"] = {
-                "host": camera_host_var.get().strip() or "192.168.4.1",
-                "port": camera_port,
-                "request_timeout_s": parse_float(camera_timeout_var.get(), "Тайм-аут запросов камеры"),
-                "stream_timeout_s": parse_float(camera_stream_timeout_var.get(), "Тайм-аут LiveView"),
-                "download_dir": camera_download_var.get().strip() or str(SCRIPT_DIR / "camera_downloads"),
-                "keep_remote_files_after_download": bool(camera_keep_remote_var.get()),
-                "video_camera_settings": dict(camera_settings.get("video_camera_settings") or {}),
-                "photo_quality_settings": dict(camera_settings.get("photo_quality_settings") or {}),
-            }
-            settings["ivl_advanced"] = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
+            wifi_timeout = parse_float(
+                camera_wifi_timeout_var.get(),
+                "Тайм-аут подключения Wi-Fi",
+            )
+            if not 3 <= wifi_timeout <= 120:
+                raise ValueError("Тайм-аут подключения Wi-Fi должен быть от 3 до 120 с.")
+            wifi_profile = camera_wifi_profile_var.get().strip()
+            if camera_auto_wifi_var.get() and not wifi_profile:
+                raise ValueError(
+                    "Для автоматического подключения задайте имя сохранённого "
+                    "Wi-Fi-профиля Raspberry Pi."
+                )
+            updated_camera = dict(camera_settings)
+            updated_camera.update(
+                {
+                    "host": camera_host_var.get().strip() or "192.168.4.1",
+                    "port": camera_port,
+                    "request_timeout_s": parse_float(camera_timeout_var.get(), "Тайм-аут запросов камеры"),
+                    "stream_timeout_s": parse_float(camera_stream_timeout_var.get(), "Тайм-аут LiveView"),
+                    "auto_connect_wifi": bool(camera_auto_wifi_var.get()),
+                    "wifi_profile": wifi_profile,
+                    "wifi_interface": camera_wifi_interface_var.get().strip(),
+                    "wifi_connect_timeout_s": wifi_timeout,
+                    "restore_previous_wifi": bool(camera_restore_wifi_var.get()),
+                    "download_dir": camera_download_var.get().strip() or str(SCRIPT_DIR / "camera_downloads"),
+                    "keep_remote_files_after_download": bool(camera_keep_remote_var.get()),
+                    "video_camera_settings": dict(camera_settings.get("video_camera_settings") or {}),
+                    "photo_quality_settings": dict(camera_settings.get("photo_quality_settings") or {}),
+                }
+            )
+            settings["camera"] = updated_camera
+            ivl_settings = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
+            if ivl_settings["opening_photodiode_threshold_uA"] < 0:
+                raise ValueError("Порог открытия по фототоку не может быть отрицательным.")
+            if not 1 <= ivl_settings["opening_confirmation_points"] <= 100:
+                raise ValueError(
+                    "Количество следующих точек для подтверждения открытия "
+                    "должно быть от 1 до 100."
+                )
+            settings["ivl_advanced"] = ivl_settings
             spectrum_settings = collect_section("spectrum_advanced", spec_vars, spec_bool_vars)
             for key in integration_time_keys:
                 spectrum_settings[key] = float(spectrum_settings[key]) / 1000.0

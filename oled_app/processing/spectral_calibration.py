@@ -60,6 +60,8 @@ class QuarterIntegralCalibration:
     points_total: int = 0
     points_rejected: int = 0
     inlier_threshold_percent: float = 10.0
+    linear_model_outlier_threshold_percent: float = 50.0
+    outlier_percent: float = 0.0
     activation_voltage_V: Optional[float] = None
     reference_voltage_V: Optional[float] = None
     slope_integral_per_V: Optional[float] = None
@@ -108,6 +110,10 @@ class QuarterIntegralCalibration:
             points_total=int(payload.get("points_total") or payload.get("points_used") or 0),
             points_rejected=int(payload.get("points_rejected") or 0),
             inlier_threshold_percent=float(payload.get("inlier_threshold_percent") or 10.0),
+            linear_model_outlier_threshold_percent=float(
+                payload.get("linear_model_outlier_threshold_percent") or 50.0
+            ),
+            outlier_percent=float(payload.get("outlier_percent") or 0.0),
             activation_voltage_V=(
                 as_float_or_none(
                     activation_voltage_V
@@ -380,6 +386,8 @@ def calibrate_quarter_spectral_integral(
     source_file: str,
     integral_coefficient: float = 1.0,
     activation_voltage_V: Optional[float] = None,
+    median_tolerance_percent: float = 10.0,
+    linear_model_outlier_percent: float = 50.0,
 ) -> QuarterIntegralCalibration:
     """Choose a filtered median or a linear integral-versus-voltage model."""
 
@@ -389,6 +397,18 @@ def calibrate_quarter_spectral_integral(
     configured_integral = float(integral_coefficient)
     if configured_integral <= 0 or not math.isfinite(configured_integral):
         raise ValueError("Интегральный коэффициент должен быть положительным.")
+    inlier_threshold = float(median_tolerance_percent)
+    if not math.isfinite(inlier_threshold) or not 0 < inlier_threshold <= 100:
+        raise ValueError("Допуск интеграла от медианы должен быть больше 0 и не больше 100%.")
+    linear_outlier_threshold = float(linear_model_outlier_percent)
+    if (
+        not math.isfinite(linear_outlier_threshold)
+        or not 0 < linear_outlier_threshold <= 100
+    ):
+        raise ValueError(
+            "Доля точек вне допуска для линейной модели должна быть "
+            "больше 0 и не больше 100%."
+        )
 
     requested_activation = as_float_or_none(activation_voltage_V)
     valid_points: List[Tuple[int, float, float, float]] = []
@@ -430,15 +450,21 @@ def calibrate_quarter_spectral_integral(
 
     integral_values = np.asarray([point[2] for point in valid_points], dtype=np.float64)
     median_integral = float(np.median(integral_values))
-    stable_mask = np.abs(integral_values - median_integral) <= abs(median_integral) * 0.10
-    stable_majority = int(np.count_nonzero(stable_mask)) > len(integral_values) / 2
+    stable_mask = (
+        np.abs(integral_values - median_integral)
+        <= abs(median_integral) * inlier_threshold / 100.0
+    )
+    outlier_percent = (
+        float(np.count_nonzero(~stable_mask)) / len(integral_values) * 100.0
+    )
+    linear_threshold_reached = outlier_percent >= linear_outlier_threshold
     reference_voltage = float(np.median(voltages))
     activation_voltage: Optional[float] = None
     slope: Optional[float] = None
     intercept: Optional[float] = None
     r_squared: Optional[float] = None
 
-    if stable_majority:
+    if not linear_threshold_reached:
         selected_mask = stable_mask
         selected_values = integral_values[selected_mask]
         coefficient = float(np.median(selected_values))
@@ -562,6 +588,9 @@ def calibrate_quarter_spectral_integral(
         method=method,
         points_total=len(valid_points),
         points_rejected=len(valid_points) - int(np.count_nonzero(selected_mask)),
+        inlier_threshold_percent=inlier_threshold,
+        linear_model_outlier_threshold_percent=linear_outlier_threshold,
+        outlier_percent=outlier_percent,
         activation_voltage_V=activation_voltage,
         reference_voltage_V=reference_voltage,
         slope_integral_per_V=slope,
@@ -579,6 +608,8 @@ def fit_quarter_integral_coefficient(
     source_file: str,
     integral_coefficient: float = 1.0,
     activation_voltage_V: Optional[float] = None,
+    median_tolerance_percent: float = 10.0,
+    linear_model_outlier_percent: float = 50.0,
 ) -> QuarterIntegralCalibration:
     """Compatibility wrapper for the normalized-integral calibration."""
 
@@ -589,6 +620,8 @@ def fit_quarter_integral_coefficient(
         source_file,
         integral_coefficient,
         activation_voltage_V,
+        median_tolerance_percent,
+        linear_model_outlier_percent,
     )
 
 
@@ -662,6 +695,11 @@ def create_spectral_recalculation_workbook(
         ("Points total", calibration.points_total),
         ("Points rejected", calibration.points_rejected),
         ("Median inlier threshold (%)", calibration.inlier_threshold_percent),
+        (
+            "Linear model outlier threshold (%)",
+            calibration.linear_model_outlier_threshold_percent,
+        ),
+        ("Observed points outside threshold (%)", calibration.outlier_percent),
         ("Integral relative std (%)", calibration.relative_std_percent),
         ("Integral minimum", calibration.integral_min),
         ("Integral maximum", calibration.integral_max),
