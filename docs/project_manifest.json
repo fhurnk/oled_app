@@ -20,6 +20,14 @@
     "application": "oled_modular_app.py",
     "application_status_command": ".\\env\\Scripts\\python.exe .\\oled_modular_app.py --status",
     "reference_application": "oled_measurement_app_v2_5.py",
+    "v2_application": "oled_v2_app.py",
+    "v2_status_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --status",
+    "v2_backend_smoke_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --backend-smoke",
+    "v2_package": "oled_v2",
+    "v2_frontend": "v2_frontend",
+    "v2_frontend_build_script": "scripts/build_v2_frontend.ps1",
+    "v2_onedir_build_script": "scripts/build_v2_alpha.ps1",
+    "v2_pyinstaller_spec": "packaging/oled_v2_alpha.spec",
     "visual_studio_project": "oled_app_v2_5_package.pyproj",
     "package_entrypoint": "oled_app/main.py",
     "release_script": "scripts/create_github_release.py",
@@ -56,6 +64,7 @@
     "gui_stability_window_module": "oled_app/gui/stability_window.py",
     "gui_report_window_module": "oled_app/gui/report_window.py",
     "requirements": "requirements.txt",
+    "v2_requirements": "requirements-v2.txt",
     "simulator_config_example": "oled_simulator_config.json"
   },
   "documentation": {
@@ -79,7 +88,7 @@
     "current_release": "v2.0.0-alpha",
     "previous_release": "v1.9.1",
     "previous_prerelease": "v1.9.0-beta-3",
-    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; the first checkpoint freezes v1.9.1 behavior and data contracts.",
+    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts and Stage 1 delivers the isolated tested FastAPI/React/WebView2 onedir prototype.",
     "mutable_prerelease": {
       "enabled": true,
       "tag": "v2.0.0-alpha",
@@ -115,7 +124,10 @@
       "__pycache__/",
       "Backup/",
       "camera_downloads/",
-      "camera_data/"
+      "camera_data/",
+      "v2_frontend/node_modules/",
+      "build/",
+      "dist/"
     ]
   }
 }

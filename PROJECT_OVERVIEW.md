@@ -20,6 +20,10 @@
 - переход к v2 начат в едином prerelease `v2.0.0-alpha`; пока этапы v2
   реализуются отдельно, `oled_modular_app.py` продолжает запускать рабочий
   Tkinter-интерфейс.
+- технический прототип v2 находится в `oled_v2_app.py`, `oled_v2/` и
+  `v2_frontend/`: отдельное WebView2-окно обращается к защищённому FastAPI на
+  случайном loopback-порту; production assets входят в проверенную
+  PyInstaller `onedir`-сборку.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -57,6 +61,7 @@
 oled_app_v2_5_package/
   oled_measurement_app_v2_5.py
   oled_modular_app.py
+  oled_v2_app.py
   oled_app/
     __init__.py
     main.py
@@ -112,6 +117,21 @@ oled_app_v2_5_package/
       spectral_sensitivity.csv
     reports/
       origin_report.py
+  oled_v2/
+    api.py
+    config.py
+    launcher.py
+    logging_setup.py
+    security.py
+    server.py
+    static/
+  v2_frontend/
+    src/
+    package.json
+    pnpm-lock.yaml
+    vite.config.ts
+  packaging/
+    oled_v2_alpha.spec
   raspberry_camera_service/
     camera_service.py
     config.example.json
@@ -119,6 +139,7 @@ oled_app_v2_5_package/
     requirements.txt
     README.md
   requirements.txt
+  requirements-v2.txt
   oled_simulator_config.json
   README.md
   PROJECT_OVERVIEW.md
@@ -126,6 +147,9 @@ oled_app_v2_5_package/
   AGENTS.md
   CHANGELOG.md
   scripts/
+    build_v2_frontend.ps1
+    build_v2_alpha.ps1
+    run_v2_dev_server.py
     create_github_release.py
     build_report_origin_workbook.py
   docs/

@@ -4,12 +4,12 @@
 
 Приложение для ведения серий измерений OLED-пикселей: ВАЯХ/IVL, спектры, стабильность, журнал серии и экспорт данных в Excel.
 
-`v2.0.0-alpha` начинает переход к отдельной FastAPI/React/WebView2-оболочке.
-Первым checkpoint зафиксировано полное поведение `v1.9.1`, форматы данных и
-эталонные сценарии. Рабочий Tkinter-интерфейс по-прежнему запускается через
-`oled_modular_app.py` и остаётся штатным приложением до завершения тестирования
-v2. Все следующие этапы перехода обновляют тот же prerelease и тег
-`v2.0.0-alpha`.
+`v2.0.0-alpha` накапливает переход к отдельной FastAPI/React/WebView2-оболочке.
+Зафиксировано поведение `v1.9.1`, а технический прототип уже собирается в
+автономный `onedir` и открывается в собственном WebView2-окне. Рабочий
+Tkinter-интерфейс по-прежнему запускается через `oled_modular_app.py` и остаётся
+штатным приложением до завершения функциональной и аппаратной проверки. Все
+следующие этапы обновляют тот же prerelease и тег `v2.0.0-alpha`.
 
 ## Быстрый Запуск
 
@@ -31,11 +31,26 @@ v2. Все следующие этапы перехода обновляют т�
 .\env\Scripts\python.exe .\oled_modular_app.py --status
 ```
 
+Отдельный технический прототип v2:
+
+```powershell
+.\env\Scripts\python.exe .\oled_v2_app.py --status
+.\env\Scripts\python.exe .\oled_v2_app.py --backend-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py
+```
+
+Тестовая `onedir`-сборка создаётся командой:
+
+```powershell
+.\scripts\build_v2_alpha.ps1
+```
+
 Если окружение нужно создать заново:
 
 ```powershell
 py -3 -m venv env
 .\env\Scripts\python.exe -m pip install -r requirements.txt
+.\env\Scripts\python.exe -m pip install -r requirements-v2.txt
 ```
 
 ## Камера Canon
@@ -130,6 +145,11 @@ Raw CSV и итоговый XLSX отдельно сохраняют выбра�
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
+- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend и защита desktop-сеанса технического прототипа v2.
+- `v2_frontend/` - исходники React/Vite; готовые assets входят в `oled_v2/static/`.
+- `requirements-v2.txt` - дополнительные зависимости v2 и сборщика.
+- `scripts/build_v2_frontend.ps1`, `scripts/build_v2_alpha.ps1` - production frontend и PyInstaller `onedir`.
+- `packaging/oled_v2_alpha.spec` - спецификация тестового desktop-дистрибутива.
 - `oled_app/camera/client.py` - HTTP-клиент сервиса камеры Raspberry Pi.
 - `oled_app/camera/wifi.py` - переключение сохранённых Wi-Fi-профилей Windows для камеры.
 - `oled_app/camera/telemetry_video.py` - создание локальной копии видео стабильности с отдельной верхней полосой U/I.

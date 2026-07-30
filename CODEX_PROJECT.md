@@ -14,15 +14,23 @@ The active prerelease is the mutable `v2.0.0-alpha`, which begins the v2
 interface migration from stable `v1.9.1`. All migration checkpoints update the
 same tag, version note and GitHub prerelease; do not create `alpha-2`,
 `alpha-3`, or another project version unless the user explicitly asks. Stage 0
-is recorded in `docs/v2_functional_parity_checklist.md`, and current progress is
-in `docs/v2_migration_status.md`. The modular Tkinter launcher remains the
-default application until v2 passes the full parity and hardware checklist.
+is recorded in `docs/v2_functional_parity_checklist.md`; Stage 1's tested
+FastAPI/React/WebView2 onedir prototype is in `oled_v2_app.py`, `oled_v2/`,
+`v2_frontend/`, and `packaging/`. Current progress is in
+`docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
+application until v2 passes the full parity and hardware checklist.
 
 ## Main Entry Points
 
 - Modular application launcher: `oled_modular_app.py`
 - Reference application: `oled_measurement_app_v2_5.py`
 - Modular package: `oled_app/`
+- Isolated v2 launcher: `oled_v2_app.py`
+- v2 backend/desktop package: `oled_v2/`
+- v2 React/Vite source: `v2_frontend/`
+- v2 onedir build: `scripts/build_v2_alpha.ps1`
+- v2 status/smoke: `python oled_v2_app.py --status` and
+  `python oled_v2_app.py --backend-smoke`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

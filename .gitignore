@@ -17,3 +17,7 @@ camera_downloads/
 camera_data/
 UpgradeLog.htm
 .git-local/
+v2_frontend/node_modules/
+.pnpm-store/
+build/
+dist/

@@ -13,6 +13,15 @@
   решениями перед техническим прототипом.
 - Release script поддерживает `--update-existing`, чтобы повторные checkpoint
   обновляли один GitHub Release.
+- Добавлен изолированный контур v2: desktop launcher на `pywebview`, локальный
+  FastAPI backend на случайном порту и React/Vite frontend.
+- Добавлена защита локального сеанса: одноразовый токен в URL fragment,
+  проверка `Host`/`Origin`, один управляющий frontend-клиент и отключённая
+  OpenAPI-документация.
+- Добавлены production-сборка frontend, PyInstaller `onedir`-спецификация,
+  отдельные v2-зависимости и PowerShell-команды сборки.
+- Добавлены диагностические логи в
+  `%LOCALAPPDATA%\OLED Measurement App\logs` с ротацией и хранением 30 дней.
 
 ### Изменено
 
@@ -22,14 +31,20 @@
   `v2.0.0-alpha` без создания `alpha-2`, `alpha-3` и других промежуточных версий.
 - План v2 переведён из статуса концепции в выполнение; текущий прогресс и
   критерии соответствия вынесены в связанные документы.
+- Этап 1 технического прототипа завершён; следующим checkpoint становится
+  аппаратный proof of concept с WebSocket-потоком и безопасной остановкой.
 
 ### Проверено
 
 - Код текущих Tkinter workflow и референсное приложение не изменялись этим
   checkpoint.
 - Добавлены автоматические тесты create/edit-команд обновляемого prerelease.
-- `python -m compileall -q oled_app scripts tests`
-- Все 154 автоматических теста проходят.
+- Production frontend визуально проверен в локальном браузере: состояние backend
+  загружается и обновляется без ошибок консоли.
+- Собрана `onedir`-папка (24 МБ); релизный `.exe` запускает WebView2, поднимает и
+  корректно завершает FastAPI backend.
+- `python -m compileall -q oled_app oled_v2 scripts tests oled_modular_app.py oled_v2_app.py`
+- Все 164 автоматических теста проходят.
 
 ## v1.9.1 - 2026-07-30
 

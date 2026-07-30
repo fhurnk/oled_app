@@ -1,0 +1,25 @@
+{
+  "name": "oled-measurement-app-v2-frontend",
+  "private": true,
+  "version": "2.0.0-alpha",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build --configLoader native",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
