@@ -1,6 +1,6 @@
 # Описание Проекта OLED Measurement App
 
-Версия: `v1.9.0-beta-2`
+Версия: `v1.9.0-beta-3`
 
 ## Назначение
 
@@ -161,6 +161,7 @@ oled_app_v2_5_package/
       v1.9.0-beta.md
       v1.9.0-beta-1.md
       v1.9.0-beta-2.md
+      v1.9.0-beta-3.md
   OLED_series/              # локальные результаты измерений, не хранить в git
 ```
 

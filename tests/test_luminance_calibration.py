@@ -5,12 +5,16 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 from openpyxl import load_workbook
+from openpyxl.worksheet._read_only import ReadOnlyWorksheet
 from PIL import Image
 
 from oled_app.gui.measurement_menu import pixel_ids
+from oled_app.gui import spectral_calibration_window as spectral_calibration_gui
+from oled_app.gui.spectral_calibration_window import quarter_spectral_candidates
 from oled_app.measurements.ivl import IVLParams
 from oled_app.measurements.spectrum import SpectrumHelper, SpectrumParams
 from oled_app.measurements.stability import StabilityParams
@@ -39,6 +43,85 @@ from oled_app.series.metadata import luminance_coefficient_for_color
 
 
 class SpectralSensitivityTests(unittest.TestCase):
+    def test_spectrum_pixels_are_grouped_for_all_available_quarters(self):
+        rows = [
+            {
+                "Pixel ID": "CB1_2_1",
+                "Quarter number": 1,
+                "Last spectrum file": "one.xlsx",
+            },
+            {
+                "Pixel ID": "CB1_1_2",
+                "Quarter number": 1,
+                "Last spectrum file": "two.xlsx",
+            },
+            {
+                "Pixel ID": "CB3_1_1",
+                "Quarter number": 3,
+                "Last spectrum file": "three.xlsx",
+            },
+            {
+                "Pixel ID": "CB4_1_1",
+                "Quarter number": 4,
+                "Last spectrum file": "",
+            },
+        ]
+
+        self.assertEqual(
+            quarter_spectral_candidates(rows),
+            {
+                1: ["CB1_1_2", "CB1_2_1"],
+                3: ["CB3_1_1"],
+            },
+        )
+
+    def test_batch_spectral_recalculation_continues_after_one_error(self):
+        rows = [
+            {
+                "Pixel ID": f"P{quarter}",
+                "Quarter number": quarter,
+                "Last spectrum file": f"p{quarter}.xlsx",
+            }
+            for quarter in range(1, 4)
+        ]
+        log_messages = []
+        app = SimpleNamespace(
+            series=SimpleNamespace(
+                journal=SimpleNamespace(list_pixels=lambda: rows),
+            ),
+            log=log_messages.append,
+        )
+        completed = {
+            "quarter": 1,
+            "pixel": "P1",
+            "coefficient": 3.49,
+            "output": Path("SPECTRAL_RECALC_P1.xlsx"),
+        }
+
+        with (
+            patch.object(
+                spectral_calibration_gui,
+                "ask_quarter_calibration_pixels",
+                return_value=["P1", "P2", "P3"],
+            ),
+            patch.object(
+                spectral_calibration_gui,
+                "_calibrate_quarter_pixel",
+                side_effect=[completed, ValueError("bad spectrum"), None],
+            ) as process,
+            patch.object(
+                spectral_calibration_gui.messagebox,
+                "showwarning",
+            ) as warning,
+        ):
+            spectral_calibration_gui.calibrate_quarter_from_latest_spectrum(app)
+
+        self.assertEqual(process.call_count, 3)
+        warning.assert_called_once()
+        self.assertIn("P2: bad spectrum", warning.call_args.args[1])
+        self.assertIn("P3", warning.call_args.args[1])
+        self.assertTrue(any("P2" in message for message in log_messages))
+
     def test_supplied_coupon_ratio_matches_manual_349_check(self):
         fixture = Path(__file__).resolve().parent / "fixtures" / "test_coupon_spectra.csv"
         wavelengths = []
@@ -291,7 +374,14 @@ class SpectralSensitivityTests(unittest.TestCase):
             wb.close()
             source_before = source.read_bytes()
 
-            points = read_spectrum_integral_points(source)
+            with patch.object(
+                ReadOnlyWorksheet,
+                "cell",
+                side_effect=AssertionError(
+                    "read-only spectrum sheets must be streamed sequentially"
+                ),
+            ):
+                points = read_spectrum_integral_points(source)
             for point in points:
                 point["rgb_luminance_cd_m2"] = point["photodiode_uA"] * 5.0
             calibration = calibrate_quarter_spectral_integral(

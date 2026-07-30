@@ -251,70 +251,108 @@ def spectral_luminance_cd_m2(
     )
 
 
-def _find_header_row(ws, required_header: str, limit: int = 60) -> Tuple[int, Dict[str, int]]:
-    for row in range(1, min(ws.max_row, limit) + 1):
-        headers = {
-            str(ws.cell(row, column).value or "").strip(): column
-            for column in range(1, ws.max_column + 1)
-        }
-        if required_header in headers:
-            return row, headers
-    raise ValueError(f"В листе {ws.title} не найден столбец {required_header!r}.")
-
-
 def read_spectrum_integral_points(workbook_path: Path) -> List[Dict[str, Any]]:
     """Read per-voltage integral and photodiode pairs from a spectrum workbook."""
 
     wb = load_workbook(workbook_path, data_only=True, read_only=True)
     try:
         ws_sum = wb["Сводка"]
-        summary_header_row, summary_headers = _find_header_row(ws_sum, "I photodiode (uA)")
+        summary_headers: Optional[Dict[str, int]] = None
         summary_by_point: Dict[int, Dict[str, Any]] = {}
-        for row in range(summary_header_row + 1, ws_sum.max_row + 1):
-            point = as_float_or_none(ws_sum.cell(row, summary_headers.get("Point", 1)).value)
+        for row_number, values in enumerate(
+            ws_sum.iter_rows(values_only=True),
+            start=1,
+        ):
+            if summary_headers is None:
+                candidates = {
+                    str(value or "").strip(): index
+                    for index, value in enumerate(values)
+                }
+                if "I photodiode (uA)" in candidates:
+                    summary_headers = candidates
+                    continue
+                if row_number >= 60:
+                    break
+                continue
+
+            def summary_value(header: str, default_index: int) -> Any:
+                index = summary_headers.get(header, default_index)
+                return values[index] if index < len(values) else None
+
+            point = as_float_or_none(summary_value("Point", 0))
             if point is None:
                 continue
             summary_by_point[int(point)] = {
                 "point": int(point),
                 "voltage_V": as_float_or_none(
-                    ws_sum.cell(row, summary_headers.get("V set (V)", 2)).value
+                    summary_value("V set (V)", 1)
                 ),
                 "photodiode_uA": as_float_or_none(
-                    ws_sum.cell(row, summary_headers["I photodiode (uA)"]).value
+                    summary_value("I photodiode (uA)", 6)
                 ),
                 "photodiode_luminance_cd_m2": as_float_or_none(
-                    ws_sum.cell(row, summary_headers.get("Luminance (cd/m^2)", 8)).value
+                    summary_value("Luminance (cd/m^2)", 7)
                 ),
-                "status": str(
-                    ws_sum.cell(row, summary_headers.get("Status", 13)).value or ""
-                ),
+                "status": str(summary_value("Status", 12) or ""),
             }
+        if summary_headers is None:
+            raise ValueError(
+                "В листе Сводка не найден столбец 'I photodiode (uA)'."
+            )
 
         if "Processed counts per s" not in wb.sheetnames:
             raise ValueError("В книге нет листа 'Processed counts per s'.")
         ws_processed = wb["Processed counts per s"]
-        data_header_row, _processed_headers = _find_header_row(
-            ws_processed,
-            "Wavelength (nm)",
-        )
-        wavelength_rows = list(range(data_header_row + 1, ws_processed.max_row + 1))
-        wavelengths = [
-            as_float_or_none(ws_processed.cell(row, 1).value)
-            for row in wavelength_rows
-        ]
-        rows = []
-        for column in range(2, ws_processed.max_column + 1):
-            point_value = as_float_or_none(ws_processed.cell(2, column).value)
-            if point_value is None:
+        point_by_column: Dict[int, int] = {}
+        spectra_by_point: Dict[int, List[Tuple[float, float]]] = {}
+        data_started = False
+        for row_number, values in enumerate(
+            ws_processed.iter_rows(values_only=True),
+            start=1,
+        ):
+            first_value = str(values[0] or "").strip() if values else ""
+            if not data_started:
+                if first_value == "Point":
+                    for column_index, value in enumerate(values[1:], start=1):
+                        point_value = as_float_or_none(value)
+                        if point_value is None:
+                            continue
+                        point = int(point_value)
+                        point_by_column[column_index] = point
+                        spectra_by_point.setdefault(point, [])
+                if first_value == "Wavelength (nm)":
+                    if not point_by_column:
+                        raise ValueError(
+                            "В листе 'Processed counts per s' не найдена строка Point."
+                        )
+                    data_started = True
+                    continue
+                if row_number >= 60:
+                    break
                 continue
-            point = int(point_value)
-            pairs = [
-                (float(wavelength), float(intensity))
-                for row, wavelength in zip(wavelength_rows, wavelengths)
-                if wavelength is not None
-                for intensity in [as_float_or_none(ws_processed.cell(row, column).value)]
-                if intensity is not None
-            ]
+
+            wavelength = as_float_or_none(values[0] if values else None)
+            if wavelength is None:
+                continue
+            for column_index, point in point_by_column.items():
+                intensity = as_float_or_none(
+                    values[column_index]
+                    if column_index < len(values)
+                    else None
+                )
+                if intensity is not None:
+                    spectra_by_point[point].append(
+                        (float(wavelength), float(intensity))
+                    )
+        if not data_started:
+            raise ValueError(
+                "В листе 'Processed counts per s' не найден столбец "
+                "'Wavelength (nm)'."
+            )
+
+        rows = []
+        for point in point_by_column.values():
+            pairs = spectra_by_point.get(point, [])
             if len(pairs) < 2:
                 continue
             spectral = calculate_spectral_integrals(
