@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +14,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet._read_only import ReadOnlyWorksheet
 from PIL import Image
 
-from oled_app.gui.measurement_menu import pixel_ids
+from oled_app.gui.measurement_menu import pixel_ids, refresh_ivl_thumbnails
 from oled_app.gui import spectral_calibration_window as spectral_calibration_gui
 from oled_app.gui.spectral_calibration_window import quarter_spectral_candidates
 from oled_app.measurements.ivl import IVLParams
@@ -35,14 +37,59 @@ from oled_app.processing.spectral_calibration import (
     calculate_spectral_integrals,
     create_spectral_recalculation_workbook,
     read_spectrum_integral_points,
+    spectral_recalculation_output_path,
 )
 from oled_app.processing.spectrum_results import create_spectrum_workbook
 from oled_app.processing.stability_results import create_stability_workbook
 from oled_app.series.manager import SeriesManager
 from oled_app.series.metadata import luminance_coefficient_for_color
+from oled_app.series.paths import ensure_quarter_calibration_folder
 
 
 class SpectralSensitivityTests(unittest.TestCase):
+    def test_integral_calibration_files_live_in_quarter_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = {
+                "quarter_bases": {"1": "C"},
+                "quarter_led_colors": {"1": "red"},
+            }
+            calibration_folder = ensure_quarter_calibration_folder(
+                root,
+                config,
+                1,
+            )
+            source = root / "measurements" / "SPECTRUM_P1.xlsx"
+            output = spectral_recalculation_output_path(
+                source,
+                "CR1_1_1",
+                output_dir=calibration_folder,
+            )
+            manager = SeriesManager.__new__(SeriesManager)
+            manager.series_folder = root
+            manager.config = config
+            manager.save_config = lambda: None
+
+            manager.save_quarter_integral_calibration(
+                1,
+                {
+                    "method": "normalized_shape_integral_median",
+                    "coefficient": 3.0,
+                },
+            )
+
+            json_path = root / "calibration" / "CR1" / "integral_calibration.json"
+            self.assertEqual(output.parent, json_path.parent)
+            self.assertTrue(json_path.exists())
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["coefficient"], 3.0)
+            self.assertEqual(
+                manager.config["quarter_integral_calibrations"]["1"][
+                    "calibration_file"
+                ],
+                str(Path("calibration") / "CR1" / "integral_calibration.json"),
+            )
+
     def test_spectrum_pixels_are_grouped_for_all_available_quarters(self):
         rows = [
             {
@@ -445,6 +492,78 @@ class SpectrumPriorityTests(unittest.TestCase):
 
 
 class IvlStatusAndThumbnailTests(unittest.TestCase):
+    def test_refresh_action_checks_and_creates_latest_ivl_thumbnail(self):
+        cycle = {
+            "cycle": 1,
+            "status": "WORKING",
+            "status_desc": "ok",
+            "current_limit_reached": False,
+            "max_photo_uA": 1.0,
+            "max_current_mA": 1.0,
+            "opening_voltage": 2.0,
+            "data": [
+                {
+                    "Point": 1,
+                    "Voltage set (V)": 2.0,
+                    "Voltage OLED / LED measured (V)": 2.0,
+                    "Current OLED / LED (mA)": 1.0,
+                    "Current density (mA/cm^2)": 100.0,
+                    "Voltage photodiode measured (V)": -5.0,
+                    "Photodiode current (uA)": 1.0,
+                    "Luminance (cd/m^2)": 1.0,
+                    "Measurement time (s)": 0.1,
+                },
+                {
+                    "Point": 2,
+                    "Voltage set (V)": 3.0,
+                    "Voltage OLED / LED measured (V)": 3.0,
+                    "Current OLED / LED (mA)": 2.0,
+                    "Current density (mA/cm^2)": 200.0,
+                    "Voltage photodiode measured (V)": -5.0,
+                    "Photodiode current (uA)": 2.0,
+                    "Luminance (cd/m^2)": 2.0,
+                    "Measurement time (s)": 0.2,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workbook = (
+                root
+                / "measurements"
+                / "01_IVL"
+                / "2026-07-30"
+                / "CR1"
+                / "CR1_1"
+                / "CR1_1_1"
+                / "IVL_CR1_1_1_20260730_120000.xlsx"
+            )
+            workbook.parent.mkdir(parents=True)
+            save_ivl_workbook("CR1_1_1", workbook, IVLParams(), [cycle])
+            app = SimpleNamespace(
+                series=SimpleNamespace(
+                    series_folder=root,
+                    journal=SimpleNamespace(
+                        list_pixels=lambda: [
+                            {
+                                "Pixel ID": "CR1_1_1",
+                                "Last IVL file": str(workbook.relative_to(root)),
+                            }
+                        ]
+                    ),
+                ),
+                log=lambda _message: None,
+            )
+
+            self.assertEqual(refresh_ivl_thumbnails(app), 1)
+            self.assertTrue(
+                root.joinpath(
+                    "thumbnails",
+                    "CR1_1_1_thumbnail.png",
+                ).exists()
+            )
+            self.assertEqual(refresh_ivl_thumbnails(app), 0)
+
     def test_alive_confirmation_clears_preliminary_burned_status(self):
         cycles = [
             {"cycle": 1, "status": "BURNED", "data": [{"Point": 1}]},
@@ -474,6 +593,31 @@ class IvlStatusAndThumbnailTests(unittest.TestCase):
             ivl_thumbnail_path(first),
             Path("folder/thumbnails/CR1_2_1_thumbnail.png"),
         )
+
+    def test_series_thumbnails_are_collected_in_one_root_folder(self):
+        workbook = Path(
+            "series/measurements/01_IVL/2026-07-30/CR1/CR1_2/CR1_2_1/"
+            "IVL_CR1_2_1_20260730_120000.xlsx"
+        )
+
+        self.assertEqual(
+            ivl_thumbnail_path(workbook),
+            Path("series/thumbnails/CR1_2_1_thumbnail.png"),
+        )
+
+    def test_thumbnail_is_stale_when_new_ivl_workbook_is_newer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workbook = root / "IVL_P1_20260101_000000.xlsx"
+            thumbnail = root / "thumbnails" / "P1_thumbnail.png"
+            workbook.touch()
+            create_ivl_thumbnail(thumbnail, [])
+            newer = thumbnail.stat().st_mtime_ns + 1_000_000
+            os.utime(workbook, ns=(newer, newer))
+
+            self.assertTrue(
+                ivl_thumbnail_needs_refresh(thumbnail, workbook)
+            )
 
     def test_thumbnail_uses_live_colors_and_one_linear_scale(self):
         cycle = {

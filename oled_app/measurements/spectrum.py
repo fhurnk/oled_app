@@ -73,6 +73,20 @@ class SpectrumMeasurementStopped(Exception):
     """Raised after the user requests a safe spectrum stop."""
 
 
+class SpectrumPixelRejected(Exception):
+    """Raised when electrical safety checks invalidate the current pixel."""
+
+    def __init__(
+        self,
+        status: str,
+        message: str,
+        current_mA: Optional[float] = None,
+    ):
+        super().__init__(message)
+        self.status = str(status)
+        self.current_mA = current_mA
+
+
 class SpectrumMeasurementController:
     """Thread-safe stop signal shared by the spectrum workflow and GUI."""
 
@@ -116,7 +130,13 @@ class SpectrumHelper:
         self._last_integration_time_us = integration_time_us
         return integration_time_us / 1e6, changed
 
-    def get_spectrum(self, spec, integration_time_s: float, discard_stale_after_change: bool = True):
+    def get_spectrum(
+        self,
+        spec,
+        integration_time_s: float,
+        discard_stale_after_change: bool = True,
+        electrical_safety_check: Optional[Callable[[], None]] = None,
+    ):
         actual_t, changed = self.set_integration_time(spec, integration_time_s)
         wavelengths = spec.wavelengths()
         if discard_stale_after_change and self.params.discard_first_scan_after_tint_change and changed:
@@ -125,11 +145,18 @@ class SpectrumHelper:
                 _ = spec.intensities()
             except Exception as exc:
                 self.log(f"  Не удалось сбросить первый спектр после смены T_int: {exc}")
+            if electrical_safety_check is not None:
+                electrical_safety_check()
         time.sleep(self.params.settle_time_spectrum_s)
         intensities = spec.intensities().astype(np.float64)
         return wavelengths, intensities, actual_t
 
-    def get_dark_spectrum(self, spec, integration_time_s: float):
+    def get_dark_spectrum(
+        self,
+        spec,
+        integration_time_s: float,
+        electrical_safety_check: Optional[Callable[[], None]] = None,
+    ):
         spectra = []
         wavelengths = None
         actual_t = integration_time_s
@@ -138,7 +165,10 @@ class SpectrumHelper:
                 spec,
                 integration_time_s,
                 discard_stale_after_change=(i == 0),
+                electrical_safety_check=electrical_safety_check,
             )
+            if electrical_safety_check is not None:
+                electrical_safety_check()
             spectra.append(intensities)
             time.sleep(0.05)
         return wavelengths, np.mean(spectra, axis=0), actual_t
@@ -345,6 +375,7 @@ class SpectrumHelper:
             Callable[[int, float, np.ndarray, np.ndarray, str], None]
         ] = None,
         stop_requested: Optional[Callable[[], bool]] = None,
+        electrical_safety_check: Optional[Callable[[], None]] = None,
     ):
         p = self.params
         t_int = self.next_integration_time_s if p.reuse_previous_integration_time else p.t_int_initial_s
@@ -356,7 +387,15 @@ class SpectrumHelper:
         for iteration in range(1, p.max_iterations + 1):
             if stop_requested is not None and stop_requested():
                 raise SpectrumMeasurementStopped("Съёмка спектра остановлена пользователем.")
-            wl, inten, actual_t = self.get_spectrum(spec, t_int)
+            if electrical_safety_check is not None:
+                electrical_safety_check()
+            wl, inten, actual_t = self.get_spectrum(
+                spec,
+                t_int,
+                electrical_safety_check=electrical_safety_check,
+            )
+            if electrical_safety_check is not None:
+                electrical_safety_check()
             peak_int, peak_wl, fwhm, is_sat, is_weak, _, status = self.analyze_quality(
                 wl,
                 inten,
@@ -412,8 +451,76 @@ class SpectrumHelper:
         t, wl, inten, _, _, _, _ = best
         dark = None
         if p.dark_spectrum_enabled:
-            _, dark, _ = self.get_dark_spectrum(spec, t)
+            _, dark, _ = self.get_dark_spectrum(
+                spec,
+                t,
+                electrical_safety_check=electrical_safety_check,
+            )
         return t, wl, inten, dark
+
+
+def spectrum_electrical_status(
+    current_mA: float,
+    current_limit_mA: float,
+    burnout_current_threshold_mA: float,
+    no_contact_max_led_current_mA: float,
+) -> Optional[str]:
+    """Classify an electrically unsafe spectrum point using the IVL thresholds."""
+
+    current_mA = float(current_mA)
+    if current_mA >= float(burnout_current_threshold_mA):
+        return "CURRENT_LIMIT"
+    if current_mA >= float(current_limit_mA):
+        return "MEASUREMENT_LIMIT"
+    if current_mA <= float(no_contact_max_led_current_mA):
+        return "NO_CONTACT"
+    return None
+
+
+def discard_spectrum_artifacts(paths: Iterable[Path], log: Callable[[str], None]) -> None:
+    """Remove partial files for a pixel that failed electrical validation."""
+
+    path_list = [Path(path) for path in paths if path]
+    for path in path_list:
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception as exc:
+            log(f"Не удалось удалить несохранённый файл {path}: {exc}")
+    for folder in sorted(
+        {path.parent for path in path_list},
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
+
+
+def save_rejected_spectrum_workbook(
+    pixel_id: str,
+    params: SpectrumParams,
+    result: Dict[str, Any],
+) -> Path:
+    """Build a diagnostic XLSX from partial rejected-spectrum data."""
+
+    raw_files = [Path(path) for path in result.get("raw_files", []) if path]
+    if len(raw_files) != 2:
+        raise ValueError("Для диагностического XLSX нужны оба частичных raw CSV.")
+    pending_file = result.get("pending_file")
+    if not pending_file:
+        raise ValueError("Не задан путь диагностического XLSX.")
+    output_path = Path(pending_file)
+    diagnostic_file = build_spectrum_workbook_from_raw_csv(
+        raw_files[0],
+        raw_files[1],
+        output_path,
+        pixel_id,
+        params,
+    )
+    result["diagnostic_file"] = diagnostic_file
+    return diagnostic_file
 
 
 def create_spectrum_workbook(filename: Path, pixel_id: str, params: SpectrumParams, voltage_array: Iterable[float]) -> Any:
@@ -453,6 +560,7 @@ def run_spectrum_measurement(
 
     final_status = "FAILED"
     stopped_by_user = False
+    rejected_pixel = False
     best_spectrum_metrics = {
         "spectrum_peak_count": None,
         "spectrum_peaks_nm": "",
@@ -496,27 +604,107 @@ def run_spectrum_measurement(
                             params.luminance_calibration_model,
                         )
 
-                        if i_led_mA >= params.current_limit_mA:
-                            status = "NEEDS_REVIEW"
-                            log(f"  Стоп: ток {i_led_mA:.3f} мА >= {params.current_limit_mA:.3f} мА")
+                        no_contact_threshold = float(
+                            (app_settings or {})
+                            .get("ivl_advanced", {})
+                            .get("no_contact_max_led_current_mA", 0.05)
+                        )
+                        burnout_threshold = float(
+                            (app_settings or {})
+                            .get("ivl_advanced", {})
+                            .get("burnout_current_threshold_mA", 10.0)
+                        )
+
+                        def write_rejected_summary(
+                            rejection_status: str,
+                            measured_current_mA: float,
+                        ) -> None:
                             summary_writer.writerow(
                                 {
                                     "point": idx,
                                     "date_time": now_str(),
                                     "voltage_set_V": float(voltage),
                                     "voltage_led_measured_V": float(v_led),
-                                    "current_led_A": float(i_led),
-                                    "current_led_mA": float(i_led_mA),
-                                    "current_density_mA_cm2": j_led,
+                                    "current_led_A": float(measured_current_mA)
+                                    / 1000.0,
+                                    "current_led_mA": float(measured_current_mA),
+                                    "current_density_mA_cm2": current_density_mA_cm2(
+                                        measured_current_mA,
+                                        params.pixel_area_mm2,
+                                    ),
                                     "voltage_photodiode_measured_V": float(v_pd),
                                     "current_photodiode_A": float(i_pd),
                                     "current_photodiode_uA": float(i_pd_uA),
                                     "luminance_cd_m2": lum,
-                                    "status": status,
+                                    "status": rejection_status,
                                     "peaks_detected": 0,
                                 }
                             )
-                            final_status = status
+
+                        def check_electrical_safety() -> None:
+                            _voltage_measured, current_measured = smu.smu1.measure()[0]
+                            current_measured_mA = float(current_measured) * 1000.0
+                            electrical_status = spectrum_electrical_status(
+                                current_measured_mA,
+                                params.current_limit_mA,
+                                burnout_threshold,
+                                no_contact_threshold,
+                            )
+                            if electrical_status == "CURRENT_LIMIT":
+                                raise SpectrumPixelRejected(
+                                    electrical_status,
+                                    f"ток {current_measured_mA:.3f} мА достиг порога "
+                                    f"пробоя {burnout_threshold:.3f} мА",
+                                    current_measured_mA,
+                                )
+                            if electrical_status == "MEASUREMENT_LIMIT":
+                                raise SpectrumPixelRejected(
+                                    electrical_status,
+                                    f"ток {current_measured_mA:.3f} мА достиг рабочего "
+                                    f"предела съёмки {params.current_limit_mA:.3f} мА",
+                                    current_measured_mA,
+                                )
+                            if electrical_status == "NO_CONTACT":
+                                raise SpectrumPixelRejected(
+                                    electrical_status,
+                                    f"нет контакта: ток {current_measured_mA:.3f} мА "
+                                    f"не превышает {no_contact_threshold:.3f} мА",
+                                    current_measured_mA,
+                                )
+
+                        initial_electrical_status = spectrum_electrical_status(
+                            i_led_mA,
+                            params.current_limit_mA,
+                            burnout_threshold,
+                            no_contact_threshold,
+                        )
+                        if initial_electrical_status is not None:
+                            write_rejected_summary(
+                                initial_electrical_status,
+                                i_led_mA,
+                            )
+                            if initial_electrical_status == "CURRENT_LIMIT":
+                                rejected_pixel = True
+                                final_status = initial_electrical_status
+                                log(
+                                    f"  Аварийный стоп: ток {i_led_mA:.3f} мА >= "
+                                    f"порога пробоя {burnout_threshold:.3f} мА"
+                                )
+                            elif initial_electrical_status == "MEASUREMENT_LIMIT":
+                                if final_status == "FAILED":
+                                    final_status = initial_electrical_status
+                                log(
+                                    f"  Диапазон завершён: ток {i_led_mA:.3f} мА >= "
+                                    f"рабочего предела {params.current_limit_mA:.3f} мА; "
+                                    "пиксель не считается сгоревшим"
+                                )
+                            else:
+                                rejected_pixel = True
+                                final_status = initial_electrical_status
+                                log(
+                                    f"  Стоп: нет контакта, ток {i_led_mA:.3f} мА <= "
+                                    f"{no_contact_threshold:.3f} мА"
+                                )
                             break
 
                         try:
@@ -539,7 +727,31 @@ def run_spectrum_measurement(
                                     else None
                                 ),
                                 stop_requested=control.stop_requested,
+                                electrical_safety_check=check_electrical_safety,
                             )
+                        except SpectrumPixelRejected as exc:
+                            write_rejected_summary(
+                                exc.status,
+                                (
+                                    float(exc.current_mA)
+                                    if exc.current_mA is not None
+                                    else i_led_mA
+                                ),
+                            )
+                            if exc.status == "MEASUREMENT_LIMIT":
+                                if final_status == "FAILED":
+                                    final_status = exc.status
+                                log(
+                                    f"  Подбор T_int штатно завершён по рабочему "
+                                    f"пределу тока: {exc}"
+                                )
+                            else:
+                                rejected_pixel = True
+                                final_status = exc.status
+                                log(
+                                    f"  Спектр отменён во время подбора T_int: {exc}"
+                                )
+                            break
                         except SpectrumMeasurementStopped:
                             stopped_by_user = True
                             final_status = "STOPPED" if final_status == "FAILED" else final_status
@@ -661,6 +873,21 @@ def run_spectrum_measurement(
                         )
                 finally:
                     safe_shutdown_smu(smu)
+
+    if rejected_pixel:
+        log(
+            f"Спектр {pixel_id} не сохранён: электрический статус {final_status}. "
+            "Частичные raw CSV ожидают решения пользователя."
+        )
+        return {
+            "file": None,
+            "pending_file": filename,
+            "raw_files": [summary_raw_file, spectra_raw_file],
+            "status": final_status,
+            "stopped_by_user": False,
+            "discarded": True,
+            **best_spectrum_metrics,
+        }
 
     filename = build_spectrum_workbook_from_raw_csv(summary_raw_file, spectra_raw_file, filename, pixel_id, params)
     kept_raw_files = cleanup_raw_files([summary_raw_file, spectra_raw_file], app_settings, log)

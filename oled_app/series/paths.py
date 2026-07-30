@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from oled_app.constants import MEASUREMENT_FOLDER_NAMES
+from oled_app.series.metadata import quarter_code
 from oled_app.utils import safe_filename, today_iso
 
 
@@ -44,6 +45,23 @@ def ensure_measurement_folder(
         / substrate_folder
         / pixel_folder
     )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def ensure_quarter_calibration_folder(
+    series_folder: Path,
+    config: Dict[str, Any],
+    quarter_number: int,
+) -> Path:
+    """Keep every integral-calibration artifact in its quarter folder."""
+
+    quarter_number = int(quarter_number)
+    quarter_name = safe_filename(
+        f"{quarter_code(config, quarter_number)}{quarter_number}",
+        fallback=f"Q{quarter_number}",
+    )
+    output_dir = Path(series_folder) / "calibration" / quarter_name
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 

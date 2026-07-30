@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.9.0-beta-3",
+    "current_version": "v1.9.0",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.9.0-beta-3.md"
+    "docs/versions/v1.9.0.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -71,11 +71,11 @@
   },
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
-    "release_channel": "beta",
-    "current_release": "v1.9.0-beta-3",
+    "release_channel": "stable",
+    "current_release": "v1.9.0",
     "previous_release": "v1.8.8",
-    "previous_prerelease": "v1.9.0-beta-2",
-    "release_scope": "Stream large spectrum workbooks without read-only random-access stalls and batch-calibrate one selected spectrum pixel for each available quarter.",
+    "previous_prerelease": "v1.9.0-beta-3",
+    "release_scope": "Finish the 1.9 spectrum queue with electrical safety, same-pixel no-contact retry, burnout diagnostics and same-quarter replacement; centralize IVL thumbnails and quarter calibration artifacts.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",
@@ -91,8 +91,8 @@
     "github_release_required": true
   },
   "measurement_workflows": {
-    "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing. BURNED is final only when the confirmation outcome is nonworking. One latest thumbnail per pixel is stored in a thumbnails subfolder, uses a shared linear current scale with live-graph colors, and legacy renders are refreshed on hover.",
-    "SPECTRUM": "Spectral measurement with pixel/substrate/priority-queue selection, whole-substrate marking, arbitrary substrate start pixels, queued-only substrate capture, live integration-time trial previews, persistent manual start voltage, and safe stop; CIE/BPW34 recalculation runs only from a separate button, selects a filtered median or voltage-linear integral model with R-squared, applies the linear model only from each pixel's opening voltage, and writes SPECTRAL_RECALC_*.xlsx without modifying the source workbook.",
+    "IVL": "Voltage/current/light sweep and pixel status classification; modular workflow writes raw CSV during measurement and builds final XLSX after processing. BURNED is final only when the confirmation outcome is nonworking. One latest thumbnail per pixel is stored with every series thumbnail under <series>/thumbnails, uses a shared linear current scale with live-graph colors, and missing, legacy or older-than-workbook renders are refreshed by the Refresh button and on hover.",
+    "SPECTRUM": "Spectral measurement with pixel/substrate/explicit-priority-queue selection, chosen queue start, queued-only sequential completion, live integration-time previews, electrical checks before and after every T_int trial, same-pixel NO_CONTACT retry, and burnout-threshold CURRENT_LIMIT diagnostics that may be journaled before same-quarter replacement; CIE/BPW34 recalculation runs separately and stores integral_calibration.json plus SPECTRAL_RECALC_*.xlsx under <series>/calibration/<quarter> without modifying the source workbook.",
     "STABILITY": "Mutable constant-current feedback or immediate constant-voltage stability measurement; raw CSV and final XLSX retain target and applied values."
   },
   "git": {

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -13,6 +15,14 @@ from oled_app.measurements.spectrum import (
     SpectrumMeasurementController,
     SpectrumMeasurementStopped,
     SpectrumParams,
+    SpectrumPixelRejected,
+    save_rejected_spectrum_workbook,
+    spectrum_electrical_status,
+)
+from oled_app.measurements.raw_io import RawCsvWriter
+from oled_app.processing.spectrum_results import (
+    SPECTRUM_SPECTRA_RAW_HEADERS,
+    SPECTRUM_SUMMARY_RAW_HEADERS,
 )
 
 
@@ -36,6 +46,57 @@ class SpectrometerProbeTests(unittest.TestCase):
 
 
 class SpectrumQualityTests(unittest.TestCase):
+    def test_kept_rejected_data_builds_diagnostic_xlsx(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            summary = root / "summary.csv"
+            spectra = root / "spectra.csv"
+            output = root / "diagnostic.xlsx"
+            with RawCsvWriter(summary, SPECTRUM_SUMMARY_RAW_HEADERS) as writer:
+                writer.writerow(
+                    {
+                        "point": 1,
+                        "date_time": "2026-07-30 12:00:00",
+                        "voltage_set_V": 3.0,
+                        "voltage_led_measured_V": 3.0,
+                        "current_led_A": 0.001,
+                        "current_led_mA": 1.0,
+                        "current_density_mA_cm2": 100.0,
+                        "voltage_photodiode_measured_V": -5.0,
+                        "current_photodiode_A": -0.000001,
+                        "current_photodiode_uA": 1.0,
+                        "luminance_cd_m2": 1.0,
+                        "integration_time_s": 0.01,
+                        "status": "CURRENT_LIMIT",
+                    }
+                )
+            with RawCsvWriter(spectra, SPECTRUM_SPECTRA_RAW_HEADERS) as writer:
+                for wavelength, counts in ((500.0, 100.0), (510.0, 120.0)):
+                    writer.writerow(
+                        {
+                            "point": 1,
+                            "voltage_set_V": 3.0,
+                            "integration_time_s": 0.01,
+                            "wavelength_nm": wavelength,
+                            "raw_counts": counts,
+                        }
+                    )
+            result = {
+                "file": None,
+                "pending_file": output,
+                "raw_files": [summary, spectra],
+            }
+
+            diagnostic = save_rejected_spectrum_workbook(
+                "P1",
+                SpectrumParams(voltage_start=3.0, voltage_end=3.0),
+                result,
+            )
+
+            self.assertEqual(diagnostic, output)
+            self.assertTrue(output.exists())
+            self.assertIsNone(result["file"])
+
     def test_last_manual_start_voltage_is_kept_in_next_window(self):
         self.assertEqual(initial_spectrum_start_value({"voltage_start_V": "2.75"}, 2.1), "2.75")
 
@@ -168,6 +229,100 @@ class SpectrumQualityTests(unittest.TestCase):
                 preview_callback=lambda *_args: controller.request_stop(),
                 stop_requested=controller.stop_requested,
             )
+
+    def test_integration_optimization_checks_current_before_and_after_trial(self):
+        params = SpectrumParams(
+            discard_first_scan_after_tint_change=False,
+            settle_time_spectrum_s=0.0,
+            max_iterations=1,
+        )
+        helper = SpectrumHelper(params, lambda _message: None)
+        checks = []
+
+        class FakeSpectrometer:
+            def integration_time_micros(self, _value):
+                return None
+
+            def wavelengths(self):
+                return np.linspace(380.0, 780.0, 401)
+
+            def intensities(self):
+                return np.full(401, 30000.0)
+
+        helper.optimize_integration_time(
+            FakeSpectrometer(),
+            electrical_safety_check=lambda: checks.append("checked"),
+        )
+
+        self.assertEqual(checks, ["checked", "checked"])
+
+    def test_integration_optimization_checks_current_between_stale_and_saved_scan(self):
+        params = SpectrumParams(
+            discard_first_scan_after_tint_change=True,
+            settle_time_spectrum_s=0.0,
+            max_iterations=1,
+        )
+        helper = SpectrumHelper(params, lambda _message: None)
+        checks = []
+
+        class FakeSpectrometer:
+            def integration_time_micros(self, _value):
+                return None
+
+            def wavelengths(self):
+                return np.linspace(380.0, 780.0, 401)
+
+            def intensities(self):
+                return np.full(401, 30000.0)
+
+        helper.optimize_integration_time(
+            FakeSpectrometer(),
+            electrical_safety_check=lambda: checks.append("checked"),
+        )
+
+        self.assertEqual(checks, ["checked", "checked", "checked"])
+
+    def test_integration_optimization_aborts_when_current_check_rejects_pixel(self):
+        params = SpectrumParams(
+            discard_first_scan_after_tint_change=False,
+            settle_time_spectrum_s=0.0,
+        )
+        helper = SpectrumHelper(params, lambda _message: None)
+
+        class FakeSpectrometer:
+            def integration_time_micros(self, _value):
+                return None
+
+            def wavelengths(self):
+                return np.linspace(380.0, 780.0, 401)
+
+            def intensities(self):
+                return np.full(401, 30000.0)
+
+        with self.assertRaises(SpectrumPixelRejected):
+            helper.optimize_integration_time(
+                FakeSpectrometer(),
+                electrical_safety_check=lambda: (_ for _ in ()).throw(
+                    SpectrumPixelRejected("CURRENT_LIMIT", "pixel burned")
+                ),
+            )
+
+    def test_spectrum_electrical_status_matches_ivl_thresholds(self):
+        self.assertEqual(
+            spectrum_electrical_status(10.0, 6.0, 10.0, 0.05),
+            "CURRENT_LIMIT",
+        )
+        self.assertEqual(
+            spectrum_electrical_status(6.0, 6.0, 10.0, 0.05),
+            "MEASUREMENT_LIMIT",
+        )
+        self.assertEqual(
+            spectrum_electrical_status(0.05, 6.0, 10.0, 0.05),
+            "NO_CONTACT",
+        )
+        self.assertIsNone(
+            spectrum_electrical_status(1.0, 6.0, 10.0, 0.05)
+        )
 
 
 if __name__ == "__main__":

@@ -42,15 +42,29 @@ def ivl_thumbnail_path(
         pixel_id or _pixel_id_from_workbook(workbook_path),
         fallback=workbook_path.stem,
     )
-    return workbook_path.parent / THUMBNAIL_FOLDER / f"{pixel}{THUMBNAIL_SUFFIX}"
+    thumbnail_root = workbook_path.parent / THUMBNAIL_FOLDER
+    for parent in workbook_path.parents:
+        if parent.name.lower() == "measurements":
+            thumbnail_root = parent.parent / THUMBNAIL_FOLDER
+            break
+    return thumbnail_root / f"{pixel}{THUMBNAIL_SUFFIX}"
 
 
-def ivl_thumbnail_needs_refresh(thumbnail_path: Path) -> bool:
+def ivl_thumbnail_needs_refresh(
+    thumbnail_path: Path,
+    source_workbook: Path | None = None,
+) -> bool:
     """Return true for missing, legacy, or unreadable thumbnail files."""
 
     thumbnail_path = Path(thumbnail_path)
     if not thumbnail_path.exists():
         return True
+    if source_workbook is not None:
+        try:
+            if Path(source_workbook).stat().st_mtime_ns > thumbnail_path.stat().st_mtime_ns:
+                return True
+        except OSError:
+            return True
     try:
         with Image.open(thumbnail_path) as image:
             return (

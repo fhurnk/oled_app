@@ -316,7 +316,13 @@ class SeriesJournal:
         if row_idx:
             if measurement_type in {"IVL", "STABILITY"}:
                 ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
-            elif measurement_type == "SPECTRUM" and str(status).upper() == "NEEDS_REVIEW":
+            elif measurement_type == "SPECTRUM" and str(status).upper() in {
+                "NEEDS_REVIEW",
+                "CURRENT_LIMIT",
+                "NO_CONTACT",
+                "BURNED",
+                "FAILED",
+            }:
                 ws_pixels.cell(row=row_idx, column=col["Last status"], value=status)
             ws_pixels.cell(row=row_idx, column=col["Last updated"], value=date_text)
             if opening_voltage is not None:
@@ -332,14 +338,15 @@ class SeriesJournal:
             elif measurement_type == "SPECTRUM":
                 if "Spectrum priority" in col:
                     ws_pixels.cell(row=row_idx, column=col["Spectrum priority"], value=False)
-                ws_pixels.cell(row=row_idx, column=col["Last spectrum date"], value=date_text)
-                ws_pixels.cell(row=row_idx, column=col["Last spectrum file"], value=rel_file)
-                if spectrum_peak_count is not None and "Last spectrum peak count" in col:
-                    ws_pixels.cell(row=row_idx, column=col["Last spectrum peak count"], value=int(spectrum_peak_count))
-                if spectrum_peaks_nm and "Last spectrum peaks nm" in col:
-                    ws_pixels.cell(row=row_idx, column=col["Last spectrum peaks nm"], value=str(spectrum_peaks_nm))
-                if spectrum_max_intensity is not None and "Last spectrum max intensity (counts/s)" in col:
-                    ws_pixels.cell(row=row_idx, column=col["Last spectrum max intensity (counts/s)"], value=float(spectrum_max_intensity))
+                if rel_file:
+                    ws_pixels.cell(row=row_idx, column=col["Last spectrum date"], value=date_text)
+                    ws_pixels.cell(row=row_idx, column=col["Last spectrum file"], value=rel_file)
+                    if spectrum_peak_count is not None and "Last spectrum peak count" in col:
+                        ws_pixels.cell(row=row_idx, column=col["Last spectrum peak count"], value=int(spectrum_peak_count))
+                    if spectrum_peaks_nm and "Last spectrum peaks nm" in col:
+                        ws_pixels.cell(row=row_idx, column=col["Last spectrum peaks nm"], value=str(spectrum_peaks_nm))
+                    if spectrum_max_intensity is not None and "Last spectrum max intensity (counts/s)" in col:
+                        ws_pixels.cell(row=row_idx, column=col["Last spectrum max intensity (counts/s)"], value=float(spectrum_max_intensity))
             elif measurement_type == "STABILITY":
                 ws_pixels.cell(row=row_idx, column=col["Last stability date"], value=date_text)
                 ws_pixels.cell(row=row_idx, column=col["Last stability file"], value=rel_file)

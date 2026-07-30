@@ -592,10 +592,15 @@ def fit_quarter_integral_coefficient(
     )
 
 
-def spectral_recalculation_output_path(source_workbook: Path, pixel_id: str) -> Path:
+def spectral_recalculation_output_path(
+    source_workbook: Path,
+    pixel_id: str,
+    output_dir: Optional[Path] = None,
+) -> Path:
     source_workbook = Path(source_workbook)
     base_stem = f"SPECTRAL_RECALC_{safe_filename(pixel_id)}_{timestamp_for_file()}"
-    candidate = source_workbook.with_name(f"{base_stem}.xlsx")
+    target_dir = Path(output_dir) if output_dir is not None else source_workbook.parent
+    candidate = target_dir / f"{base_stem}.xlsx"
     suffix = 2
     while candidate.exists():
         candidate = candidate.with_name(f"{base_stem}_{suffix}.xlsx")

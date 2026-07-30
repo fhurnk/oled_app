@@ -14,6 +14,7 @@ from oled_app.processing.spectral_calibration import (
     read_spectrum_integral_points,
     spectral_recalculation_output_path,
 )
+from oled_app.series import ensure_quarter_calibration_folder
 from oled_app.series.metadata import quarter_code, quarter_description
 from oled_app.utils import (
     SPECTRAL_CALIBRATION_METHODS,
@@ -235,7 +236,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
         summary_lines.extend(f"• {error}" for error in errors)
     if completed:
         summary_lines.append(
-            "\nФайлы сохранены отдельно рядом с исходными спектрами. "
+            "\nФайлы сохранены в папке calibration соответствующей четверти. "
             "Для применения коэффициентов к ранее снятым XLSX нажмите "
             "«Пересчитать мкА → кд/м²»."
         )
@@ -319,8 +320,17 @@ def _calibrate_quarter_pixel(app, pixel_id: str) -> Optional[Dict[str, Any]]:
             integral_coefficient=configured_integral,
             activation_voltage_V=opening_voltage,
         )
+    calibration_folder = ensure_quarter_calibration_folder(
+        app.series.series_folder,
+        app.series.config,
+        quarter_number,
+    )
     output_path = create_spectral_recalculation_workbook(
-        spectral_recalculation_output_path(workbook_path, pixel_id),
+        spectral_recalculation_output_path(
+            workbook_path,
+            pixel_id,
+            output_dir=calibration_folder,
+        ),
         workbook_path,
         pixel_id,
         quarter_number,

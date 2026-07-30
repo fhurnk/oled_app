@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.9.0-beta-3`
+- Current app version: `v1.9.0`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current prerelease is `v1.9.0-beta-3`. Spectral recalculation now streams large XLSX workbooks without read-only random-access stalls and can process one selected spectrum pixel for each of up to four quarters in one batch. The previous prerelease is `v1.9.0-beta-2`; the previous stable release is `v1.8.8`.
+The current stable release is `v1.9.0`. Spectrum queues now contain only explicitly marked pixels, support a chosen start, and stop after their final item. Electrical checks run during integration-time optimization. `NO_CONTACT` deletes partial data and offers same-pixel retry after contact adjustment; only the configured burnout threshold produces `CURRENT_LIMIT`, whose data may be deleted or kept as a journaled diagnostic XLSX before choosing a same-quarter replacement. Series thumbnails are centralized under `thumbnails/`, while integral calibration JSON/XLSX artifacts live under `calibration/<quarter>/`. The previous prerelease is `v1.9.0-beta-3`; the previous stable release is `v1.8.8`.
 
 ## Main Entry Points
 

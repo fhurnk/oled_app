@@ -12,7 +12,9 @@ from oled_app.hardware import effective_com_port
 from oled_app.measurements.spectrum import (
     SpectrumMeasurementController,
     SpectrumParams,
+    discard_spectrum_artifacts,
     run_spectrum_measurement,
+    save_rejected_spectrum_workbook,
 )
 from oled_app.series import ensure_measurement_folder, quarter_led_color
 from oled_app.settings import DEFAULT_APP_SETTINGS
@@ -25,7 +27,7 @@ from .widgets import fit_toplevel_to_content
 def spectrum_selection_visibility(mode: str) -> tuple[bool, bool]:
     """Return visibility of the pixel and substrate selectors for a capture mode."""
 
-    return mode in {"single", "substrate"}, mode == "substrate"
+    return mode in {"single", "substrate", "queue"}, mode == "substrate"
 
 
 def open_spectrum_window(app) -> None:
@@ -61,6 +63,7 @@ def open_spectrum_window(app) -> None:
     pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
 
     substrate_groups = group_pixels_by_substrate(app, pixels)
+    queue_pixels = queued_spectrum_pixels(app, pixels)
     substrate_values = list(substrate_groups)
     substrate_label = ttk.Label(frame, text="Подложка:")
     substrate_label.grid(row=2, column=0, sticky="e", pady=5)
@@ -88,8 +91,8 @@ def open_spectrum_window(app) -> None:
     queue_info_label = ttk.Label(
         frame,
         text=(
-            "Пиксели с флажком в столбце «Спектры» идут первыми; "
-            "после них — остальные доступные пиксели."
+            "Снимаются только пиксели с флажком в столбце «Спектры». "
+            "Можно выбрать стартовый пиксель; после последнего пункта очередь завершится."
         ),
         foreground="#555555",
         wraplength=570,
@@ -163,7 +166,11 @@ def open_spectrum_window(app) -> None:
 
     def update_selection_visibility(*_args) -> None:
         show_pixel, show_substrate = spectrum_selection_visibility(mode_var.get())
-        pixel_label.configure(text="Начать с пикселя:" if show_substrate else "Пиксель:")
+        pixel_label.configure(
+            text="Начать с пикселя:"
+            if mode_var.get() in {"substrate", "queue"}
+            else "Пиксель:"
+        )
         for widget in (pixel_label, pixel_combo):
             widget.grid() if show_pixel else widget.grid_remove()
         for widget in (substrate_label, substrate_combo, substrate_info_label):
@@ -177,6 +184,11 @@ def open_spectrum_window(app) -> None:
             update_opening_info()
         elif show_substrate:
             update_substrate_info()
+        elif mode_var.get() == "queue":
+            pixel_combo.configure(values=queue_pixels)
+            if pixel_var.get() not in queue_pixels:
+                pixel_var.set(queue_pixels[0] if queue_pixels else "")
+            update_opening_info()
         else:
             opening_info_var.set("V открытия подставляется отдельно для каждого пикселя")
 
@@ -196,10 +208,12 @@ def open_spectrum_window(app) -> None:
                 )
                 selected_pixels = sequence_from_start(selected_pixels, pixel_var.get())
             else:
-                selected_pixels = list(pixels)
+                selected_pixels = sequence_from_start(queue_pixels, pixel_var.get())
             if not selected_pixels:
                 if selected_mode == "substrate" and queued_only_var.get():
                     raise ValueError("На выбранной подложке нет отмеченных пикселей без снятых спектров")
+                if selected_mode == "queue":
+                    raise ValueError("Очередь спектров пуста")
                 raise ValueError("Для выбранной подложки нет доступных пикселей")
 
             first_id = selected_pixels[0]
@@ -297,6 +311,19 @@ def selected_substrate_pixels(app, pixels: List[str], queued_only: bool) -> List
     ]
 
 
+def queued_spectrum_pixels(app, pixels: List[str]) -> List[str]:
+    """Return only explicitly queued pixels that do not have a saved spectrum."""
+
+    if app.series is None:
+        return []
+    result: List[str] = []
+    for pixel_id in pixels:
+        row = app.series.journal.get_pixel(pixel_id) or {}
+        if bool(row.get("Spectrum priority")) and not row.get("Last spectrum file"):
+            result.append(pixel_id)
+    return result
+
+
 def sequence_from_start(pixels: List[str], start_pixel: str) -> List[str]:
     """Match the IVL-series behavior: begin at the selected item without wrapping."""
 
@@ -344,6 +371,14 @@ def measure_one_spectrum(
             optimization_preview_callback=progress.update_optimization_preview,
             control=controller,
         )
+        rejected_data_note = ""
+        if result.get("discarded"):
+            rejected_data_note = handle_rejected_spectrum_data(
+                app,
+                pixel_id,
+                pixel_params,
+                result,
+            )
         progress.close()
         app.series.journal.update_after_measurement(
             "SPECTRUM",
@@ -351,13 +386,42 @@ def measure_one_spectrum(
             result["status"],
             result["file"],
             pixel_params.as_dict(),
-            notes="Остановлено пользователем" if result.get("stopped_by_user") else "",
+            notes=(
+                "Остановлено пользователем"
+                if result.get("stopped_by_user")
+                else rejected_data_note
+            ),
             spectrum_peak_count=result.get("spectrum_peak_count"),
             spectrum_peaks_nm=result.get("spectrum_peaks_nm", ""),
             spectrum_max_intensity=result.get("spectrum_max_intensity"),
         )
-        app.log(f"Спектры завершены: {pixel_id}, файл {result['file'].name}")
+        if result.get("discarded") and result.get("file") is not None:
+            app.log(
+                f"Невалидный спектр {pixel_id} сохранён по выбору пользователя: "
+                f"{result['file'].name}"
+            )
+        elif result.get("file") is not None:
+            app.log(f"Спектры завершены: {pixel_id}, файл {result['file'].name}")
+        else:
+            app.log(
+                f"Спектр {pixel_id} не сохранён: {result.get('status', 'FAILED')}."
+            )
         app.refresh_pixel_table()
+        if (
+            return_to_menu
+            and result.get("discarded")
+            and result.get("status") == "NO_CONTACT"
+            and ask_no_contact_retry(app, pixel_id)
+        ):
+            app.log(
+                f"{pixel_id}: повторная съёмка спектра после проверки контакта."
+            )
+            return measure_one_spectrum(
+                app,
+                pixel_id,
+                params,
+                return_to_menu=True,
+            )
         if return_to_menu:
             app.show_measurement_menu()
         return result
@@ -369,6 +433,109 @@ def measure_one_spectrum(
         if return_to_menu:
             app.show_measurement_menu()
         return None
+
+
+def handle_rejected_spectrum_data(
+    app,
+    pixel_id: str,
+    params: SpectrumParams,
+    result: Dict[str, Any],
+) -> str:
+    """Route no-contact attempts to retry and other rejections to save/delete."""
+
+    if str(result.get("status") or "").upper() != "NO_CONTACT":
+        return resolve_rejected_spectrum_data(app, pixel_id, params, result)
+
+    raw_files = [path for path in result.get("raw_files", []) if path]
+    discard_spectrum_artifacts(raw_files, app.log)
+    result["raw_files"] = []
+    result["rejected_data_kept"] = False
+    app.log(
+        f"{pixel_id}: данные попытки без контакта удалены; требуется переставить "
+        "пиксель и повторить съёмку."
+    )
+    return "NO_CONTACT: частичные данные удалены, требуется повторная съёмка"
+
+
+def ask_no_contact_retry(app, pixel_id: str) -> bool:
+    """Show the IVL-style contact warning and offer the same pixel again."""
+
+    return bool(
+        messagebox.askretrycancel(
+            "Нет контакта",
+            (
+                f"Пиксель {pixel_id}: ток почти нулевой — контакта нет.\n\n"
+                "Переставьте или проверьте контакт этого пикселя, затем нажмите "
+                "«Повторить», чтобы заново снять тот же пиксель."
+            ),
+            icon="warning",
+            parent=app,
+        )
+    )
+
+
+def resolve_rejected_spectrum_data(
+    app,
+    pixel_id: str,
+    params: SpectrumParams,
+    result: Dict[str, Any],
+) -> str:
+    """Ask whether partial raw CSV from an electrically rejected pixel should remain."""
+
+    if str(result.get("status") or "").upper() == "NO_CONTACT":
+        return handle_rejected_spectrum_data(app, pixel_id, params, result)
+    raw_files = [path for path in result.get("raw_files", []) if path]
+    if not raw_files:
+        return "Спектр не сохранён; частичных данных нет"
+    delete_data = messagebox.askyesno(
+        "Данные несохранённого спектра",
+        (
+            f"Спектр {pixel_id} не сохранён: {result.get('status', 'FAILED')}.\n\n"
+            "Удалить частичные raw CSV этого измерения?\n\n"
+            "Да — удалить данные.\n"
+            "Нет — оставить CSV и создать диагностический XLSX."
+        ),
+        icon="warning",
+        parent=app,
+    )
+    if delete_data:
+        discard_spectrum_artifacts(raw_files, app.log)
+        result["raw_files"] = []
+        result["rejected_data_kept"] = False
+        app.log(f"{pixel_id}: частичные данные несохранённого спектра удалены.")
+        return "Спектр не сохранён; частичные raw CSV удалены пользователем"
+
+    result["rejected_data_kept"] = True
+    try:
+        diagnostic_file = save_rejected_spectrum_workbook(
+            pixel_id,
+            params,
+            result,
+        )
+    except Exception as exc:
+        paths = ", ".join(str(path) for path in raw_files)
+        app.log(
+            f"{pixel_id}: raw CSV оставлены, но диагностический XLSX создать "
+            f"не удалось: {exc}. Файлы: {paths}"
+        )
+        messagebox.showerror(
+            "Ошибка сохранения диагностического XLSX",
+            (
+                f"Частичные CSV оставлены, но XLSX создать не удалось:\n{exc}"
+            ),
+            parent=app,
+        )
+        return f"Спектр не сохранён; raw CSV оставлены, ошибка XLSX: {exc}"
+
+    result["file"] = diagnostic_file
+    app.log(
+        f"{pixel_id}: частичные данные и диагностический XLSX оставлены: "
+        f"{diagnostic_file}"
+    )
+    return (
+        "Невалидный спектр сохранён как диагностический XLSX по выбору пользователя: "
+        f"{diagnostic_file}"
+    )
 
 
 def measure_substrate_spectra(app, pixels: List[str], params: SpectrumParams) -> None:
@@ -386,7 +553,10 @@ def measure_spectrum_sequence(
     title: str,
 ) -> None:
     measured: List[str] = []
-    for pixel_id in pixels:
+    attempted: List[str] = []
+    remaining = list(pixels)
+    while remaining:
+        pixel_id = remaining.pop(0)
         choice = messagebox.askyesnocancel(
             title,
             f"Следующий пиксель: {pixel_id}\n\n"
@@ -401,12 +571,87 @@ def measure_spectrum_sequence(
             app.log(f"Спектры {pixel_id} пропущены пользователем.")
             continue
         result = measure_one_spectrum(app, pixel_id, params, return_to_menu=False)
+        attempted.append(pixel_id)
         if result is not None:
-            measured.append(pixel_id)
             if result.get("stopped_by_user"):
                 app.log("Очередь спектров подложки остановлена вместе с текущей съёмкой.")
                 break
+            if result.get("discarded"):
+                if result.get("status") == "NO_CONTACT":
+                    if ask_no_contact_retry(app, pixel_id):
+                        remaining.insert(0, pixel_id)
+                        app.log(
+                            f"{pixel_id}: повторная съёмка после перестановки/"
+                            "проверки контакта."
+                        )
+                    else:
+                        app.log(
+                            f"{pixel_id}: повторная съёмка после NO_CONTACT отменена."
+                        )
+                    continue
+                if result.get("file") is not None:
+                    measured.append(pixel_id)
+                replacement_candidates = replacement_pixels_in_quarter(
+                    app,
+                    pixel_id,
+                    excluded=set(attempted) | set(measured),
+                )
+                if replacement_candidates:
+                    from .ivl_window import ask_pixel
+
+                    replacement = ask_pixel(
+                        app,
+                        f"Выберите замену в четверти для {pixel_id}",
+                        values=replacement_candidates,
+                    )
+                    if replacement:
+                        if replacement in remaining:
+                            remaining.remove(replacement)
+                        remaining.insert(0, replacement)
+                        app.log(
+                            f"{pixel_id}: выбран новый пиксель той же четверти — "
+                            f"{replacement}."
+                        )
+                continue
+            if result.get("file") is not None:
+                measured.append(pixel_id)
+                continue
     app.show_measurement_menu()
+
+
+def replacement_pixels_in_quarter(
+    app,
+    failed_pixel_id: str,
+    excluded: set[str] | None = None,
+) -> List[str]:
+    """List unmeasured IVL pixels in the failed pixel's physical quarter."""
+
+    if app.series is None:
+        return []
+    failed_row = app.series.journal.get_pixel(failed_pixel_id) or {}
+    quarter_number = failed_row.get("Quarter number")
+    excluded_ids = set(excluded or ())
+    excluded_ids.add(failed_pixel_id)
+    result: List[tuple[int, int, str]] = []
+    for index, row in enumerate(app.series.journal.list_pixels()):
+        pixel_id = str(row.get("Pixel ID") or "")
+        if (
+            not pixel_id
+            or pixel_id in excluded_ids
+            or row.get("Quarter number") != quarter_number
+            or not row.get("Last IVL file")
+            or as_float_or_none(row.get("Opening voltage (V)")) is None
+            or row.get("Last spectrum file")
+        ):
+            continue
+        result.append(
+            (
+                0 if bool(row.get("Spectrum priority")) else 1,
+                index,
+                pixel_id,
+            )
+        )
+    return [pixel_id for _priority, _index, pixel_id in sorted(result)]
 
 
 def build_spectrum_params(app, vars_: Dict[str, tk.StringVar], opening: float, use_opening: bool) -> SpectrumParams:

@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 from oled_app.constants import APP_VERSION, CONFIG_FILE
 from oled_app.series.journal import SeriesJournal
+from oled_app.series.paths import ensure_quarter_calibration_folder
 from oled_app.series.metadata import (
     default_integral_conversion_coefficient,
     geometric_conversion_coefficient,
@@ -187,11 +188,30 @@ class SeriesManager:
         quarter_number: int,
         calibration: Dict[str, Any],
     ) -> None:
+        quarter_number = int(quarter_number)
+        calibration_data = dict(calibration)
+        calibration_folder = ensure_quarter_calibration_folder(
+            self.series_folder,
+            self.config,
+            quarter_number,
+        )
+        calibration_path = calibration_folder / "integral_calibration.json"
+        calibration_data["calibration_file"] = str(
+            calibration_path.relative_to(self.series_folder)
+        )
+        temp_path = calibration_path.with_name(
+            f".{calibration_path.name}.updating"
+        )
+        temp_path.write_text(
+            json.dumps(calibration_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temp_path.replace(calibration_path)
         calibrations = self.config.setdefault("quarter_integral_calibrations", {})
         if not isinstance(calibrations, dict):
             calibrations = {}
             self.config["quarter_integral_calibrations"] = calibrations
-        calibrations[str(int(quarter_number))] = dict(calibration)
+        calibrations[str(quarter_number)] = calibration_data
         self.save_config()
 
     @staticmethod

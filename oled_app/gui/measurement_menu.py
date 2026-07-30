@@ -143,6 +143,7 @@ def show_measurement_menu(app) -> None:
 def refresh_pixel_table(app) -> None:
     if app.series is None or not hasattr(app, "tree"):
         return
+    refresh_ivl_thumbnails(app)
     for item in app.tree.get_children():
         app.tree.delete(item)
     rows = app.series.journal.list_pixels()
@@ -176,6 +177,32 @@ def refresh_pixel_table(app) -> None:
         )
     render_status_holder_canvas(app)
     refresh_ivl_history_tree(app)
+
+
+def refresh_ivl_thumbnails(app) -> int:
+    """Create or replace missing, legacy, and out-of-date IVL thumbnails."""
+
+    if app.series is None:
+        return 0
+    refreshed = 0
+    for row in app.series.journal.list_pixels():
+        pixel_id = str(row.get("Pixel ID") or "")
+        workbook_path = resolve_series_file(
+            app.series.series_folder,
+            row.get("Last IVL file"),
+        )
+        if not pixel_id or workbook_path is None:
+            continue
+        preview_path = ivl_thumbnail_path(workbook_path, pixel_id)
+        try:
+            if ivl_thumbnail_needs_refresh(preview_path, workbook_path):
+                create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
+                refreshed += 1
+        except Exception as exc:
+            app.log(f"Не удалось обновить миниатюру ВАЯХ {pixel_id}: {exc}")
+    if refreshed:
+        app.log(f"Обновлены миниатюры ВАЯХ: {refreshed}.")
+    return refreshed
 
 
 def pixel_ids(app, require_ivl: bool = False, require_opening: bool = False) -> List[str]:
@@ -483,7 +510,7 @@ def show_ivl_hover_preview(app, pixel_id: str, event) -> None:
         return
     preview_path = ivl_thumbnail_path(workbook_path)
     try:
-        if ivl_thumbnail_needs_refresh(preview_path):
+        if ivl_thumbnail_needs_refresh(preview_path, workbook_path):
             try:
                 create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
             except Exception as refresh_exc:
