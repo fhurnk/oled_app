@@ -14,6 +14,7 @@ import type { LineSeriesOption } from "echarts/charts";
 import { useEffect, useRef } from "react";
 
 import type { PocPoint } from "./api";
+import { chartTheme } from "./design-system/chartTheme";
 
 echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
@@ -47,41 +48,41 @@ function LivePocChart({ points }: { points: PocPoint[] }) {
     }
     const option: ChartOption = {
       animationDuration: 180,
-      color: ["#2878d0", "#2d9b69"],
+      color: [chartTheme.oled, chartTheme.photodiode],
       grid: { top: 42, right: 58, bottom: 42, left: 58 },
       legend: {
         top: 4,
         right: 8,
         itemWidth: 14,
         itemHeight: 7,
-        textStyle: { color: "#61758a", fontSize: 10 }
+        textStyle: { color: chartTheme.axis, fontSize: 10 }
       },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "rgba(19, 39, 61, 0.94)",
+        backgroundColor: chartTheme.tooltip,
         borderWidth: 0,
-        textStyle: { color: "#fff", fontSize: 11 }
+        textStyle: { color: chartTheme.tooltipText, fontSize: 11 }
       },
       xAxis: {
         type: "value",
         name: "U, В",
-        nameTextStyle: { color: "#718397", fontSize: 10 },
-        axisLabel: { color: "#718397", fontSize: 9 },
-        splitLine: { lineStyle: { color: "#e8eef4" } }
+        nameTextStyle: { color: chartTheme.axis, fontSize: 10 },
+        axisLabel: { color: chartTheme.axis, fontSize: 9 },
+        splitLine: { lineStyle: { color: chartTheme.grid } }
       },
       yAxis: [
         {
           type: "value",
           name: "I OLED, мА",
-          nameTextStyle: { color: "#2878d0", fontSize: 9 },
-          axisLabel: { color: "#718397", fontSize: 9 },
-          splitLine: { lineStyle: { color: "#e8eef4" } }
+          nameTextStyle: { color: chartTheme.oled, fontSize: 9 },
+          axisLabel: { color: chartTheme.axis, fontSize: 9 },
+          splitLine: { lineStyle: { color: chartTheme.grid } }
         },
         {
           type: "value",
           name: "I PD, мкА",
-          nameTextStyle: { color: "#2d9b69", fontSize: 9 },
-          axisLabel: { color: "#718397", fontSize: 9 },
+          nameTextStyle: { color: chartTheme.photodiode, fontSize: 9 },
+          axisLabel: { color: chartTheme.axis, fontSize: 9 },
           splitLine: { show: false }
         }
       ],

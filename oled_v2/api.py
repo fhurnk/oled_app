@@ -139,8 +139,8 @@ def create_app(config: SessionConfig, logger=None) -> FastAPI:
                 "path": None,
             },
             "migration": {
-                "stage": 2,
-                "status": "stage_2_simulator_poc",
+                "stage": 3,
+                "status": "stage_3_design_system_complete",
                 "tkinter_default_preserved": True,
             },
         }

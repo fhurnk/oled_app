@@ -17,7 +17,10 @@ same tag, version note and GitHub prerelease; do not create `alpha-2`,
 is recorded in `docs/v2_functional_parity_checklist.md`; Stage 1's tested
 FastAPI/React/WebView2 onedir prototype and Stage 2's simulator-first
 SMU/spectrometer WebSocket PoC are in `oled_v2_app.py`, `oled_v2/`,
-`v2_frontend/`, and `packaging/`. Real hardware validation remains pending.
+`v2_frontend/`, and `packaging/`. Stage 3's shared tokens, React components,
+reference series screen, table/status/dialog patterns, and chart palette are in
+`v2_frontend/src/design-system/`. Real hardware validation remains pending but
+does not block Stage 4 software work.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -35,6 +38,7 @@ application until v2 passes the full parity and hardware checklist.
   `python oled_v2_app.py --backend-smoke`, and
   `python oled_v2_app.py --poc-smoke`
 - v2 Stage 2 coordinator: `oled_v2/poc.py`
+- v2 Stage 3 design system: `v2_frontend/src/design-system/`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

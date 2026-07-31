@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import LivePocChart from "./LivePocChart";
+import SeriesDesignReference from "./design-system/SeriesDesignReference";
+import {
+  Button,
+  HardwarePill,
+  MetricCard,
+  StatusBadge
+} from "./design-system/components";
 import {
   type AppState,
   type HardwareProbe,
@@ -17,22 +24,17 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type StreamState = "connecting" | "connected" | "disconnected";
+type ActiveView = "overview" | "series";
 
 const navigation = [
   ["Обзор", "overview", true],
-  ["Серия", "series", false],
+  ["Серия", "series", true],
   ["ВАЯХ", "ivl", false],
   ["Спектры", "spectrum", false],
   ["Стабильность", "stability", false],
   ["Камера", "camera", false],
   ["Отчёты", "reports", false]
 ] as const;
-
-const statusLabels: Record<string, string> = {
-  not_probed: "Не проверено",
-  ready: "Готово",
-  unavailable: "Недоступно"
-};
 
 const pocStatusLabels: Record<string, string> = {
   idle: "Ожидание",
@@ -45,38 +47,8 @@ const pocStatusLabels: Record<string, string> = {
   failed: "Ошибка"
 };
 
-function HardwarePill({ label, state }: { label: string; state?: string }) {
-  const value = state ?? "not_probed";
-  return (
-    <div className={`hardware-pill hardware-pill--${value}`}>
-      <span className="hardware-pill__dot" aria-hidden="true" />
-      <span>{label}</span>
-      <strong>{statusLabels[value] ?? value}</strong>
-    </div>
-  );
-}
-
-function MetricCard({
-  eyebrow,
-  value,
-  note,
-  tone = "neutral"
-}: {
-  eyebrow: string;
-  value: string;
-  note: string;
-  tone?: "neutral" | "blue" | "green";
-}) {
-  return (
-    <article className={`metric-card metric-card--${tone}`}>
-      <p>{eyebrow}</p>
-      <strong>{value}</strong>
-      <span>{note}</span>
-    </article>
-  );
-}
-
 function App() {
+  const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [appState, setAppState] = useState<AppState | null>(null);
   const [pocState, setPocState] = useState<PocState | null>(null);
   const [points, setPoints] = useState<PocPoint[]>([]);
@@ -273,13 +245,19 @@ function App() {
           <p className="sidebar__caption">Рабочая область</p>
           {navigation.map(([label, key, enabled]) => (
             <button
-              className={`nav-item ${key === "overview" ? "nav-item--active" : ""}`}
+              className={`nav-item ${key === activeView ? "nav-item--active" : ""}`}
               disabled={!enabled}
               key={key}
+              onClick={() => {
+                if (key === "overview" || key === "series") {
+                  setActiveView(key);
+                }
+              }}
               type="button"
             >
               <span className={`nav-icon nav-icon--${key}`} aria-hidden="true" />
               {label}
+              {key === "series" && <small>эталон</small>}
               {!enabled && <small>скоро</small>}
             </button>
           ))}
@@ -296,7 +274,7 @@ function App() {
             Диагностика
             <small>скоро</small>
           </button>
-          <div className="build-label">v2.0.0 alpha · этап 2</div>
+          <div className="build-label">v2.0.0 alpha · этап 3</div>
         </div>
       </aside>
 
@@ -304,10 +282,14 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>Обзор приложения</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : "Эталон экрана серии"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
-            <p>Аппаратный proof of concept новой desktop-оболочки</p>
+            <p>
+              {activeView === "overview"
+                ? "Аппаратный proof of concept новой desktop-оболочки"
+                : "Эталон дизайн-системы и будущего экрана серии"}
+            </p>
           </div>
           <div className="topbar__hardware">
             <HardwarePill label="SMU" state={smuState} />
@@ -317,6 +299,10 @@ function App() {
         </header>
 
         <section className="content">
+          {activeView === "series" ? (
+            <SeriesDesignReference />
+          ) : (
+            <>
           <div className={`connection-banner connection-banner--${loadState}`}>
             <div className="connection-banner__icon" aria-hidden="true">
               {loadState === "ready" ? "✓" : loadState === "error" ? "!" : "…"}
@@ -340,9 +326,9 @@ function App() {
               </p>
             </div>
             {loadState === "error" && (
-              <button className="button button--secondary" onClick={() => void load()} type="button">
+              <Button onClick={() => void load()}>
                 Повторить
-              </button>
+              </Button>
             )}
           </div>
 
@@ -381,30 +367,26 @@ function App() {
                 </p>
               </div>
               <div className="poc-actions">
-                <button
-                  className="button button--secondary"
+                <Button
                   disabled={actionBusy || pocActive}
                   onClick={() => void runProbe()}
-                  type="button"
                 >
                   Проверить приборы
-                </button>
-                <button
-                  className="button button--primary"
+                </Button>
+                <Button
                   disabled={actionBusy || pocActive}
                   onClick={() => void runSimulator()}
-                  type="button"
+                  variant="primary"
                 >
                   Запустить эмулятор
-                </button>
-                <button
-                  className="button button--danger"
+                </Button>
+                <Button
                   disabled={actionBusy || !pocActive}
                   onClick={() => void stopSimulator()}
-                  type="button"
+                  variant="danger"
                 >
                   Безопасно остановить
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -489,7 +471,7 @@ function App() {
                   <p className="panel__eyebrow">Этап 1</p>
                   <h2>Вертикальный срез desktop-архитектуры</h2>
                 </div>
-                <span className="status-chip status-chip--ok">Завершён</span>
+                <StatusBadge tone="success">Завершён</StatusBadge>
               </div>
               <div className="architecture-flow">
                 <div className="architecture-node architecture-node--ready">
@@ -537,9 +519,9 @@ function App() {
                   <p className="panel__eyebrow">Desktop session</p>
                   <h2>Сведения backend</h2>
                 </div>
-                <span className={`status-chip ${loadState === "ready" ? "status-chip--ok" : ""}`}>
+                <StatusBadge tone={loadState === "ready" ? "success" : "neutral"}>
                   {loadState === "ready" ? "Online" : "Ожидание"}
-                </span>
+                </StatusBadge>
               </div>
               <dl className="details-list">
                 <div>
@@ -559,27 +541,29 @@ function App() {
                   <dd>{time}</dd>
                 </div>
               </dl>
-              <button
-                className="button button--secondary button--wide"
+              <Button
+                className="button--wide"
                 onClick={() => void load()}
-                type="button"
               >
                 Обновить состояние
-              </button>
+              </Button>
             </article>
           </section>
 
           <section className="next-stage">
             <div>
-              <p className="panel__eyebrow">Следующий контрольный рубеж</p>
-              <h2>Проверка реального лабораторного стенда</h2>
-              <p>Пассивный probe SMU и спектрометра, затем отдельный согласованный тест с приборами.</p>
+              <p className="panel__eyebrow">Этап 3 · дизайн-система</p>
+              <h2>Эталон экрана серии готов к проверке</h2>
+              <p>Токены, поля, таблица, статусы, уведомление, график и безопасный диалог.</p>
             </div>
             <div className="next-stage__meta">
-              <span>Этап 2</span>
-              <strong>После подключения оборудования</strong>
+              <Button compact onClick={() => setActiveView("series")} variant="primary">
+                Открыть эталон
+              </Button>
             </div>
           </section>
+            </>
+          )}
         </section>
 
         <footer className="statusbar">

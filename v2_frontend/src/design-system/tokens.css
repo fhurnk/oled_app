@@ -1,0 +1,78 @@
+:root {
+  color-scheme: light;
+
+  --font-sans:
+    "Segoe UI Variable", "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont,
+    sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+
+  --color-app-background: #e8edf3;
+  --color-workspace-background: #eef2f6;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8fafc;
+  --color-surface-muted: #f2f6fa;
+  --color-sidebar-start: #13283f;
+  --color-sidebar-end: #0e1d2d;
+  --color-text: #17263a;
+  --color-text-strong: #14263b;
+  --color-text-muted: #718397;
+  --color-text-soft: #8997a6;
+  --color-border: #dbe3eb;
+  --color-border-strong: #cbd8e5;
+  --color-primary: #2878d0;
+  --color-primary-strong: #205fa6;
+  --color-primary-soft: #eef6ff;
+  --color-success: #2d9366;
+  --color-success-soft: #effaf5;
+  --color-warning: #bf7a21;
+  --color-warning-soft: #fff7ea;
+  --color-danger: #bf4b43;
+  --color-danger-soft: #fff2f0;
+  --color-progress: #7453b8;
+  --color-progress-soft: #f6f1ff;
+  --color-neutral: #7d8b9a;
+  --color-neutral-soft: #f4f6f8;
+  --color-focus: rgba(62, 132, 255, 0.38);
+
+  --chart-series-oled: #2878d0;
+  --chart-series-photodiode: #2d9b69;
+  --chart-series-reference: #7453b8;
+  --chart-grid: #e8eef4;
+  --chart-axis: #718397;
+  --chart-tooltip: rgba(19, 39, 61, 0.94);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 11px;
+  --radius-xl: 14px;
+  --radius-round: 999px;
+
+  --shadow-surface: 0 5px 18px rgba(38, 62, 88, 0.05);
+  --shadow-raised: 0 12px 34px rgba(31, 53, 78, 0.16);
+  --shadow-primary: 0 5px 14px rgba(40, 112, 192, 0.2);
+
+  --motion-fast: 160ms;
+  --motion-normal: 190ms;
+  --control-height: 36px;
+  --table-row-height: 38px;
+  --sidebar-width: 224px;
+  --topbar-height: 82px;
+  --statusbar-height: 34px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-normal: 0ms;
+  }
+}

@@ -28,6 +28,10 @@
   спектрометра, передаёт точки по защищённому WebSocket, строит live-график
   Apache ECharts и подтверждает безопасное отключение; реальный стенд ещё не
   проверен.
+- Stage 3 выносит визуальные токены и общие React-компоненты в
+  `v2_frontend/src/design-system/`; пункт `Серия` показывает безопасный эталон
+  таблицы, фильтров, статусов, графика, уведомления и stop-диалога без обращения
+  к пользовательским данным.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -135,6 +139,11 @@ oled_app_v2_5_package/
       App.tsx
       LivePocChart.tsx
       api.ts
+      design-system/
+        chartTheme.ts
+        components.tsx
+        SeriesDesignReference.tsx
+        tokens.css
     package.json
     pnpm-lock.yaml
     vite.config.ts
