@@ -22,9 +22,15 @@ class BackendStartupError(RuntimeError):
 
 
 class LocalBackend:
-    def __init__(self, static_root: Optional[Path] = None, logger=None) -> None:
+    def __init__(
+        self,
+        static_root: Optional[Path] = None,
+        logger=None,
+        series_root: Optional[Path] = None,
+    ) -> None:
         self.static_root = Path(static_root) if static_root is not None else None
         self.logger = logger
+        self.series_root = Path(series_root) if series_root is not None else None
         self.session: Optional[SessionConfig] = None
         self.server: Optional[uvicorn.Server] = None
         self.thread: Optional[threading.Thread] = None
@@ -39,7 +45,11 @@ class LocalBackend:
         listener.listen(128)
         port = int(listener.getsockname()[1])
         session = create_session_config(port=port, static_root=self.static_root)
-        app = create_app(session, logger=self.logger)
+        app = create_app(
+            session,
+            logger=self.logger,
+            series_root=self.series_root,
+        )
         config = uvicorn.Config(
             app,
             host=session.host,

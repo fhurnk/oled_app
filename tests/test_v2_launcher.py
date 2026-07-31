@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+import io
+import json
+import logging
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from oled_v2.launcher import status_lines
+from oled_v2.launcher import series_smoke, status_lines
 from oled_v2.logging_setup import log_directory, remove_expired_logs
 
 
@@ -37,6 +41,19 @@ class V2LauncherTests(unittest.TestCase):
 
             self.assertFalse(old_log.exists())
             self.assertTrue(other.exists())
+
+    def test_series_smoke_creates_and_reopens_compatible_journal(self) -> None:
+        output = io.StringIO()
+        logger = logging.getLogger("oled-v2-series-smoke-test")
+        with patch("oled_v2.launcher.configure_logging", return_value=logger):
+            with redirect_stdout(output):
+                self.assertEqual(series_smoke(), 0)
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["pixels"], 48)
+        self.assertEqual(payload["spectrum_queue"], 4)
+        self.assertTrue(payload["reopened"])
 
 
 if __name__ == "__main__":

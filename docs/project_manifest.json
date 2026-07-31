@@ -26,7 +26,9 @@
     "v2_poc_smoke_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --poc-smoke",
     "v2_package": "oled_v2",
     "v2_poc_controller": "oled_v2/poc.py",
+    "v2_series_service": "oled_v2/series_service.py",
     "v2_frontend": "v2_frontend",
+    "v2_series_workspace": "v2_frontend/src/SeriesWorkspace.tsx",
     "v2_design_system": "v2_frontend/src/design-system",
     "v2_frontend_build_script": "scripts/build_v2_frontend.ps1",
     "v2_onedir_build_script": "scripts/build_v2_alpha.ps1",
@@ -91,7 +93,7 @@
     "current_release": "v2.0.0-alpha",
     "previous_release": "v1.9.1",
     "previous_prerelease": "v1.9.0-beta-3",
-    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts, Stage 1 delivers the isolated FastAPI/React/WebView2 onedir prototype, Stage 2 has a tested simulator SMU/spectrometer WebSocket PoC, and Stage 3 delivers shared design tokens/components plus a reference series screen while real hardware validation remains pending.",
+    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts, Stage 1 delivers the isolated FastAPI/React/WebView2 onedir prototype, Stage 2 has a tested simulator SMU/spectrometer WebSocket PoC, Stage 3 delivers shared design tokens/components, and Stage 4 adds the compatible working series APIs and workspace while real hardware validation remains pending.",
     "mutable_prerelease": {
       "enabled": true,
       "tag": "v2.0.0-alpha",

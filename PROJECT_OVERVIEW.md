@@ -32,6 +32,10 @@
   `v2_frontend/src/design-system/`; пункт `Серия` показывает безопасный эталон
   таблицы, фильтров, статусов, графика, уведомления и stop-диалога без обращения
   к пользовательским данным.
+- Stage 4 заменяет эталон рабочим `SeriesWorkspace.tsx`: `oled_v2/series_service.py`
+  использует прежние `SeriesManager`/`SeriesJournal` для списка, создания,
+  открытия и редактирования серий, карты 48 пикселей, истории, миниатюр и очереди
+  спектров без изменения формата пользовательских данных.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -132,12 +136,14 @@ oled_app_v2_5_package/
     logging_setup.py
     poc.py
     security.py
+    series_service.py
     server.py
     static/
   v2_frontend/
     src/
       App.tsx
       LivePocChart.tsx
+      SeriesWorkspace.tsx
       api.ts
       design-system/
         chartTheme.ts

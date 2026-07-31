@@ -25,6 +25,7 @@ export type AppState = {
   series: {
     active: boolean;
     path: string | null;
+    root: string;
   };
   migration: {
     stage: number;
@@ -91,6 +92,104 @@ export type PocEvent =
   | { type: "poc_log"; sequence: number; message: string }
   | { type: "poc_heartbeat"; sequence: number };
 
+export type SeriesSummary = {
+  path: string;
+  folder_name: string;
+  deposition_date: string | null;
+  keyword: string | null;
+  created_at: string | null;
+  measurements_count: number | null;
+};
+
+export type SeriesQuarter = {
+  number: number;
+  code: string;
+  base: string;
+  description: string;
+  led_color: string;
+  led_color_label: string;
+};
+
+export type SeriesPixel = {
+  pixel_id: string;
+  quarter_code: string;
+  quarter_number: number;
+  quarter_description: string;
+  led_color: string;
+  substrate_number: number;
+  pixel_number: number;
+  status: string;
+  opening_voltage_V: number | string | null;
+  last_ivl_date: string | null;
+  last_ivl_file: string | null;
+  last_ivl_max_current_mA: number | string | null;
+  last_ivl_max_photodiode_uA: number | string | null;
+  spectrum_priority: boolean;
+  last_spectrum_date: string | null;
+  last_spectrum_file: string | null;
+  last_spectrum_peak_count: number | string | null;
+  last_spectrum_peaks_nm: string | null;
+  last_spectrum_max_intensity: number | string | null;
+  last_stability_date: string | null;
+  last_stability_file: string | null;
+  last_updated: string | null;
+  thumbnail_available: boolean;
+};
+
+export type SeriesHistoryItem = {
+  date_time: string | null;
+  measurement_day: string | null;
+  type: string;
+  pixel_id: string;
+  status: string;
+  file: string | null;
+  notes: string | null;
+};
+
+export type ActiveSeries = {
+  path: string;
+  folder_name: string;
+  deposition_date: string;
+  keyword: string;
+  created_at: string | null;
+  series_led_color: string;
+  quarters: SeriesQuarter[];
+  pixels: SeriesPixel[];
+  history: SeriesHistoryItem[];
+  metrics: {
+    substrates: number;
+    pixels: number;
+    measured: number;
+    ivl: number;
+    spectra: number;
+    stability: number;
+    spectrum_queue: number;
+    history: number;
+  };
+};
+
+export type SeriesState = {
+  root: string;
+  recent: SeriesSummary[];
+  active: ActiveSeries | null;
+  refreshed_thumbnails?: number;
+  queue_update?: {
+    scope: "pixel" | "substrate";
+    requested: number;
+    changed: number;
+    enabled: boolean;
+  };
+};
+
+export type SeriesConfigInput = {
+  root?: string;
+  deposition_date: string;
+  keyword: string;
+  series_led_color: "red" | "green" | "blue";
+  quarter_bases: Record<string, string>;
+  quarter_descriptions: Record<string, string>;
+};
+
 const SESSION_STORAGE_KEY = "oled-v2-session-token";
 const CLIENT_STORAGE_KEY = "oled-v2-client-id";
 
@@ -156,6 +255,75 @@ export function fetchAppState(signal?: AbortSignal): Promise<AppState> {
 
 export function fetchPocState(signal?: AbortSignal): Promise<PocState> {
   return requestJson<PocState>("/api/poc/state", {}, signal);
+}
+
+export function fetchSeriesState(signal?: AbortSignal): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/state", {}, signal);
+}
+
+export function setSeriesRoot(path: string): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/root", {
+    method: "PUT",
+    body: JSON.stringify({ path })
+  });
+}
+
+export function openSeries(path: string): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/open", {
+    method: "POST",
+    body: JSON.stringify({ path })
+  });
+}
+
+export function closeSeries(): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/close", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function createSeries(payload: SeriesConfigInput): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/create", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateSeries(payload: SeriesConfigInput): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/current", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function refreshSeries(): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/current/refresh", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function setSpectrumPriority(
+  pixelId: string,
+  enabled: boolean,
+  scope: "pixel" | "substrate" = "pixel"
+): Promise<SeriesState> {
+  return requestJson<SeriesState>("/api/series/current/spectrum-priority", {
+    method: "PUT",
+    body: JSON.stringify({ pixel_id: pixelId, enabled, scope })
+  });
+}
+
+export async function fetchSeriesThumbnail(pixelId: string): Promise<Blob> {
+  const response = await fetch(
+    `/api/series/current/thumbnail/${encodeURIComponent(pixelId)}`,
+    { cache: "no-store", headers: desktopHeaders() }
+  );
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? `Миниатюра недоступна: HTTP ${response.status}.`);
+  }
+  return response.blob();
 }
 
 export function probeHardware(): Promise<HardwareProbe> {

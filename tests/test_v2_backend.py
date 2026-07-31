@@ -50,7 +50,9 @@ class V2LoopbackBackendTests(unittest.TestCase):
             "<!doctype html><html><body><div id='root'>OLED v2 test</div></body></html>",
             encoding="utf-8",
         )
-        self.backend = LocalBackend(static_root=static_root)
+        self.series_root = static_root / "series-root"
+        self.series_root.mkdir()
+        self.backend = LocalBackend(static_root=static_root, series_root=self.series_root)
         self.session = self.backend.start()
 
     def tearDown(self) -> None:
@@ -94,7 +96,7 @@ class V2LoopbackBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["application"]["version"], APP_VERSION)
         self.assertEqual(payload["backend"]["bound_host"], "127.0.0.1")
-        self.assertEqual(payload["migration"]["status"], "stage_3_design_system_complete")
+        self.assertEqual(payload["migration"]["status"], "stage_4_series_workspace_complete")
         self.assertTrue(payload["migration"]["tkinter_default_preserved"])
 
         with self.assertRaises(urllib.error.HTTPError) as raised:
@@ -114,6 +116,57 @@ class V2LoopbackBackendTests(unittest.TestCase):
         self.assertIn("OLED v2 test", body)
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+
+    def test_series_api_creates_updates_queue_and_closes_series(self) -> None:
+        headers = {
+            SESSION_HEADER: self.session.token,
+            CLIENT_HEADER: "series-controller-client-0001",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "root": str(self.series_root),
+            "deposition_date": "2026-07-31",
+            "keyword": "api",
+            "series_led_color": "blue",
+            "quarter_bases": {"1": "A", "2": "B", "3": "C", "4": "D"},
+            "quarter_descriptions": {"1": "one", "2": "two", "3": "three", "4": "four"},
+        }
+        create_request = urllib.request.Request(
+            f"{self.session.origin}/api/series/create",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(create_request, timeout=5.0) as response:
+            created = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 201)
+        self.assertEqual(len(created["active"]["pixels"]), 48)
+
+        pixel_id = created["active"]["pixels"][0]["pixel_id"]
+        queue_request = urllib.request.Request(
+            f"{self.session.origin}/api/series/current/spectrum-priority",
+            data=json.dumps({"pixel_id": pixel_id, "enabled": True}).encode("utf-8"),
+            headers=headers,
+            method="PUT",
+        )
+        with urllib.request.urlopen(queue_request, timeout=5.0) as response:
+            queued = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(queued["active"]["metrics"]["spectrum_queue"], 1)
+
+        with self.request("/api/app/state", headers) as response:
+            app_state = json.loads(response.read().decode("utf-8"))
+        self.assertTrue(app_state["series"]["active"])
+        self.assertEqual(app_state["series"]["path"], created["active"]["path"])
+
+        close_request = urllib.request.Request(
+            f"{self.session.origin}/api/series/close",
+            data=b"{}",
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(close_request, timeout=5.0) as response:
+            closed = json.loads(response.read().decode("utf-8"))
+        self.assertIsNone(closed["active"])
 
 
 if __name__ == "__main__":

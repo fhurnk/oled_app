@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import LivePocChart from "./LivePocChart";
-import SeriesDesignReference from "./design-system/SeriesDesignReference";
+import SeriesWorkspace from "./SeriesWorkspace";
 import {
   Button,
   HardwarePill,
@@ -193,6 +193,14 @@ function App() {
     }
   }, []);
 
+  const refreshAppState = useCallback(async () => {
+    try {
+      setAppState(await fetchAppState());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось обновить состояние приложения.");
+    }
+  }, []);
+
   const time = useMemo(() => {
     if (!appState?.timestamp) {
       return "—";
@@ -257,7 +265,7 @@ function App() {
             >
               <span className={`nav-icon nav-icon--${key}`} aria-hidden="true" />
               {label}
-              {key === "series" && <small>эталон</small>}
+              {key === "series" && <small>рабочий</small>}
               {!enabled && <small>скоро</small>}
             </button>
           ))}
@@ -274,7 +282,7 @@ function App() {
             Диагностика
             <small>скоро</small>
           </button>
-          <div className="build-label">v2.0.0 alpha · этап 3</div>
+          <div className="build-label">v2.0.0 alpha · этап 4</div>
         </div>
       </aside>
 
@@ -282,13 +290,13 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : "Эталон экрана серии"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : "Эталон дизайн-системы и будущего экрана серии"}
+                : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -300,7 +308,7 @@ function App() {
 
         <section className="content">
           {activeView === "series" ? (
-            <SeriesDesignReference />
+            <SeriesWorkspace onSeriesChanged={() => void refreshAppState()} />
           ) : (
             <>
           <div className={`connection-banner connection-banner--${loadState}`}>
@@ -352,8 +360,9 @@ function App() {
             />
             <MetricCard
               eyebrow="Активная серия"
-              value="Не открыта"
-              note="PoC не записывает измерительные файлы"
+              value={appState?.series.active ? "Открыта" : "Не открыта"}
+              note={appState?.series.path ?? "PoC не записывает измерительные файлы"}
+              tone={appState?.series.active ? "green" : "neutral"}
             />
           </section>
 
@@ -552,13 +561,13 @@ function App() {
 
           <section className="next-stage">
             <div>
-              <p className="panel__eyebrow">Этап 3 · дизайн-система</p>
-              <h2>Эталон экрана серии готов к проверке</h2>
-              <p>Токены, поля, таблица, статусы, уведомление, график и безопасный диалог.</p>
+              <p className="panel__eyebrow">Этап 4 · серии</p>
+              <h2>Рабочий экран серии подключён к совместимому журналу</h2>
+              <p>Создание, открытие, редактирование, карта, история, миниатюры и очередь спектров.</p>
             </div>
             <div className="next-stage__meta">
               <Button compact onClick={() => setActiveView("series")} variant="primary">
-                Открыть эталон
+                Открыть серии
               </Button>
             </div>
           </section>

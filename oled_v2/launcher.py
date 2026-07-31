@@ -6,8 +6,10 @@ import argparse
 import importlib.util
 import json
 import sys
+import tempfile
 import time
 import urllib.request
+from pathlib import Path
 from typing import Iterable, Optional
 
 from oled_app.constants import APP_VERSION
@@ -153,6 +155,86 @@ def poc_smoke() -> int:
     return 0
 
 
+def series_smoke() -> int:
+    """Create, queue, close, and reopen a compatible temporary series."""
+
+    logger = configure_logging()
+    client_id = "series-smoke-client-0001"
+    with tempfile.TemporaryDirectory(prefix="oled-v2-series-smoke-") as folder:
+        root = Path(folder)
+        with LocalBackend(logger=logger, series_root=root) as backend:
+            assert backend.session is not None
+            session = backend.session
+            headers = {
+                SESSION_HEADER: session.token,
+                CLIENT_HEADER: client_id,
+                "Content-Type": "application/json",
+            }
+
+            def send(path: str, payload: dict, method: str = "POST") -> dict:
+                request = urllib.request.Request(
+                    f"{session.origin}{path}",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                    method=method,
+                )
+                with urllib.request.urlopen(request, timeout=8.0) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            created = send(
+                "/api/series/create",
+                {
+                    "root": str(root),
+                    "deposition_date": "2026-07-31",
+                    "keyword": "packaged-smoke",
+                    "series_led_color": "green",
+                    "quarter_bases": {"1": "A", "2": "B", "3": "C", "4": "D"},
+                    "quarter_descriptions": {
+                        "1": "reference",
+                        "2": "transport",
+                        "3": "emission",
+                        "4": "control",
+                    },
+                },
+            )
+            active = created.get("active") or {}
+            pixels = active.get("pixels") or []
+            if len(pixels) != 48:
+                raise RuntimeError("Series smoke did not create all 48 pixels.")
+            series_path = Path(str(active.get("path") or ""))
+            if not (series_path / "series_journal.xlsx").is_file():
+                raise RuntimeError("Series smoke did not create series_journal.xlsx.")
+            pixel_id = str(pixels[0].get("pixel_id") or "")
+            queued = send(
+                "/api/series/current/spectrum-priority",
+                {"pixel_id": pixel_id, "enabled": True, "scope": "substrate"},
+                method="PUT",
+            )
+            queue_count = int((queued.get("active") or {}).get("metrics", {}).get("spectrum_queue", 0))
+            if queue_count != 4:
+                raise RuntimeError("Series smoke did not persist the substrate queue.")
+            send("/api/series/close", {})
+            reopened = send("/api/series/open", {"path": str(series_path)})
+            reopened_active = reopened.get("active") or {}
+            if int(reopened_active.get("metrics", {}).get("spectrum_queue", 0)) != 4:
+                raise RuntimeError("Series smoke lost the queue after reopening.")
+
+            print(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "pixels": len(reopened_active.get("pixels") or []),
+                        "spectrum_queue": 4,
+                        "journal": "series_journal.xlsx",
+                        "reopened": True,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+    return 0
+
+
 def launch_desktop(auto_close_after_s: Optional[float] = None) -> int:
     missing = [name for name, present in dependency_status().items() if not present]
     if missing:
@@ -211,6 +293,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run an authenticated eight-point simulator PoC and verify safe shutdown.",
     )
     parser.add_argument(
+        "--series-smoke",
+        action="store_true",
+        help="Create and reopen a temporary compatible series through the authenticated API.",
+    )
+    parser.add_argument(
         "--window-smoke",
         action="store_true",
         help="Open the WebView2 shell briefly, then close it automatically.",
@@ -228,6 +315,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return backend_smoke()
     if args.poc_smoke:
         return poc_smoke()
+    if args.series_smoke:
+        return series_smoke()
     try:
         return launch_desktop(auto_close_after_s=1.5 if args.window_smoke else None)
     except Exception as exc:

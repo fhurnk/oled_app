@@ -25,6 +25,13 @@ from .security import (
     require_controller,
     require_session,
 )
+from .series_service import (
+    SeriesConflictError,
+    SeriesNotFoundError,
+    SeriesService,
+    SeriesServiceError,
+    SeriesValidationError,
+)
 
 
 SECURITY_HEADERS = {
@@ -55,8 +62,13 @@ def _index_path(config: SessionConfig) -> Path:
     return config.static_root / "index.html"
 
 
-def create_app(config: SessionConfig, logger=None) -> FastAPI:
+def create_app(
+    config: SessionConfig,
+    logger=None,
+    series_root: Optional[Path] = None,
+) -> FastAPI:
     poc_controller = PocController(logger=logger)
+    series_service = SeriesService(default_root=series_root, logger=logger)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -79,6 +91,7 @@ def create_app(config: SessionConfig, logger=None) -> FastAPI:
     app.state.session_config = config
     app.state.controller_lease = ControllerLease()
     app.state.poc_controller = poc_controller
+    app.state.series_service = series_service
     app.state.started_at = _utc_now()
     app.state.ready = False
 
@@ -134,16 +147,106 @@ def create_app(config: SessionConfig, logger=None) -> FastAPI:
                 "log_directory": str(log_directory()),
             },
             "hardware": hardware,
-            "series": {
-                "active": False,
-                "path": None,
-            },
+            "series": series_service.app_summary(),
             "migration": {
-                "stage": 3,
-                "status": "stage_3_design_system_complete",
+                "stage": 4,
+                "status": "stage_4_series_workspace_complete",
                 "tkinter_default_preserved": True,
             },
         }
+
+    def series_http_error(exc: SeriesServiceError) -> HTTPException:
+        if isinstance(exc, SeriesNotFoundError):
+            code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, SeriesConflictError):
+            code = status.HTTP_409_CONFLICT
+        elif isinstance(exc, SeriesValidationError):
+            code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        else:
+            code = status.HTTP_400_BAD_REQUEST
+        return HTTPException(status_code=code, detail=str(exc))
+
+    @app.get("/api/series/state")
+    async def series_state(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(series_service.state)
+
+    @app.put("/api/series/root")
+    async def series_root_update(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            return await asyncio.to_thread(series_service.set_root, (payload or {}).get("path"))
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+
+    @app.post("/api/series/open")
+    async def series_open(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            return await asyncio.to_thread(series_service.open_series, (payload or {}).get("path"))
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+
+    @app.post("/api/series/close")
+    async def series_close(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(series_service.close_series)
+
+    @app.post("/api/series/create", status_code=status.HTTP_201_CREATED)
+    async def series_create(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            return await asyncio.to_thread(series_service.create_series, payload or {})
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+
+    @app.put("/api/series/current")
+    async def series_update(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            return await asyncio.to_thread(series_service.update_active, payload or {})
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+
+    @app.post("/api/series/current/refresh")
+    async def series_refresh(_client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return await asyncio.to_thread(series_service.refresh_active)
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+
+    @app.put("/api/series/current/spectrum-priority")
+    async def series_spectrum_priority(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            return await asyncio.to_thread(
+                series_service.set_spectrum_priority,
+                values.get("pixel_id"),
+                values.get("enabled"),
+                values.get("scope", "pixel"),
+            )
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+
+    @app.get("/api/series/current/thumbnail/{pixel_id}")
+    async def series_thumbnail(
+        pixel_id: str,
+        _client_id: str = Depends(require_controller),
+    ):
+        try:
+            thumbnail = await asyncio.to_thread(series_service.thumbnail_for_pixel, pixel_id)
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+        return FileResponse(str(thumbnail), media_type="image/png", headers=SECURITY_HEADERS)
 
     @app.get("/api/poc/state")
     async def poc_state(_client_id: str = Depends(require_controller)) -> dict:

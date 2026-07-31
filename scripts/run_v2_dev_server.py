@@ -26,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=90.0,
         help="Maximum server lifetime in seconds (default: 90).",
     )
+    parser.add_argument(
+        "--series-root",
+        type=Path,
+        help="Optional isolated series root for local interface testing.",
+    )
     return parser
 
 
@@ -35,7 +40,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     info_file.parent.mkdir(parents=True, exist_ok=True)
 
     logger = configure_logging()
-    with LocalBackend(logger=logger) as backend:
+    with LocalBackend(logger=logger, series_root=args.series_root) as backend:
         assert backend.session is not None
         payload = {
             "origin": backend.session.origin,
