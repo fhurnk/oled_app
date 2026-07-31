@@ -24,6 +24,10 @@
   `v2_frontend/`: отдельное WebView2-окно обращается к защищённому FastAPI на
   случайном loopback-порту; production assets входят в проверенную
   PyInstaller `onedir`-сборку.
+- программная часть аппаратного PoC v2 использует существующий эмулятор SMU и
+  спектрометра, передаёт точки по защищённому WebSocket, строит live-график
+  Apache ECharts и подтверждает безопасное отключение; реальный стенд ещё не
+  проверен.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -122,11 +126,15 @@ oled_app_v2_5_package/
     config.py
     launcher.py
     logging_setup.py
+    poc.py
     security.py
     server.py
     static/
   v2_frontend/
     src/
+      App.tsx
+      LivePocChart.tsx
+      api.ts
     package.json
     pnpm-lock.yaml
     vite.config.ts

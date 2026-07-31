@@ -39,7 +39,7 @@ class LocalBackend:
         listener.listen(128)
         port = int(listener.getsockname()[1])
         session = create_session_config(port=port, static_root=self.static_root)
-        app = create_app(session)
+        app = create_app(session, logger=self.logger)
         config = uvicorn.Config(
             app,
             host=session.host,
@@ -47,6 +47,7 @@ class LocalBackend:
             log_level="warning",
             access_log=False,
             lifespan="on",
+            ws="websockets-sansio",
         )
         server = uvicorn.Server(config)
         thread = threading.Thread(

@@ -7,12 +7,15 @@ import re
 from threading import Lock
 from typing import Optional
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, WebSocket, status
 
 from .config import CLIENT_HEADER, SESSION_HEADER, SessionConfig
 
 
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,96}$")
+WS_APP_PROTOCOL = "oled-v2"
+WS_SESSION_PREFIX = "oled-session."
+WS_CLIENT_PREFIX = "oled-client."
 
 
 class ControllerLease:
@@ -73,4 +76,45 @@ def require_controller(
             detail=f"Missing {CLIENT_HEADER} header.",
         )
     request.app.state.controller_lease.claim(client_id)
+    return client_id
+
+
+def authenticate_websocket(websocket: WebSocket) -> str:
+    """Validate local origin plus token/client values carried as subprotocols."""
+
+    config: SessionConfig = websocket.app.state.session_config
+    if websocket.headers.get("host", "") != config.expected_host_header:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unexpected Host header.")
+    origin = websocket.headers.get("origin")
+    if origin != config.origin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unexpected WebSocket Origin header.",
+        )
+
+    protocols = [
+        item.strip()
+        for item in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if item.strip()
+    ]
+    if WS_APP_PROTOCOL not in protocols:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing v2 WebSocket protocol.",
+        )
+    session_value = next(
+        (item[len(WS_SESSION_PREFIX):] for item in protocols if item.startswith(WS_SESSION_PREFIX)),
+        None,
+    )
+    client_id = next(
+        (item[len(WS_CLIENT_PREFIX):] for item in protocols if item.startswith(WS_CLIENT_PREFIX)),
+        None,
+    )
+    validate_session_token(config, session_value)
+    if client_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Missing {WS_CLIENT_PREFIX} WebSocket protocol.",
+        )
+    websocket.app.state.controller_lease.claim(client_id)
     return client_id

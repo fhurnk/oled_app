@@ -6,7 +6,8 @@
 
 `v2.0.0-alpha` накапливает переход к отдельной FastAPI/React/WebView2-оболочке.
 Зафиксировано поведение `v1.9.1`, а технический прототип уже собирается в
-автономный `onedir` и открывается в собственном WebView2-окне. Рабочий
+автономный `onedir`, открывается в собственном WebView2-окне и выполняет
+simulator-first PoC SMU/спектрометра с live-графиком и безопасной остановкой. Рабочий
 Tkinter-интерфейс по-прежнему запускается через `oled_modular_app.py` и остаётся
 штатным приложением до завершения функциональной и аппаратной проверки. Все
 следующие этапы обновляют тот же prerelease и тег `v2.0.0-alpha`.
@@ -36,8 +37,14 @@ Tkinter-интерфейс по-прежнему запускается чере
 ```powershell
 .\env\Scripts\python.exe .\oled_v2_app.py --status
 .\env\Scripts\python.exe .\oled_v2_app.py --backend-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py --poc-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py
 ```
+
+В окне v2 кнопка `Запустить эмулятор` выполняет короткий sweep без записи
+измерительных файлов, `Безопасно остановить` отключает оба выхода SMU, а
+`Проверить приборы` делает пассивный probe текущих настроек. Активный тест
+реального стенда пока не включён.
 
 Тестовая `onedir`-сборка создаётся командой:
 
@@ -145,8 +152,8 @@ Raw CSV и итоговый XLSX отдельно сохраняют выбра�
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
-- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend и защита desktop-сеанса технического прототипа v2.
-- `v2_frontend/` - исходники React/Vite; готовые assets входят в `oled_v2/static/`.
+- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC и защита desktop-сеанса технического прототипа v2.
+- `v2_frontend/` - исходники React/Vite и live-график Apache ECharts; готовые assets входят в `oled_v2/static/`.
 - `requirements-v2.txt` - дополнительные зависимости v2 и сборщика.
 - `scripts/build_v2_frontend.ps1`, `scripts/build_v2_alpha.ps1` - production frontend и PyInstaller `onedir`.
 - `packaging/oled_v2_alpha.spec` - спецификация тестового desktop-дистрибутива.

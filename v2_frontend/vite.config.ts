@@ -8,6 +8,8 @@ export default defineConfig({
     outDir: "../oled_v2/static",
     emptyOutDir: true,
     target: "es2020",
-    sourcemap: false
+    sourcemap: false,
+    // The intentional embedded ECharts runtime is served from loopback, not a network CDN.
+    chunkSizeWarningLimit: 800
   }
 });

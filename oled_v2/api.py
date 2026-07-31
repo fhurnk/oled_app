@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from oled_app.constants import APP_VERSION
-from oled_app.settings import hardware_mode_label, load_app_settings
+from oled_app.settings import load_app_settings
 
 from .config import API_SCHEMA_VERSION, SessionConfig
 from .logging_setup import log_directory
-from .security import ControllerLease, require_controller, require_session
+from .poc import PocBusyError, PocController
+from .security import (
+    WS_APP_PROTOCOL,
+    ControllerLease,
+    authenticate_websocket,
+    require_controller,
+    require_session,
+)
 
 
 SECURITY_HEADERS = {
@@ -47,13 +55,18 @@ def _index_path(config: SessionConfig) -> Path:
     return config.static_root / "index.html"
 
 
-def create_app(config: SessionConfig) -> FastAPI:
+def create_app(config: SessionConfig, logger=None) -> FastAPI:
+    poc_controller = PocController(logger=logger)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.started_at = _utc_now()
         app.state.ready = True
-        yield
-        app.state.ready = False
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(poc_controller.shutdown)
+            app.state.ready = False
 
     app = FastAPI(
         title="OLED Measurement App v2 backend",
@@ -65,6 +78,7 @@ def create_app(config: SessionConfig) -> FastAPI:
     )
     app.state.session_config = config
     app.state.controller_lease = ControllerLease()
+    app.state.poc_controller = poc_controller
     app.state.started_at = _utc_now()
     app.state.ready = False
 
@@ -100,6 +114,7 @@ def create_app(config: SessionConfig) -> FastAPI:
     @app.get("/api/app/state")
     async def app_state(_client_id: str = Depends(require_controller)) -> dict:
         settings = load_app_settings()
+        hardware = poc_controller.hardware_summary(settings)
         return {
             "schema_version": API_SCHEMA_VERSION,
             "session_id": config.session_id,
@@ -118,22 +133,96 @@ def create_app(config: SessionConfig) -> FastAPI:
                 "api_docs_enabled": False,
                 "log_directory": str(log_directory()),
             },
-            "hardware": {
-                "mode": hardware_mode_label(settings),
-                "smu": "not_probed",
-                "spectrometer": "not_probed",
-                "camera": "not_probed",
-            },
+            "hardware": hardware,
             "series": {
                 "active": False,
                 "path": None,
             },
             "migration": {
-                "stage": 1,
-                "status": "stage_1_complete",
+                "stage": 2,
+                "status": "stage_2_simulator_poc",
                 "tkinter_default_preserved": True,
             },
         }
+
+    @app.get("/api/poc/state")
+    async def poc_state(_client_id: str = Depends(require_controller)) -> dict:
+        return poc_controller.snapshot(include_points=True)
+
+    @app.post("/api/poc/probe")
+    async def poc_probe(_client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return await asyncio.to_thread(poc_controller.probe_current_hardware)
+        except PocBusyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
+    @app.post("/api/poc/start", status_code=status.HTTP_202_ACCEPTED)
+    async def poc_start(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            point_count = int(values.get("point_count", 32))
+            interval_ms = float(values.get("interval_ms", 80.0))
+            return poc_controller.start_simulator(
+                point_count=point_count,
+                interval_s=interval_ms / 1000.0,
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Некорректные параметры PoC: {exc}",
+            ) from exc
+        except PocBusyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
+    @app.post("/api/poc/stop")
+    async def poc_stop(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(poc_controller.stop_and_wait, "operator", 4.0)
+
+    @app.websocket("/api/poc/stream")
+    async def poc_stream(websocket: WebSocket) -> None:
+        try:
+            authenticate_websocket(websocket)
+        except HTTPException as exc:
+            await websocket.close(code=4403 if exc.status_code == 403 else 4401)
+            return
+
+        await websocket.accept(subprotocol=WS_APP_PROTOCOL)
+        state = poc_controller.snapshot(include_points=True)
+        cursor = int(state.get("last_event_sequence", 0))
+        try:
+            await websocket.send_json(
+                {
+                    "sequence": cursor,
+                    "type": "poc_snapshot",
+                    "timestamp": _utc_now(),
+                    "state": state,
+                }
+            )
+            while True:
+                events = await asyncio.to_thread(poc_controller.events_after, cursor, 1.0)
+                if not events:
+                    await websocket.send_json(
+                        {
+                            "sequence": cursor,
+                            "type": "poc_heartbeat",
+                            "timestamp": _utc_now(),
+                        }
+                    )
+                    continue
+                for event in events:
+                    await websocket.send_json(event)
+                    cursor = max(cursor, int(event["sequence"]))
+        except WebSocketDisconnect:
+            return
 
     index = _index_path(config)
     assets = config.static_root / "assets"

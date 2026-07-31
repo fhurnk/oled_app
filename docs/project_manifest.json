@@ -23,7 +23,9 @@
     "v2_application": "oled_v2_app.py",
     "v2_status_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --status",
     "v2_backend_smoke_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --backend-smoke",
+    "v2_poc_smoke_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --poc-smoke",
     "v2_package": "oled_v2",
+    "v2_poc_controller": "oled_v2/poc.py",
     "v2_frontend": "v2_frontend",
     "v2_frontend_build_script": "scripts/build_v2_frontend.ps1",
     "v2_onedir_build_script": "scripts/build_v2_alpha.ps1",
@@ -88,7 +90,7 @@
     "current_release": "v2.0.0-alpha",
     "previous_release": "v1.9.1",
     "previous_prerelease": "v1.9.0-beta-3",
-    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts and Stage 1 delivers the isolated tested FastAPI/React/WebView2 onedir prototype.",
+    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts, Stage 1 delivers the isolated FastAPI/React/WebView2 onedir prototype, and Stage 2 has a tested simulator SMU/spectrometer WebSocket PoC while real hardware validation remains pending.",
     "mutable_prerelease": {
       "enabled": true,
       "tag": "v2.0.0-alpha",
