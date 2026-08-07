@@ -4,13 +4,13 @@ This file is written for Codex agents. Read it before editing the project.
 
 ## Current Version
 
-- Current app version: `v1.9.1`
+- Current app version: `v1.9.2`
 - Python source of truth: `APP_VERSION` in `oled_app/constants.py`
 - Human changelog: `CHANGELOG.md`
 - Version archive: `docs/versions/`
 - Structured manifest: `docs/project_manifest.json`
 
-The current stable release is `v1.9.1`. The camera workflow can switch Windows to a saved Raspberry Pi Wi-Fi profile, wait for the camera service, and restore the previous profile. Spectral calibration exposes the median tolerance and the outlier percentage required before considering a linear voltage model. IVL opening voltage uses a separate photodiode threshold and requires configurable following points to remain above it. The previous stable release is `v1.9.0`.
+The current stable release is `v1.9.2`. Each of the four holder quarters can use its own R/G/B LED color; the selected color controls the generated pixel suffix and luminance coefficient. The previous stable release is `v1.9.1`.
 
 ## Main Entry Points
 

@@ -3,7 +3,7 @@
   "project": {
     "name": "OLED Measurement App",
     "repository": "fhurnk/oled_app",
-    "current_version": "v1.9.1",
+    "current_version": "v1.9.2",
     "app_version_source": {
       "file": "oled_app/constants.py",
       "symbol": "APP_VERSION"
@@ -14,7 +14,7 @@
     "docs/project_manifest.json",
     "AGENTS.md",
     "CHANGELOG.md",
-    "docs/versions/v1.9.1.md"
+    "docs/versions/v1.9.2.md"
   ],
   "entry_points": {
     "application": "oled_modular_app.py",
@@ -74,10 +74,10 @@
   "versioning": {
     "format": "vMAJOR.MIDDLE.MINOR[-PRERELEASE]",
     "release_channel": "stable",
-    "current_release": "v1.9.1",
-    "previous_release": "v1.9.0",
+    "current_release": "v1.9.2",
+    "previous_release": "v1.9.1",
     "previous_prerelease": "v1.9.0-beta-3",
-    "release_scope": "Add saved-profile Windows Wi-Fi switching for the Raspberry Pi camera, configurable spectral calibration model thresholds, and persistent photodiode-current confirmation for IVL opening voltage.",
+    "release_scope": "Allow each of the four holder quarters to use an independent R/G/B LED color for pixel naming and luminance conversion.",
     "must_update_for_release": [
       "oled_app/constants.py",
       "README.md",

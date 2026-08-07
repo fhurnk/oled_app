@@ -226,46 +226,43 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     setup_frame = ttk.LabelFrame(main, text="Журнал серии: четверти, цвет и короткое описание")
     setup_frame.pack(fill="x", pady=(4, 10))
     setup_frame.columnconfigure(0, weight=1)
-    series_color_var = tk.StringVar(value=led_color_label(quarter_led_color(config, 1)))
-    color_bar = ttk.Frame(setup_frame)
-    color_bar.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 0))
-    ttk.Label(color_bar, text="Цвет светодиодов серии:").pack(side="left", padx=(0, 8))
-    ttk.Combobox(
-        color_bar,
-        textvariable=series_color_var,
-        values=list(LED_COLOR_LABELS.values()),
-        state="readonly",
-        width=16,
-    ).pack(side="left")
     holder_canvas = tk.Canvas(setup_frame, width=930, height=560, background="white", highlightthickness=1, highlightbackground="#D0D7DE")
-    holder_canvas.grid(row=1, column=0, sticky="ew", padx=10, pady=(8, 8))
+    holder_canvas.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 8))
 
     quarter_vars = build_quarter_input_vars(config)
     layout = build_holder_layout(930, 560)
     for q in [2, 1, 3, 4]:
         info = layout[q]
         x, y = info["entry_xy"]
-        control_y = y if q in {1, 2} else y + 54
+        control_y = y if q in {1, 2} else y + 48
         entry = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["base"], width=9)
         holder_canvas.create_window(x, control_y, window=entry, anchor="w", tags=("controls",))
         desc = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["description"], width=18)
-        holder_canvas.create_window(x, control_y + 28, window=desc, anchor="w", tags=("controls",))
+        holder_canvas.create_window(x, control_y + 26, window=desc, anchor="w", tags=("controls",))
+        color = ttk.Combobox(
+            holder_canvas,
+            textvariable=quarter_vars[str(q)]["color"],
+            values=list(LED_COLOR_LABELS.values()),
+            state="readonly",
+            width=16,
+        )
+        holder_canvas.create_window(x, control_y + 52, window=color, anchor="w", tags=("controls",))
 
     def refresh_holder(*_args) -> None:
-        render_series_setup_holder(holder_canvas, quarter_vars, series_color_var)
+        render_series_setup_holder(holder_canvas, quarter_vars)
 
     for q_vars in quarter_vars.values():
         q_vars["base"].trace_add("write", refresh_holder)
         q_vars["description"].trace_add("write", refresh_holder)
-    series_color_var.trace_add("write", refresh_holder)
+        q_vars["color"].trace_add("write", refresh_holder)
     refresh_holder()
 
     ttk.Label(
         setup_frame,
-        text="В поле четверти задается короткая база, например C. Цвет добавляет последнюю букву: C + красный = CR.",
+        text="Для каждой четверти задаются короткая база, описание и свой цвет. Цвет добавляет последнюю букву: C + красный = CR.",
         foreground="#555555",
         wraplength=880,
-    ).grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
+    ).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 10))
 
     bottom = ttk.Frame(main)
     bottom.pack(fill="x", pady=(12, 0))
@@ -275,7 +272,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     ttk.Button(
         bottom,
         text=button_text,
-        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars, series_color_var),
+        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars),
     ).pack(side="right")
 
 
@@ -291,19 +288,22 @@ def build_quarter_input_vars(config: Dict[str, Any]) -> Dict[str, Dict[str, tk.S
         result[str(q)] = {
             "base": tk.StringVar(value=quarter_base(config, q) if config else "Q"),
             "description": tk.StringVar(value=quarter_description(config, q)),
+            "color": tk.StringVar(value=led_color_label(quarter_led_color(config, q))),
         }
     return result
 
 
-def collect_quarter_payload(quarter_vars: Dict[str, Dict[str, tk.StringVar]], series_color_var: tk.StringVar):
+def collect_quarter_payload(quarter_vars: Dict[str, Dict[str, tk.StringVar]]):
     quarter_bases = {str(q): quarter_vars[str(q)]["base"].get().strip() or "Q" for q in range(1, 5)}
     quarter_descriptions = {str(q): quarter_vars[str(q)]["description"].get().strip() for q in range(1, 5)}
-    series_color = led_color_from_label(series_color_var.get())
-    quarter_led_colors = {str(q): series_color for q in range(1, 5)}
+    quarter_led_colors = {
+        str(q): led_color_from_label(quarter_vars[str(q)]["color"].get())
+        for q in range(1, 5)
+    }
     return quarter_bases, quarter_descriptions, quarter_led_colors
 
 
-def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[str, tk.StringVar]], series_color_var: tk.StringVar) -> None:
+def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[str, tk.StringVar]]) -> None:
     canvas.delete("drawing")
     width = int(canvas.cget("width"))
     height = int(canvas.cget("height"))
@@ -312,8 +312,10 @@ def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[s
 
     config = {
         "quarter_bases": {str(q): quarter_vars[str(q)]["base"].get().strip() or "Q" for q in range(1, 5)},
-        "series_led_color": led_color_from_label(series_color_var.get()),
-        "quarter_led_colors": {str(q): led_color_from_label(series_color_var.get()) for q in range(1, 5)},
+        "quarter_led_colors": {
+            str(q): led_color_from_label(quarter_vars[str(q)]["color"].get())
+            for q in range(1, 5)
+        },
         "quarter_descriptions": {str(q): quarter_vars[str(q)]["description"].get().strip() for q in range(1, 5)},
     }
     for q in [2, 1, 3, 4]:
@@ -322,7 +324,7 @@ def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[s
         desc = quarter_description(config, q)
         canvas.create_text(*info["number_xy"], text=str(q), font=("Segoe UI", 24, "bold"), fill="#17345F", tags=("drawing",))
         ex, ey = info["entry_xy"]
-        label_y = ey if q in {1, 2} else ey + 54
+        label_y = ey if q in {1, 2} else ey + 48
         canvas.create_text(ex + 138, label_y, text=f"-> {code}", anchor="w", font=("Segoe UI", 8, "bold"), fill="#0B61A4", tags=("drawing",))
         if desc:
             canvas.create_text(ex + 138, label_y + 18, text=desc, anchor="w", font=("Segoe UI", 8), fill="#555555", tags=("drawing",))
@@ -356,10 +358,9 @@ def save_series_settings(
     dep_date_var: tk.StringVar,
     keyword_var: tk.StringVar,
     quarter_vars: Dict[str, Dict[str, tk.StringVar]],
-    series_color_var: tk.StringVar,
 ) -> None:
     try:
-        quarter_bases, quarter_descriptions, quarter_led_colors = collect_quarter_payload(quarter_vars, series_color_var)
+        quarter_bases, quarter_descriptions, quarter_led_colors = collect_quarter_payload(quarter_vars)
         deposition_date = dep_date_var.get().strip() or today_iso()
         keyword = keyword_var.get().strip()
         if edit_mode:

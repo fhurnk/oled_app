@@ -79,11 +79,11 @@ def quarter_base(config: Dict[str, Any], quarter_number: int) -> str:
 
 
 def quarter_led_color(config: Dict[str, Any], quarter_number: int) -> str:
+    colors = config.get("quarter_led_colors")
+    if isinstance(colors, dict) and str(quarter_number) in colors:
+        return normalize_led_color(colors.get(str(quarter_number)))
     if "series_led_color" in config:
         return normalize_led_color(config.get("series_led_color"))
-    colors = config.get("quarter_led_colors")
-    if isinstance(colors, dict):
-        return normalize_led_color(colors.get(str(quarter_number)))
     names = config.get("quarter_names") if isinstance(config.get("quarter_names"), dict) else {}
     legacy_name = str(names.get(str(quarter_number), "") or "").strip()
     if len(legacy_name) > 1 and legacy_name[-1:].upper() in {"R", "G", "B"}:
@@ -126,7 +126,10 @@ def normalize_quarter_payload(
         for q in range(1, 5)
     }
     series_color = normalize_led_color(quarter_led_colors.get("1"))
-    colors = {str(q): series_color for q in range(1, 5)}
+    colors = {
+        str(q): normalize_led_color(quarter_led_colors.get(str(q), series_color))
+        for q in range(1, 5)
+    }
     descriptions = {str(q): str(quarter_descriptions.get(str(q), "") or "").strip() for q in range(1, 5)}
     return {
         "series_led_color": series_color,
