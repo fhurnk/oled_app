@@ -55,7 +55,12 @@ def show_measurement_menu(app) -> None:
     ttk.Button(buttons, text="ВАЯХ", command=app.open_ivl_window, width=18).grid(row=0, column=0, padx=(0, 8))
     ttk.Button(buttons, text="Спектры", command=app.open_spectrum_window, width=18, state=state_after_ivl).grid(row=0, column=1, padx=8)
     ttk.Button(buttons, text="Стабильность", command=app.open_stability_window, width=18, state=state_after_ivl).grid(row=0, column=2, padx=8)
-    ttk.Button(buttons, text="Обновить", command=app.refresh_pixel_table, width=14).grid(row=0, column=3, padx=8)
+    ttk.Button(
+        buttons,
+        text="Обновить",
+        command=lambda: app.refresh_pixel_table(refresh_thumbnails=True),
+        width=14,
+    ).grid(row=0, column=3, padx=8)
     ttk.Button(buttons, text="Журнал", command=lambda: messagebox.showinfo("Журнал", str(app.series.journal.path)), width=12).grid(row=0, column=4, padx=8)
     ttk.Button(buttons, text="Составить отчет", command=app.open_report_window, width=18, state=state_after_ivl).grid(row=0, column=5, padx=8)
     ttk.Button(
@@ -140,23 +145,33 @@ def show_measurement_menu(app) -> None:
         app.log("В журнале пока нет ВАЯХ: кнопки 'Спектры' и 'Стабильность' неактивны.")
 
 
-def refresh_pixel_table(app) -> None:
+def refresh_pixel_table(app, refresh_thumbnails: bool = False) -> None:
     if app.series is None or not hasattr(app, "tree"):
         return
-    refresh_ivl_thumbnails(app)
     for item in app.tree.get_children():
         app.tree.delete(item)
     rows = app.series.journal.list_pixels()
+    spectrum_metric_jobs = []
+    spectrum_metrics_cache = getattr(app, "_spectrum_metrics_cache", {})
+    app._spectrum_metrics_cache = spectrum_metrics_cache
     for row in rows:
         pixel_id = row.get("Pixel ID")
         spectrum_peak_count = row.get("Last spectrum peak count", "")
         spectrum_peaks_nm = row.get("Last spectrum peaks nm", "")
         spectrum_max_intensity = row.get("Last spectrum max intensity (counts/s)", "")
         if (not spectrum_peak_count and not spectrum_peaks_nm) and row.get("Last spectrum file"):
-            metrics = read_spectrum_metrics_from_workbook(resolve_series_file(app.series.series_folder, row.get("Last spectrum file")))
-            spectrum_peak_count = metrics.get("peak_count", "")
-            spectrum_peaks_nm = metrics.get("peaks_nm", "")
-            spectrum_max_intensity = metrics.get("max_intensity", spectrum_max_intensity)
+            workbook_path = resolve_series_file(
+                app.series.series_folder,
+                row.get("Last spectrum file"),
+            )
+            cache_key = spectrum_metrics_cache_key(workbook_path)
+            cached_metrics = spectrum_metrics_cache.get(cache_key)
+            if cached_metrics is None:
+                spectrum_metric_jobs.append((str(pixel_id or ""), dict(row), workbook_path, cache_key))
+            else:
+                spectrum_peak_count = cached_metrics.get("peak_count", "")
+                spectrum_peaks_nm = cached_metrics.get("peaks_nm", "")
+                spectrum_max_intensity = cached_metrics.get("max_intensity", spectrum_max_intensity)
         spectrum_text = spectrum_queue_cell_text(row, spectrum_max_intensity)
         app.tree.insert(
             "",
@@ -177,6 +192,71 @@ def refresh_pixel_table(app) -> None:
         )
     render_status_holder_canvas(app)
     refresh_ivl_history_tree(app)
+    if spectrum_metric_jobs:
+        refresh_spectrum_metrics_async(app, spectrum_metric_jobs)
+    if refresh_thumbnails:
+        refresh_ivl_thumbnails_async(app)
+
+
+def spectrum_metrics_cache_key(workbook_path) -> tuple[str, int | None]:
+    if workbook_path is None:
+        return ("", None)
+    try:
+        modified_ns = workbook_path.stat().st_mtime_ns
+    except OSError:
+        modified_ns = None
+    return (str(workbook_path), modified_ns)
+
+
+def refresh_spectrum_metrics_async(app, jobs) -> bool:
+    """Load legacy spectrum metrics without blocking the Tk event loop."""
+
+    if app.series is None or not jobs:
+        return False
+    series = app.series
+    series_key = str(series.series_folder.resolve())
+    active = getattr(app, "_spectrum_metrics_refresh_jobs", set())
+    app._spectrum_metrics_refresh_jobs = active
+    if series_key in active:
+        return False
+    active.add(series_key)
+
+    def worker() -> None:
+        results = []
+        for pixel_id, row, workbook_path, cache_key in jobs:
+            metrics = read_spectrum_metrics_from_workbook(workbook_path)
+            results.append((pixel_id, row, cache_key, metrics))
+
+        def finish() -> None:
+            active.discard(series_key)
+            cache = getattr(app, "_spectrum_metrics_cache", {})
+            for _pixel_id, _row, cache_key, metrics in results:
+                cache[cache_key] = metrics
+            app._spectrum_metrics_cache = cache
+            if app.series is not series or not hasattr(app, "tree"):
+                return
+            for pixel_id, row, _cache_key, metrics in results:
+                if not pixel_id or not metrics or not app.tree.exists(pixel_id):
+                    continue
+                values = list(app.tree.item(pixel_id, "values"))
+                if len(values) < 10:
+                    continue
+                values[6] = spectrum_queue_cell_text(row, metrics.get("max_intensity", ""))
+                values[7] = metrics.get("peak_count", "") or ""
+                values[8] = metrics.get("peaks_nm", "") or ""
+                app.tree.item(pixel_id, values=values)
+
+        try:
+            app.after(0, finish)
+        except (RuntimeError, tk.TclError):
+            pass
+
+    threading.Thread(
+        target=worker,
+        name="spectrum-metrics-refresh",
+        daemon=True,
+    ).start()
+    return True
 
 
 def refresh_ivl_thumbnails(app) -> int:
@@ -184,25 +264,78 @@ def refresh_ivl_thumbnails(app) -> int:
 
     if app.series is None:
         return 0
+    refreshed, errors = _refresh_ivl_thumbnails(app.series)
+    for error in errors:
+        app.log(error)
+    if refreshed:
+        app.log(f"Обновлены миниатюры ВАЯХ: {refreshed}.")
+    return refreshed
+
+
+def _refresh_ivl_thumbnails(series, pixel_id: str | None = None) -> tuple[int, List[str]]:
     refreshed = 0
-    for row in app.series.journal.list_pixels():
-        pixel_id = str(row.get("Pixel ID") or "")
+    errors = []
+    for row in series.journal.list_pixels():
+        row_pixel_id = str(row.get("Pixel ID") or "")
+        if pixel_id is not None and row_pixel_id != pixel_id:
+            continue
         workbook_path = resolve_series_file(
-            app.series.series_folder,
+            series.series_folder,
             row.get("Last IVL file"),
         )
-        if not pixel_id or workbook_path is None:
+        if not row_pixel_id or workbook_path is None:
             continue
-        preview_path = ivl_thumbnail_path(workbook_path, pixel_id)
+        preview_path = ivl_thumbnail_path(workbook_path, row_pixel_id)
         try:
             if ivl_thumbnail_needs_refresh(preview_path, workbook_path):
                 create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
                 refreshed += 1
         except Exception as exc:
-            app.log(f"Не удалось обновить миниатюру ВАЯХ {pixel_id}: {exc}")
-    if refreshed:
-        app.log(f"Обновлены миниатюры ВАЯХ: {refreshed}.")
-    return refreshed
+            errors.append(f"Не удалось обновить миниатюру ВАЯХ {row_pixel_id}: {exc}")
+    return refreshed, errors
+
+
+def refresh_ivl_thumbnails_async(app, pixel_id: str | None = None) -> bool:
+    """Refresh thumbnails in a worker so OneDrive hydration cannot freeze Tk."""
+
+    if app.series is None:
+        return False
+    series = app.series
+    series_key = str(series.series_folder.resolve())
+    active = getattr(app, "_ivl_thumbnail_refresh_jobs", set())
+    app._ivl_thumbnail_refresh_jobs = active
+    if series_key in active:
+        return False
+    active.add(series_key)
+    if pixel_id is None:
+        app.log("Обновление миниатюр ВАЯХ запущено в фоне.")
+
+    def worker() -> None:
+        refreshed, errors = _refresh_ivl_thumbnails(series, pixel_id)
+
+        def finish() -> None:
+            active.discard(series_key)
+            if app.series is not series:
+                return
+            for error in errors:
+                app.log(error)
+            if refreshed:
+                if pixel_id is None:
+                    app.log(f"Обновлены миниатюры ВАЯХ: {refreshed}.")
+                else:
+                    app.log(f"Миниатюра ВАЯХ {pixel_id} готова.")
+
+        try:
+            app.after(0, finish)
+        except (RuntimeError, tk.TclError):
+            pass
+
+    threading.Thread(
+        target=worker,
+        name="ivl-thumbnail-refresh",
+        daemon=True,
+    ).start()
+    return True
 
 
 def pixel_ids(app, require_ivl: bool = False, require_opening: bool = False) -> List[str]:
@@ -511,15 +644,15 @@ def show_ivl_hover_preview(app, pixel_id: str, event) -> None:
     preview_path = ivl_thumbnail_path(workbook_path)
     try:
         if ivl_thumbnail_needs_refresh(preview_path, workbook_path):
-            try:
-                create_ivl_thumbnail_from_workbook(workbook_path, preview_path)
-            except Exception as refresh_exc:
-                if not preview_path.exists():
-                    raise
-                app.log(
-                    f"Старая миниатюра ВАЯХ {pixel_id} пока не обновлена: "
-                    f"{refresh_exc}"
+            refresh_ivl_thumbnails_async(app, pixel_id)
+            if not preview_path.exists():
+                show_ivl_hover_message(
+                    app,
+                    pixel_id,
+                    "Миниатюра готовится в фоне. Наведите повторно через некоторое время.",
+                    event,
                 )
+                return
         with Image.open(preview_path) as source:
             image = source.copy()
         photo = ImageTk.PhotoImage(image)
@@ -537,6 +670,30 @@ def show_ivl_hover_preview(app, pixel_id: str, event) -> None:
     )
     label = ttk.Label(window, image=photo)
     label.pack(padx=4, pady=4)
+    position_ivl_hover_window(window, event)
+    app._ivl_hover_window = window
+    app._ivl_hover_photo = photo
+
+
+def show_ivl_hover_message(app, pixel_id: str, message: str, event) -> None:
+    window = tk.Toplevel(app)
+    window.overrideredirect(True)
+    window.attributes("-topmost", True)
+    ttk.Label(window, text=pixel_id, font=("Segoe UI", 9, "bold")).pack(
+        anchor="w",
+        padx=8,
+        pady=(6, 2),
+    )
+    ttk.Label(window, text=message, wraplength=280, justify="left").pack(
+        padx=8,
+        pady=(0, 7),
+    )
+    position_ivl_hover_window(window, event)
+    app._ivl_hover_window = window
+    app._ivl_hover_photo = None
+
+
+def position_ivl_hover_window(window, event) -> None:
     window.update_idletasks()
     x = min(
         int(event.x_root) + 14,
@@ -547,8 +704,6 @@ def show_ivl_hover_preview(app, pixel_id: str, event) -> None:
         max(0, window.winfo_screenheight() - window.winfo_reqheight() - 8),
     )
     window.geometry(f"+{x}+{y}")
-    app._ivl_hover_window = window
-    app._ivl_hover_photo = photo
 
 
 def draw_holder_base(canvas: tk.Canvas, width: int, height: int, title: str = "") -> None:

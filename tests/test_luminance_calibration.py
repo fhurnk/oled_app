@@ -14,7 +14,12 @@ from openpyxl import load_workbook
 from openpyxl.worksheet._read_only import ReadOnlyWorksheet
 from PIL import Image
 
-from oled_app.gui.measurement_menu import pixel_ids, refresh_ivl_thumbnails
+from oled_app.gui.measurement_menu import (
+    pixel_ids,
+    refresh_ivl_thumbnails,
+    refresh_pixel_table,
+    show_ivl_hover_preview,
+)
 from oled_app.gui import spectral_calibration_window as spectral_calibration_gui
 from oled_app.gui.spectral_calibration_window import (
     quarter_spectral_candidates,
@@ -592,6 +597,65 @@ class SpectrumPriorityTests(unittest.TestCase):
 
 
 class IvlStatusAndThumbnailTests(unittest.TestCase):
+    def test_table_refresh_only_builds_thumbnails_when_explicitly_requested(self):
+        class FakeTree:
+            def get_children(self):
+                return []
+
+            def delete(self, _item):
+                pass
+
+            def insert(self, *_args, **_kwargs):
+                pass
+
+        app = SimpleNamespace(
+            series=SimpleNamespace(
+                series_folder=Path("series"),
+                journal=SimpleNamespace(list_pixels=lambda: []),
+            ),
+            tree=FakeTree(),
+        )
+        with (
+            patch("oled_app.gui.measurement_menu.render_status_holder_canvas"),
+            patch("oled_app.gui.measurement_menu.refresh_ivl_history_tree"),
+            patch("oled_app.gui.measurement_menu.refresh_ivl_thumbnails_async") as refresh_async,
+        ):
+            refresh_pixel_table(app)
+            refresh_async.assert_not_called()
+
+            refresh_pixel_table(app, refresh_thumbnails=True)
+            refresh_async.assert_called_once_with(app)
+
+    def test_missing_hover_thumbnail_is_scheduled_without_sync_workbook_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workbook = root / "measurements" / "IVL_CR1_1_1.xlsx"
+            workbook.parent.mkdir(parents=True)
+            workbook.touch()
+            app = SimpleNamespace(
+                series=SimpleNamespace(
+                    series_folder=root,
+                    journal=SimpleNamespace(
+                        get_pixel=lambda _pixel_id: {
+                            "Last IVL file": str(workbook.relative_to(root)),
+                        }
+                    ),
+                ),
+            )
+            event = SimpleNamespace(x_root=10, y_root=10)
+            with (
+                patch("oled_app.gui.measurement_menu.hide_ivl_hover_preview"),
+                patch("oled_app.gui.measurement_menu.ivl_thumbnail_needs_refresh", return_value=True),
+                patch("oled_app.gui.measurement_menu.refresh_ivl_thumbnails_async") as refresh_async,
+                patch("oled_app.gui.measurement_menu.show_ivl_hover_message") as show_message,
+                patch("oled_app.gui.measurement_menu.create_ivl_thumbnail_from_workbook") as create_sync,
+            ):
+                show_ivl_hover_preview(app, "CR1_1_1", event)
+
+            refresh_async.assert_called_once_with(app, "CR1_1_1")
+            show_message.assert_called_once()
+            create_sync.assert_not_called()
+
     def test_refresh_action_checks_and_creates_latest_ivl_thumbnail(self):
         cycle = {
             "cycle": 1,

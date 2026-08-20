@@ -240,8 +240,8 @@ class OLEDModularApp(tk.Tk):
     def show_measurement_menu(self) -> None:
         show_measurement_menu(self)
 
-    def refresh_pixel_table(self) -> None:
-        refresh_pixel_table(self)
+    def refresh_pixel_table(self, refresh_thumbnails: bool = False) -> None:
+        refresh_pixel_table(self, refresh_thumbnails=refresh_thumbnails)
 
     def pixel_ids(self, require_ivl: bool = False, require_opening: bool = False):
         return pixel_ids(self, require_ivl=require_ivl, require_opening=require_opening)

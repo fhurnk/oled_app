@@ -61,7 +61,7 @@ application until v2 passes the full parity and hardware checklist.
 - IVL / ВАЯХ measurement workflow now lives in `oled_app/measurements/ivl.py` for the modular application.
 - Raw CSV measurement helpers now live in `oled_app/measurements/raw_io.py`; IVL, Spectrum, and Stability post-processing live in `oled_app/processing/ivl_results.py`, `oled_app/processing/spectrum_results.py`, and `oled_app/processing/stability_results.py`.
 - On-demand CIE/BPW34 recalculation lives in `oled_app/processing/spectral_calibration.py`; it must write `SPECTRAL_RECALC_*.xlsx` and must not modify the source spectrum workbook.
-- Existing-series luminance migration lives in `oled_app/processing/luminance_recalculation.py`; IVL thumbnails live in `oled_app/processing/ivl_preview.py`.
+- Existing-series luminance migration lives in `oled_app/processing/luminance_recalculation.py`; IVL thumbnails live in `oled_app/processing/ivl_preview.py`. The Tk series menu must not hydrate or parse measurement workbooks on the UI thread: explicit thumbnail refresh, missing hover previews, and legacy spectrum metrics run in background workers.
 - Spectrum measurement workflow now lives in `oled_app/measurements/spectrum.py` for the modular application.
 - Stability measurement workflow now lives in `oled_app/measurements/stability.py` for the modular application.
 - Shared Tk helpers, including Windows DPI awareness, screen-bounded geometry and scrollable containers, live in `oled_app/gui/widgets.py`; measurement progress windows live in `oled_app/gui/progress.py`.
