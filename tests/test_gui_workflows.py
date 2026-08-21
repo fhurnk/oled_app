@@ -94,13 +94,14 @@ class GuiLifecycleTests(unittest.TestCase):
 
 class IvlSeriesQueueTests(unittest.TestCase):
     def setUp(self):
-        self.pixels = ["P1", "P2", "P3", "P4", "P5"]
+        self.pixels = ["P1", "P2", "P3", "P4", "P5", "P6"]
         rows = {
             "P1": {"Last status": "UNKNOWN"},
             "P2": {"Last status": "NONWORKING"},
             "P3": {"Last status": "NO_CONTACT"},
             "P4": {"Last status": "WORKING"},
             "P5": {"Last status": "NONWORKING"},
+            "P6": {"Last status": "BURNED"},
         }
         self.app = SimpleNamespace(
             series=SimpleNamespace(journal=_FakeJournal(rows)),
@@ -109,7 +110,7 @@ class IvlSeriesQueueTests(unittest.TestCase):
             show_measurement_menu=lambda: None,
         )
 
-    def test_skip_flag_filters_only_journal_nonworking_pixels(self):
+    def test_skip_flag_filters_journal_nonworking_and_burned_pixels(self):
         self.assertEqual(
             ivl_series_sequence_from_pixel(
                 self.app,
@@ -129,14 +130,14 @@ class IvlSeriesQueueTests(unittest.TestCase):
                 measured=["P1"],
                 include_start=False,
             ),
-            ["P4", "P5"],
+            ["P4", "P5", "P6"],
         )
 
     def test_series_continues_after_manually_selected_pixel(self):
         with (
             patch(
                 "oled_app.gui.ivl_window.messagebox.askyesnocancel",
-                side_effect=[False, True, True],
+                side_effect=[False, True, True, True],
             ),
             patch("oled_app.gui.ivl_window.ask_pixel", return_value="P3"),
             patch(
@@ -148,7 +149,7 @@ class IvlSeriesQueueTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[1] for call in measure_mock.call_args_list],
-            ["P3", "P4", "P5"],
+            ["P3", "P4", "P5", "P6"],
         )
 
 

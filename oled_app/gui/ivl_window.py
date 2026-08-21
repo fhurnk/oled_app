@@ -61,7 +61,7 @@ def open_ivl_window(
         pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
         skip_nonworking_check = ttk.Checkbutton(
             frame,
-            text="Пропускать пиксели со статусом NONWORKING в журнале",
+            text="Пропускать пиксели со статусом NONWORKING или BURNED",
             variable=skip_nonworking_var,
         )
         skip_nonworking_check.grid(
@@ -328,9 +328,9 @@ def remove_same_substrate_from_queue(app, remaining: List[str], pixel_id: str) -
     return result
 
 
-def is_known_nonworking_pixel(app, pixel_id: str) -> bool:
+def is_known_unusable_pixel(app, pixel_id: str) -> bool:
     row = pixel_info_from_journal(app, pixel_id) or {}
-    return str(row.get("Last status") or "").upper() == "NONWORKING"
+    return str(row.get("Last status") or "").upper() in {"NONWORKING", "BURNED"}
 
 
 def ivl_series_sequence_from_pixel(
@@ -349,7 +349,7 @@ def ivl_series_sequence_from_pixel(
         pixel_id
         for pixel_id in all_pixels[start_idx:]
         if pixel_id not in measured_set
-        and (not skip_nonworking or not is_known_nonworking_pixel(app, pixel_id))
+        and (not skip_nonworking or not is_known_unusable_pixel(app, pixel_id))
     ]
 
 
@@ -373,10 +373,10 @@ def measure_series_ivl(
         skipped_count = sum(
             1
             for pixel_id in all_pixels[start_idx:]
-            if is_known_nonworking_pixel(app, pixel_id)
+            if is_known_unusable_pixel(app, pixel_id)
         )
         app.log(
-            "Автопропуск NONWORKING включен: "
+            "Автопропуск NONWORKING/BURNED включен: "
             f"исключено из очереди {skipped_count} пикселей."
         )
 
@@ -395,7 +395,7 @@ def measure_series_ivl(
             selectable_pixels = [
                 pixel_id
                 for pixel_id in all_pixels
-                if not skip_nonworking or not is_known_nonworking_pixel(app, pixel_id)
+                if not skip_nonworking or not is_known_unusable_pixel(app, pixel_id)
             ]
             chosen = ask_pixel(app, "Выберите произвольный пиксель", values=selectable_pixels)
             if not chosen:
