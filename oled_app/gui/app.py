@@ -252,8 +252,13 @@ class OLEDModularApp(tk.Tk):
     def measure_one_ivl(self, pixel_id: str, params, return_to_menu: bool = True):
         return measure_one_ivl(self, pixel_id, params, return_to_menu=return_to_menu)
 
-    def measure_series_ivl(self, params, start_pixel=None) -> None:
-        measure_series_ivl(self, params, start_pixel=start_pixel)
+    def measure_series_ivl(self, params, start_pixel=None, skip_nonworking=False) -> None:
+        measure_series_ivl(
+            self,
+            params,
+            start_pixel=start_pixel,
+            skip_nonworking=skip_nonworking,
+        )
 
     def pixel_info_from_journal(self, pixel_id: str):
         return pixel_info_from_journal(self, pixel_id)

@@ -1,6 +1,10 @@
 import unittest
 
-from oled_app.measurements.ivl import detect_opening_voltage
+from oled_app.measurements.ivl import (
+    IVLParams,
+    define_ivl_pixel_status,
+    detect_opening_voltage,
+)
 
 
 def point(voltage: float, photodiode_current_uA: float, measured_voltage=None):
@@ -50,6 +54,51 @@ class OpeningVoltageDetectionTests(unittest.TestCase):
             detect_opening_voltage([], -0.1, 5)
         with self.assertRaises(ValueError):
             detect_opening_voltage([], 0.5, -1)
+
+    def test_working_status_ignores_single_photodiode_spike(self):
+        data = [
+            point(1.0, 0.1),
+            point(1.1, 0.8),
+            point(1.2, 0.2),
+            point(1.3, 0.3),
+        ]
+        params = IVLParams(
+            photodiode_threshold_uA=0.5,
+            working_confirmation_points=2,
+        )
+
+        status, _description = define_ivl_pixel_status(
+            0.8,
+            1.0,
+            False,
+            params,
+            data,
+        )
+
+        self.assertEqual(status, "NONWORKING")
+
+    def test_working_status_requires_configured_following_points(self):
+        data = [
+            point(1.0, 0.1),
+            point(1.1, 0.5),
+            point(1.2, 0.6),
+            point(1.3, 0.7),
+        ]
+        params = IVLParams(
+            photodiode_threshold_uA=0.5,
+            working_confirmation_points=2,
+        )
+
+        status, description = define_ivl_pixel_status(
+            0.7,
+            1.0,
+            False,
+            params,
+            data,
+        )
+
+        self.assertEqual(status, "WORKING")
+        self.assertIn("2 следующих точек", description)
 
 
 if __name__ == "__main__":

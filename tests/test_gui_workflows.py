@@ -5,6 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from oled_app.gui.app import OLEDModularApp
+from oled_app.gui.ivl_window import (
+    ivl_series_sequence_from_pixel,
+    measure_series_ivl,
+)
 from oled_app.gui.measurement_menu import (
     pixel_rect_inside_substrate,
     spectrum_queue_cell_text,
@@ -86,6 +90,66 @@ class GuiLifecycleTests(unittest.TestCase):
         OLEDModularApp.log(app, "Создана серия")
 
         self.assertIsNone(app.log_widget)
+
+
+class IvlSeriesQueueTests(unittest.TestCase):
+    def setUp(self):
+        self.pixels = ["P1", "P2", "P3", "P4", "P5"]
+        rows = {
+            "P1": {"Last status": "UNKNOWN"},
+            "P2": {"Last status": "NONWORKING"},
+            "P3": {"Last status": "NO_CONTACT"},
+            "P4": {"Last status": "WORKING"},
+            "P5": {"Last status": "NONWORKING"},
+        }
+        self.app = SimpleNamespace(
+            series=SimpleNamespace(journal=_FakeJournal(rows)),
+            pixel_ids=lambda: list(self.pixels),
+            log=lambda _message: None,
+            show_measurement_menu=lambda: None,
+        )
+
+    def test_skip_flag_filters_only_journal_nonworking_pixels(self):
+        self.assertEqual(
+            ivl_series_sequence_from_pixel(
+                self.app,
+                self.pixels,
+                "P1",
+                skip_nonworking=True,
+            ),
+            ["P1", "P3", "P4"],
+        )
+
+    def test_manual_selection_rebuilds_queue_after_selected_pixel(self):
+        self.assertEqual(
+            ivl_series_sequence_from_pixel(
+                self.app,
+                self.pixels,
+                "P3",
+                measured=["P1"],
+                include_start=False,
+            ),
+            ["P4", "P5"],
+        )
+
+    def test_series_continues_after_manually_selected_pixel(self):
+        with (
+            patch(
+                "oled_app.gui.ivl_window.messagebox.askyesnocancel",
+                side_effect=[False, True, True],
+            ),
+            patch("oled_app.gui.ivl_window.ask_pixel", return_value="P3"),
+            patch(
+                "oled_app.gui.ivl_window.measure_one_ivl",
+                return_value={"status": "WORKING"},
+            ) as measure_mock,
+        ):
+            measure_series_ivl(self.app, SimpleNamespace(), start_pixel="P1")
+
+        self.assertEqual(
+            [call.args[1] for call in measure_mock.call_args_list],
+            ["P3", "P4", "P5"],
+        )
 
 
 class SpectrumSubstrateTests(unittest.TestCase):

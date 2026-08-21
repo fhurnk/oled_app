@@ -205,6 +205,7 @@ def open_settings_window(app) -> None:
         ("photodiode_bias_V", "Смещение фотодиода, В"),
         ("photodiode_range", "Диапазон фотодиода"),
         ("photodiode_threshold_uA", "Порог рабочего фототока, мкА"),
+        ("working_confirmation_points", "Следующих точек для статуса WORKING"),
         ("opening_photodiode_threshold_uA", "Порог открытия по фототоку, мкА"),
         ("opening_confirmation_points", "Следующих точек для подтверждения открытия"),
         ("burnout_current_threshold_mA", "Ток пробоя/сгорания, мА"),
@@ -216,8 +217,8 @@ def open_settings_window(app) -> None:
     ttk.Label(
         ivl_tab,
         text=(
-            "Точка открытия — первая точка выше порога, после которой заданное "
-            "число следующих точек также не опускается ниже порога."
+            "Статус WORKING и точка открытия требуют устойчивого превышения своих "
+            "порогов: заданное число следующих точек также не должно опускаться ниже порога."
         ),
         foreground="#555555",
         wraplength=620,
@@ -343,6 +344,13 @@ def open_settings_window(app) -> None:
             )
             settings["camera"] = updated_camera
             ivl_settings = collect_section("ivl_advanced", ivl_vars, ivl_bool_vars)
+            if ivl_settings["photodiode_threshold_uA"] < 0:
+                raise ValueError("Порог рабочего фототока не может быть отрицательным.")
+            if not 1 <= ivl_settings["working_confirmation_points"] <= 100:
+                raise ValueError(
+                    "Количество следующих точек для статуса WORKING "
+                    "должно быть от 1 до 100."
+                )
             if ivl_settings["opening_photodiode_threshold_uA"] < 0:
                 raise ValueError("Порог открытия по фототоку не может быть отрицательным.")
             if not 1 <= ivl_settings["opening_confirmation_points"] <= 100:

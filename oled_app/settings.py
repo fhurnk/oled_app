@@ -107,6 +107,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "photodiode_bias_V": -5.0,
         "photodiode_range": 4,
         "photodiode_threshold_uA": 0.5,
+        "working_confirmation_points": 5,
         "opening_photodiode_threshold_uA": 0.5,
         "opening_confirmation_points": 5,
         "burnout_current_threshold_mA": 10.0,
@@ -170,6 +171,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
             "cycles": "1",
             "delay_between_cycles_s": "1",
             "current_limit_mA": "10",
+            "skip_nonworking_pixels": False,
         },
         "spectrum": {
             "voltage_start_V": "2.0",

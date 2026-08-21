@@ -39,6 +39,11 @@ def open_ivl_window(
     selected_pixel = initial_pixel if initial_pixel in pixel_values else (pixel_values[0] if pixel_values else "")
     pixel_var = tk.StringVar(value=selected_pixel)
     mode_var = tk.StringVar(value="single")
+    saved_ivl = app.measurement_defaults("ivl")
+    skip_nonworking_var = tk.BooleanVar(
+        value=bool(saved_ivl.get("skip_nonworking_pixels", False))
+    )
+    field_start_row = 2
     if locked_pixel:
         ttk.Label(frame, text="Пиксель камеры:").grid(row=0, column=0, sticky="e", pady=5)
         ttk.Label(frame, text=selected_pixel, font=("Segoe UI", 10, "bold")).grid(
@@ -54,8 +59,28 @@ def open_ivl_window(
         ttk.Label(frame, text="Пиксель:").grid(row=1, column=0, sticky="e", pady=5)
         pixel_combo = ttk.Combobox(frame, textvariable=pixel_var, values=pixel_values, width=24, state="readonly")
         pixel_combo.grid(row=1, column=1, sticky="w", pady=5)
+        skip_nonworking_check = ttk.Checkbutton(
+            frame,
+            text="Пропускать пиксели со статусом NONWORKING в журнале",
+            variable=skip_nonworking_var,
+        )
+        skip_nonworking_check.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(4, 7),
+        )
 
-    saved_ivl = app.measurement_defaults("ivl")
+        def update_skip_nonworking_state(*_args) -> None:
+            skip_nonworking_check.configure(
+                state="normal" if mode_var.get() == "series" else "disabled"
+            )
+
+        mode_var.trace_add("write", update_skip_nonworking_state)
+        update_skip_nonworking_state()
+        field_start_row = 3
+
     fields = [
         ("Sweep start, V", str(saved_ivl.get("sweep_start_V", "0"))),
         ("Sweep end, V", str(saved_ivl.get("sweep_end_V", "5"))),
@@ -66,7 +91,7 @@ def open_ivl_window(
         ("Current limit, mA", str(saved_ivl.get("current_limit_mA", "10"))),
     ]
     vars_: Dict[str, tk.StringVar] = {}
-    for row_idx, (label, default) in enumerate(fields, start=2):
+    for row_idx, (label, default) in enumerate(fields, start=field_start_row):
         ttk.Label(frame, text=label + ":").grid(row=row_idx, column=0, sticky="e", pady=3, padx=(0, 8))
         var = tk.StringVar(value=default)
         vars_[label] = var
@@ -83,6 +108,7 @@ def open_ivl_window(
                 "cycles": vars_["Cycles"].get(),
                 "delay_between_cycles_s": vars_["Delay between cycles, s"].get(),
                 "current_limit_mA": vars_["Current limit, mA"].get(),
+                "skip_nonworking_pixels": bool(skip_nonworking_var.get()),
             })
             selected_pixel = pixel_var.get()
             if measurement_runner is not None:
@@ -97,17 +123,23 @@ def open_ivl_window(
                 measure_one_ivl(app, selected_pixel, params)
             else:
                 win.destroy()
-                measure_series_ivl(app, params, start_pixel=selected_pixel)
+                measure_series_ivl(
+                    app,
+                    params,
+                    start_pixel=selected_pixel,
+                    skip_nonworking=bool(skip_nonworking_var.get()),
+                )
         except Exception as exc:
             messagebox.showerror("Ошибка параметров", str(exc), parent=win)
 
+    footer_row = field_start_row + len(fields)
     ttk.Label(
         frame,
         text="Дополнительные параметры ВАЯХ вынесены в Настройки -> ВАЯХ доп.",
         foreground="#555555",
-    ).grid(row=len(fields) + 2, column=0, columnspan=2, sticky="w", pady=(10, 2))
-    ttk.Button(frame, text="Открыть настройки", command=app.open_settings_window).grid(row=len(fields) + 3, column=0, sticky="w", pady=12)
-    ttk.Button(frame, text="Начать ВАЯХ", command=start).grid(row=len(fields) + 3, column=1, sticky="w", pady=12)
+    ).grid(row=footer_row, column=0, columnspan=2, sticky="w", pady=(10, 2))
+    ttk.Button(frame, text="Открыть настройки", command=app.open_settings_window).grid(row=footer_row + 1, column=0, sticky="w", pady=12)
+    ttk.Button(frame, text="Начать ВАЯХ", command=start).grid(row=footer_row + 1, column=1, sticky="w", pady=12)
     fit_toplevel_to_content(win, 620, 620)
 
 
@@ -116,6 +148,14 @@ def build_ivl_params(app, vars_: Dict[str, tk.StringVar]) -> IVLParams:
     units = app.app_settings.get("measurement_units", DEFAULT_APP_SETTINGS["measurement_units"])
     opening_threshold = float(adv.get("opening_photodiode_threshold_uA", 0.5))
     opening_confirmation_points = int(adv.get("opening_confirmation_points", 5))
+    working_threshold = float(adv.get("photodiode_threshold_uA", 0.5))
+    working_confirmation_points = int(adv.get("working_confirmation_points", 5))
+    if working_threshold < 0:
+        raise ValueError("Порог рабочего фототока не может быть отрицательным.")
+    if not 1 <= working_confirmation_points <= 100:
+        raise ValueError(
+            "Количество следующих точек для статуса WORKING должно быть от 1 до 100."
+        )
     if opening_threshold < 0:
         raise ValueError("Порог открытия по фототоку не может быть отрицательным.")
     if not 1 <= opening_confirmation_points <= 100:
@@ -134,7 +174,8 @@ def build_ivl_params(app, vars_: Dict[str, tk.StringVar]) -> IVLParams:
         current_limit_mA=parse_float(vars_["Current limit, mA"].get(), "Current limit"),
         photodiode_bias_V=float(adv.get("photodiode_bias_V", -5.0)),
         photodiode_range=int(adv.get("photodiode_range", 4)),
-        photodiode_threshold_uA=float(adv.get("photodiode_threshold_uA", 0.5)),
+        photodiode_threshold_uA=working_threshold,
+        working_confirmation_points=working_confirmation_points,
         opening_photodiode_threshold_uA=opening_threshold,
         opening_confirmation_points=opening_confirmation_points,
         burnout_current_threshold_mA=float(adv.get("burnout_current_threshold_mA", 10.0)),
@@ -287,14 +328,57 @@ def remove_same_substrate_from_queue(app, remaining: List[str], pixel_id: str) -
     return result
 
 
-def measure_series_ivl(app, params: IVLParams, start_pixel: Optional[str] = None) -> None:
+def is_known_nonworking_pixel(app, pixel_id: str) -> bool:
+    row = pixel_info_from_journal(app, pixel_id) or {}
+    return str(row.get("Last status") or "").upper() == "NONWORKING"
+
+
+def ivl_series_sequence_from_pixel(
+    app,
+    all_pixels: List[str],
+    start_pixel: Optional[str],
+    measured: Optional[List[str]] = None,
+    skip_nonworking: bool = False,
+    include_start: bool = True,
+) -> List[str]:
+    start_idx = all_pixels.index(start_pixel) if start_pixel in all_pixels else 0
+    if not include_start and start_pixel in all_pixels:
+        start_idx += 1
+    measured_set = set(measured or [])
+    return [
+        pixel_id
+        for pixel_id in all_pixels[start_idx:]
+        if pixel_id not in measured_set
+        and (not skip_nonworking or not is_known_nonworking_pixel(app, pixel_id))
+    ]
+
+
+def measure_series_ivl(
+    app,
+    params: IVLParams,
+    start_pixel: Optional[str] = None,
+    skip_nonworking: bool = False,
+) -> None:
     assert app.series is not None
     all_pixels = app.pixel_ids()
     measured: List[str] = []
-    remaining = all_pixels.copy()
-    if start_pixel in remaining:
-        start_idx = remaining.index(start_pixel)
-        remaining = remaining[start_idx:]
+    remaining = ivl_series_sequence_from_pixel(
+        app,
+        all_pixels,
+        start_pixel,
+        skip_nonworking=skip_nonworking,
+    )
+    if skip_nonworking:
+        start_idx = all_pixels.index(start_pixel) if start_pixel in all_pixels else 0
+        skipped_count = sum(
+            1
+            for pixel_id in all_pixels[start_idx:]
+            if is_known_nonworking_pixel(app, pixel_id)
+        )
+        app.log(
+            "Автопропуск NONWORKING включен: "
+            f"исключено из очереди {skipped_count} пикселей."
+        )
 
     while remaining:
         next_pixel = remaining[0]
@@ -308,12 +392,24 @@ def measure_series_ivl(app, params: IVLParams, start_pixel: Optional[str] = None
             app.log("Съем всей серии отменен пользователем.")
             break
         if choice is False:
-            chosen = ask_pixel(app, "Выберите произвольный пиксель", values=all_pixels)
+            selectable_pixels = [
+                pixel_id
+                for pixel_id in all_pixels
+                if not skip_nonworking or not is_known_nonworking_pixel(app, pixel_id)
+            ]
+            chosen = ask_pixel(app, "Выберите произвольный пиксель", values=selectable_pixels)
             if not chosen:
                 continue
             next_pixel = chosen
-            if next_pixel in remaining:
-                remaining.remove(next_pixel)
+            remaining = ivl_series_sequence_from_pixel(
+                app,
+                all_pixels,
+                chosen,
+                measured=measured,
+                skip_nonworking=skip_nonworking,
+                include_start=False,
+            )
+            app.log(f"Очередь ВАЯХ продолжена от выбранного пикселя {chosen}.")
         else:
             remaining.pop(0)
 
@@ -323,7 +419,8 @@ def measure_series_ivl(app, params: IVLParams, start_pixel: Optional[str] = None
                 break
             status = result.get("status")
             if status != "NO_CONTACT":
-                measured.append(next_pixel)
+                if next_pixel not in measured:
+                    measured.append(next_pixel)
                 break
 
             action = messagebox.askyesnocancel(
@@ -340,7 +437,8 @@ def measure_series_ivl(app, params: IVLParams, start_pixel: Optional[str] = None
             if action is False:
                 remaining = remove_same_substrate_from_queue(app, remaining, next_pixel)
                 app.log(f"Оставшиеся пиксели подложки {next_pixel} пропущены; переход к следующей подложке.")
-            measured.append(next_pixel)
+            if next_pixel not in measured:
+                measured.append(next_pixel)
             break
 
     app.show_measurement_menu()

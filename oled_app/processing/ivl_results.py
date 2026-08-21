@@ -209,6 +209,10 @@ def save_ivl_workbook(pixel_id: str, filename: Path, params: Any, cycles: List[D
         ("Current limit (mA)", _params_value(params, "current_limit_mA", "")),
         ("Working photodiode threshold (uA)", _params_value(params, "photodiode_threshold_uA", "")),
         (
+            "Working following confirmation points",
+            _params_value(params, "working_confirmation_points", ""),
+        ),
+        (
             "Opening photodiode threshold (uA)",
             _params_value(params, "opening_photodiode_threshold_uA", ""),
         ),
