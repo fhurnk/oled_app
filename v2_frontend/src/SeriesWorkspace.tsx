@@ -30,8 +30,15 @@ import {
 
 type DialogMode = "create" | "edit" | null;
 
-const quarterOrder = [2, 1, 3, 4];
 const pixelOrder = [1, 2, 4, 3];
+const quarterLayoutOptions = [1, 2, 3, 4].flatMap((a) =>
+  [1, 2, 3, 4].filter((b) => b !== a).flatMap((b) =>
+    [1, 2, 3, 4].filter((c) => c !== a && c !== b).map((c) => {
+      const d = [1, 2, 3, 4].find((number) => ![a, b, c].includes(number)) ?? 4;
+      return [a, b, c, d];
+    })
+  )
+);
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -43,6 +50,8 @@ function emptyConfig(root: string): SeriesConfigInput {
     deposition_date: todayIso(),
     keyword: "",
     series_led_color: "red",
+    description_scope: "quarter",
+    quarter_layout: { top_left: 2, top_right: 1, bottom_left: 3, bottom_right: 4 },
     quarter_bases: { "1": "Q", "2": "Q", "3": "Q", "4": "Q" },
     quarter_descriptions: { "1": "", "2": "", "3": "", "4": "" }
   };
@@ -53,9 +62,11 @@ function editConfig(active: ActiveSeries): SeriesConfigInput {
     deposition_date: active.deposition_date,
     keyword: active.keyword,
     series_led_color:
-      active.series_led_color === "green" || active.series_led_color === "blue"
+      active.series_led_color === "green" || active.series_led_color === "blue" || active.series_led_color === "white"
         ? active.series_led_color
         : "red",
+    description_scope: active.description_scope,
+    quarter_layout: active.quarter_layout,
     quarter_bases: Object.fromEntries(
       active.quarters.map((quarter) => [String(quarter.number), quarter.base])
     ),
@@ -63,6 +74,42 @@ function editConfig(active: ActiveSeries): SeriesConfigInput {
       active.quarters.map((quarter) => [String(quarter.number), quarter.description])
     )
   };
+}
+
+function quarterLayoutOrder(layout: SeriesConfigInput["quarter_layout"]): number[] {
+  return [layout.top_left, layout.top_right, layout.bottom_left, layout.bottom_right];
+}
+
+function quarterLayoutFromOrder(order: number[]): SeriesConfigInput["quarter_layout"] {
+  return { top_left: order[0], top_right: order[1], bottom_left: order[2], bottom_right: order[3] };
+}
+
+function quarterLayoutLabel(order: number[]): string {
+  return `${order[0]} ${order[1]} / ${order[2]} ${order[3]}`;
+}
+
+function descriptionGroups(
+  scope: SeriesConfigInput["description_scope"],
+  layout: SeriesConfigInput["quarter_layout"]
+): number[][] {
+  if (scope === "half") {
+    const order = quarterLayoutOrder(layout);
+    return [order.slice(0, 2), order.slice(2, 4)];
+  }
+  if (scope === "substrate") {
+    return [[1, 2, 3, 4]];
+  }
+  return quarterLayoutOrder(layout).map((number) => [number]);
+}
+
+function descriptionGroupLabel(group: number[], index: number): string {
+  if (group.length === 1) {
+    return `Четверть ${group[0]}`;
+  }
+  if (group.length === 2) {
+    return `${index === 0 ? "Верхняя" : "Нижняя"} половина (${group.join("+")})`;
+  }
+  return "Вся подложка (1–4)";
 }
 
 function statusPresentation(status: string): { label: string; tone: StatusTone } {
@@ -107,7 +154,7 @@ function HolderMap({
 }) {
   return (
     <div className="holder-map" aria-label="Карта подложкодержателя">
-      {quarterOrder.map((number) => {
+      {quarterLayoutOrder(active.quarter_layout).map((number) => {
         const quarter = active.quarters.find((item) => item.number === number);
         if (!quarter) {
           return null;
@@ -596,17 +643,71 @@ export default function SeriesWorkspace({
           <TextField label="Дата напыления" onChange={(event) => setForm({ ...form, deposition_date: event.target.value })} type="date" value={form.deposition_date} />
           <TextField label="Кодовое слово" onChange={(event) => setForm({ ...form, keyword: event.target.value })} placeholder="Например, transport" value={form.keyword} />
           <SelectField label="Цвет светодиодов" onChange={(event) => setForm({ ...form, series_led_color: event.target.value as SeriesConfigInput["series_led_color"] })} value={form.series_led_color}>
-            <option value="red">Красный (R)</option><option value="green">Зелёный (G)</option><option value="blue">Синий (B)</option>
+            <option value="red">Красный (R)</option><option value="green">Зелёный (G)</option><option value="blue">Синий (B)</option><option value="white">Белый (W)</option>
+          </SelectField>
+          <SelectField
+            label="Область описания"
+            onChange={(event) => {
+              const scope = event.target.value as SeriesConfigInput["description_scope"];
+              const descriptions = { ...form.quarter_descriptions };
+              descriptionGroups(scope, form.quarter_layout).forEach((group) => {
+                const shared = descriptions[String(group[0])] ?? "";
+                group.forEach((number) => { descriptions[String(number)] = shared; });
+              });
+              setForm({ ...form, description_scope: scope, quarter_descriptions: descriptions });
+            }}
+            value={form.description_scope}
+          >
+            <option value="quarter">Для каждой четверти</option>
+            <option value="half">Для каждой половины</option>
+            <option value="substrate">Для всей подложки</option>
+          </SelectField>
+          <SelectField
+            label="Расположение четвертей (верх / низ)"
+            onChange={(event) => {
+              const order = event.target.value.split(",").map(Number);
+              const layout = quarterLayoutFromOrder(order);
+              const descriptions = { ...form.quarter_descriptions };
+              descriptionGroups(form.description_scope, layout).forEach((group) => {
+                const shared = descriptions[String(group[0])] ?? "";
+                group.forEach((number) => { descriptions[String(number)] = shared; });
+              });
+              setForm({ ...form, quarter_layout: layout, quarter_descriptions: descriptions });
+            }}
+            value={quarterLayoutOrder(form.quarter_layout).join(",")}
+          >
+            {quarterLayoutOptions.map((order) => (
+              <option key={order.join("-")} value={order.join(",")}>{quarterLayoutLabel(order)}</option>
+            ))}
           </SelectField>
         </div>
         <div className="series-quarter-form">
-          {quarterOrder.map((number) => {
+          {quarterLayoutOrder(form.quarter_layout).map((number) => {
             const key = String(number);
             return (
               <fieldset key={number}>
                 <legend>Четверть {number}</legend>
                 <TextField label="Короткая база" maxLength={32} onChange={(event) => setForm({ ...form, quarter_bases: { ...form.quarter_bases, [key]: event.target.value } })} value={form.quarter_bases[key] ?? ""} />
-                <TextField label="Описание" maxLength={180} onChange={(event) => setForm({ ...form, quarter_descriptions: { ...form.quarter_descriptions, [key]: event.target.value } })} value={form.quarter_descriptions[key] ?? ""} />
+              </fieldset>
+            );
+          })}
+        </div>
+        <div className="series-quarter-form">
+          {descriptionGroups(form.description_scope, form.quarter_layout).map((group, index) => {
+            const key = String(group[0]);
+            return (
+              <fieldset key={group.join("-")}>
+                <legend>{descriptionGroupLabel(group, index)}</legend>
+                <TextField
+                  label="Описание"
+                  maxLength={180}
+                  onChange={(event) => {
+                    const descriptions = { ...form.quarter_descriptions };
+                    group.forEach((number) => { descriptions[String(number)] = event.target.value; });
+                    setForm({ ...form, quarter_descriptions: descriptions });
+                  }}
+                  value={form.quarter_descriptions[key] ?? ""}
+                />
               </fieldset>
             );
           })}

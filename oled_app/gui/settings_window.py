@@ -51,6 +51,7 @@ def open_settings_window(app) -> None:
     luminance_red_var = tk.StringVar(value=str(units.get("luminance_red_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     luminance_green_var = tk.StringVar(value=str(units.get("luminance_green_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     luminance_blue_var = tk.StringVar(value=str(units.get("luminance_blue_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
+    luminance_white_var = tk.StringVar(value=str(units.get("luminance_white_cd_m2_per_uA", units.get("luminance_cd_m2_per_uA", 1.0))))
     geometric_coefficient_var = tk.StringVar(value=str(units.get("geometric_conversion_coefficient", 1.0)))
     integral_coefficient_var = tk.StringVar(value=str(units.get("integral_conversion_coefficient", 1.0)))
     raw_settings = app.app_settings.get("raw_data", DEFAULT_APP_SETTINGS["raw_data"])
@@ -83,27 +84,28 @@ def open_settings_window(app) -> None:
     add_settings_entry(general, 5, "Коэфф. красный R", luminance_red_var)
     add_settings_entry(general, 6, "Коэфф. зеленый G", luminance_green_var)
     add_settings_entry(general, 7, "Коэфф. синий B", luminance_blue_var)
-    add_settings_entry(general, 8, "Геометрический коэффициент", geometric_coefficient_var)
-    add_settings_entry(general, 9, "Интегральный коэффициент", integral_coefficient_var)
-    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=10, column=0, sticky="e", pady=4, padx=(0, 8))
+    add_settings_entry(general, 8, "Коэфф. белый W", luminance_white_var)
+    add_settings_entry(general, 9, "Геометрический коэффициент", geometric_coefficient_var)
+    add_settings_entry(general, 10, "Интегральный коэффициент", integral_coefficient_var)
+    ttk.Label(general, text="Сырые CSV после обработки:").grid(row=11, column=0, sticky="e", pady=4, padx=(0, 8))
     ttk.Combobox(
         general,
         textvariable=raw_policy_var,
         values=list(raw_policy_values.keys()),
         state="readonly",
         width=30,
-    ).grid(row=10, column=1, sticky="w", pady=4)
+    ).grid(row=11, column=1, sticky="w", pady=4)
     ttk.Label(
         general,
         text="simulator = встроенная эмуляция пикселя; real = настоящие xtralien/seabreeze из Python-среды.",
         foreground="#555555",
         wraplength=610,
         justify="left",
-    ).grid(row=11, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ).grid(row=12, column=0, columnspan=3, sticky="w", pady=(12, 0))
     ttk.Label(
         general,
         text=(
-            "R/G/B умножаются на геометрический коэффициент. "
+            "R/G/B/W умножаются на геометрический коэффициент. "
             "После калибровки произведение интеграла четверти и интегрального "
             "коэффициента заменяет R/G/B; ток фотодетектора и геометрический "
             "коэффициент остаются в формуле."
@@ -111,7 +113,7 @@ def open_settings_window(app) -> None:
         foreground="#555555",
         wraplength=610,
         justify="left",
-    ).grid(row=12, column=0, columnspan=3, sticky="w", pady=(6, 0))
+    ).grid(row=13, column=0, columnspan=3, sticky="w", pady=(6, 0))
     general.columnconfigure(1, weight=1)
 
     sim_cfg_var = tk.StringVar(value=str(app.app_settings.get("simulator_config_path") or SCRIPT_DIR / SIM_CONFIG_FILE))
@@ -301,6 +303,7 @@ def open_settings_window(app) -> None:
                 "luminance_red_cd_m2_per_uA": parse_float(luminance_red_var.get(), "Коэффициент яркости R"),
                 "luminance_green_cd_m2_per_uA": parse_float(luminance_green_var.get(), "Коэффициент яркости G"),
                 "luminance_blue_cd_m2_per_uA": parse_float(luminance_blue_var.get(), "Коэффициент яркости B"),
+                "luminance_white_cd_m2_per_uA": parse_float(luminance_white_var.get(), "Коэффициент яркости W"),
                 "geometric_conversion_coefficient": geometric_coefficient,
                 "integral_conversion_coefficient": integral_coefficient,
             }

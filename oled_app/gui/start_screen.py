@@ -13,15 +13,23 @@ from openpyxl import load_workbook
 
 from oled_app.constants import CONFIG_FILE, DEFAULT_ROOT, JOURNAL_FILE, MEASUREMENTS_SHEET, SCRIPT_DIR
 from oled_app.series import (
+    DESCRIPTION_SCOPE_LABELS,
     LED_COLOR_LABELS,
+    QUARTER_LAYOUT_OPTIONS,
     SeriesManager,
     build_holder_layout,
+    description_scope_from_label,
+    description_scope_groups,
     led_color_from_label,
     led_color_label,
     quarter_base,
     quarter_code,
     quarter_description,
     quarter_led_color,
+    quarter_layout_from_label,
+    quarter_layout_label,
+    series_description_scope,
+    series_quarter_layout,
 )
 from oled_app.settings import hardware_mode_label, load_app_settings, save_app_settings
 from oled_app.utils import today_iso
@@ -227,6 +235,12 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     setup_frame.pack(fill="x", pady=(4, 10))
     setup_frame.columnconfigure(0, weight=1)
     series_color_var = tk.StringVar(value=led_color_label(quarter_led_color(config, 1)))
+    description_scope_var = tk.StringVar(
+        value=DESCRIPTION_SCOPE_LABELS[series_description_scope(config)]
+    )
+    quarter_layout_var = tk.StringVar(
+        value=quarter_layout_label(series_quarter_layout(config))
+    )
     color_bar = ttk.Frame(setup_frame)
     color_bar.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 0))
     ttk.Label(color_bar, text="Цвет светодиодов серии:").pack(side="left", padx=(0, 8))
@@ -237,35 +251,141 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
         state="readonly",
         width=16,
     ).pack(side="left")
+    ttk.Label(color_bar, text="Область описания:").pack(side="left", padx=(24, 8))
+    ttk.Combobox(
+        color_bar,
+        textvariable=description_scope_var,
+        values=list(DESCRIPTION_SCOPE_LABELS.values()),
+        state="readonly",
+        width=24,
+    ).pack(side="left")
+    layout_bar = ttk.Frame(setup_frame)
+    layout_bar.grid(row=1, column=0, sticky="w", padx=10, pady=(8, 0))
+    ttk.Label(layout_bar, text="Расположение четвертей (верх / низ):").pack(side="left", padx=(0, 8))
+    ttk.Combobox(
+        layout_bar,
+        textvariable=quarter_layout_var,
+        values=[quarter_layout_label(option) for option in QUARTER_LAYOUT_OPTIONS],
+        state="readonly",
+        width=13,
+    ).pack(side="left")
+    description_frame = ttk.Frame(setup_frame)
+    description_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(8, 0))
     holder_canvas = tk.Canvas(setup_frame, width=930, height=560, background="white", highlightthickness=1, highlightbackground="#D0D7DE")
-    holder_canvas.grid(row=1, column=0, sticky="ew", padx=10, pady=(8, 8))
+    holder_canvas.grid(row=3, column=0, sticky="ew", padx=10, pady=(8, 8))
 
     quarter_vars = build_quarter_input_vars(config)
-    layout = build_holder_layout(930, 560)
+    layout = build_holder_layout(930, 560, quarter_layout_from_label(quarter_layout_var.get()))
+    base_windows: Dict[int, int] = {}
     for q in [2, 1, 3, 4]:
         info = layout[q]
         x, y = info["entry_xy"]
-        control_y = y if q in {1, 2} else y + 54
+        control_y = y if y < 280 else y + 54
         entry = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["base"], width=9)
-        holder_canvas.create_window(x, control_y, window=entry, anchor="w", tags=("controls",))
-        desc = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["description"], width=18)
-        holder_canvas.create_window(x, control_y + 28, window=desc, anchor="w", tags=("controls",))
+        base_windows[q] = holder_canvas.create_window(
+            x,
+            control_y,
+            window=entry,
+            anchor="w",
+            tags=("controls",),
+        )
+
+    description_syncing = False
+
+    def current_scope() -> str:
+        return description_scope_from_label(description_scope_var.get())
+
+    def current_layout() -> Dict[str, int]:
+        return quarter_layout_from_label(quarter_layout_var.get())
+
+    def synchronize_descriptions() -> None:
+        nonlocal description_syncing
+        if description_syncing:
+            return
+        description_syncing = True
+        try:
+            for group in description_scope_groups(current_scope(), current_layout()):
+                shared = quarter_vars[str(group[0])]["description"].get()
+                for quarter_number in group[1:]:
+                    quarter_vars[str(quarter_number)]["description"].set(shared)
+        finally:
+            description_syncing = False
+
+    def rebuild_description_inputs() -> None:
+        for child in description_frame.winfo_children():
+            child.destroy()
+        groups = description_scope_groups(current_scope(), current_layout())
+        for index, group in enumerate(groups):
+            if len(group) == 1:
+                label = f"Четверть {group[0]}"
+            elif len(group) == 2:
+                half_name = "Верхняя" if index == 0 else "Нижняя"
+                label = f"{half_name} половина ({group[0]}+{group[1]})"
+            else:
+                label = "Вся подложка (1–4)"
+            column = index % 2
+            row = (index // 2) * 2
+            ttk.Label(description_frame, text=label + ":").grid(
+                row=row,
+                column=column,
+                sticky="w",
+                padx=(0 if column == 0 else 18, 6),
+            )
+            ttk.Entry(
+                description_frame,
+                textvariable=quarter_vars[str(group[0])]["description"],
+                width=42,
+            ).grid(
+                row=row + 1,
+                column=column,
+                sticky="ew",
+                padx=(0 if column == 0 else 18, 6),
+                pady=(2, 0),
+            )
+            description_frame.columnconfigure(column, weight=1)
 
     def refresh_holder(*_args) -> None:
-        render_series_setup_holder(holder_canvas, quarter_vars, series_color_var)
+        synchronize_descriptions()
+        render_series_setup_holder(
+            holder_canvas,
+            quarter_vars,
+            series_color_var,
+            current_layout(),
+        )
+
+    def change_description_scope(*_args) -> None:
+        synchronize_descriptions()
+        rebuild_description_inputs()
+        render_series_setup_holder(
+            holder_canvas,
+            quarter_vars,
+            series_color_var,
+            current_layout(),
+        )
+
+    def change_quarter_layout(*_args) -> None:
+        layout = build_holder_layout(930, 560, current_layout())
+        for q, window_id in base_windows.items():
+            x, y = layout[q]["entry_xy"]
+            holder_canvas.coords(window_id, x, y if y < 280 else y + 54)
+        change_description_scope()
 
     for q_vars in quarter_vars.values():
         q_vars["base"].trace_add("write", refresh_holder)
         q_vars["description"].trace_add("write", refresh_holder)
     series_color_var.trace_add("write", refresh_holder)
+    description_scope_var.trace_add("write", change_description_scope)
+    quarter_layout_var.trace_add("write", change_quarter_layout)
+    synchronize_descriptions()
+    rebuild_description_inputs()
     refresh_holder()
 
     ttk.Label(
         setup_frame,
-        text="В поле четверти задается короткая база, например C. Цвет добавляет последнюю букву: C + красный = CR.",
+        text="В поле четверти задается короткая база, например C. Цвет добавляет суффикс R/G/B/W: C + белый = CW.",
         foreground="#555555",
         wraplength=880,
-    ).grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
+    ).grid(row=4, column=0, sticky="w", padx=10, pady=(0, 10))
 
     bottom = ttk.Frame(main)
     bottom.pack(fill="x", pady=(12, 0))
@@ -275,7 +395,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     ttk.Button(
         bottom,
         text=button_text,
-        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars, series_color_var),
+        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars, series_color_var, description_scope_var, quarter_layout_var),
     ).pack(side="right")
 
 
@@ -295,19 +415,35 @@ def build_quarter_input_vars(config: Dict[str, Any]) -> Dict[str, Dict[str, tk.S
     return result
 
 
-def collect_quarter_payload(quarter_vars: Dict[str, Dict[str, tk.StringVar]], series_color_var: tk.StringVar):
+def collect_quarter_payload(
+    quarter_vars: Dict[str, Dict[str, tk.StringVar]],
+    series_color_var: tk.StringVar,
+    description_scope_var: tk.StringVar | None = None,
+    quarter_layout_var: tk.StringVar | None = None,
+):
     quarter_bases = {str(q): quarter_vars[str(q)]["base"].get().strip() or "Q" for q in range(1, 5)}
     quarter_descriptions = {str(q): quarter_vars[str(q)]["description"].get().strip() for q in range(1, 5)}
     series_color = led_color_from_label(series_color_var.get())
     quarter_led_colors = {str(q): series_color for q in range(1, 5)}
-    return quarter_bases, quarter_descriptions, quarter_led_colors
+    scope = description_scope_from_label(
+        description_scope_var.get() if description_scope_var is not None else "quarter"
+    )
+    layout = quarter_layout_from_label(
+        quarter_layout_var.get() if quarter_layout_var is not None else "2 1 / 3 4"
+    )
+    return quarter_bases, quarter_descriptions, quarter_led_colors, scope, layout
 
 
-def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[str, tk.StringVar]], series_color_var: tk.StringVar) -> None:
+def render_series_setup_holder(
+    canvas: tk.Canvas,
+    quarter_vars: Dict[str, Dict[str, tk.StringVar]],
+    series_color_var: tk.StringVar,
+    quarter_layout: Dict[str, int] | None = None,
+) -> None:
     canvas.delete("drawing")
     width = int(canvas.cget("width"))
     height = int(canvas.cget("height"))
-    layout = build_holder_layout(width, height)
+    layout = build_holder_layout(width, height, quarter_layout)
     canvas.create_text(width / 2, 22, text="Предпросмотр имен пикселей в журнале серии", fill="#17345F", font=("Segoe UI", 10, "bold"), tags=("drawing",))
 
     config = {
@@ -322,7 +458,7 @@ def render_series_setup_holder(canvas: tk.Canvas, quarter_vars: Dict[str, Dict[s
         desc = quarter_description(config, q)
         canvas.create_text(*info["number_xy"], text=str(q), font=("Segoe UI", 24, "bold"), fill="#17345F", tags=("drawing",))
         ex, ey = info["entry_xy"]
-        label_y = ey if q in {1, 2} else ey + 54
+        label_y = ey if ey < height / 2 else ey + 54
         canvas.create_text(ex + 138, label_y, text=f"-> {code}", anchor="w", font=("Segoe UI", 8, "bold"), fill="#0B61A4", tags=("drawing",))
         if desc:
             canvas.create_text(ex + 138, label_y + 18, text=desc, anchor="w", font=("Segoe UI", 8), fill="#555555", tags=("drawing",))
@@ -357,15 +493,30 @@ def save_series_settings(
     keyword_var: tk.StringVar,
     quarter_vars: Dict[str, Dict[str, tk.StringVar]],
     series_color_var: tk.StringVar,
+    description_scope_var: tk.StringVar,
+    quarter_layout_var: tk.StringVar,
 ) -> None:
     try:
-        quarter_bases, quarter_descriptions, quarter_led_colors = collect_quarter_payload(quarter_vars, series_color_var)
+        quarter_bases, quarter_descriptions, quarter_led_colors, description_scope, quarter_layout = collect_quarter_payload(
+            quarter_vars,
+            series_color_var,
+            description_scope_var,
+            quarter_layout_var,
+        )
         deposition_date = dep_date_var.get().strip() or today_iso()
         keyword = keyword_var.get().strip()
         if edit_mode:
             if app.series is None:
                 raise ValueError("Серия не открыта")
-            app.series.update_config(deposition_date, keyword, quarter_bases, quarter_descriptions, quarter_led_colors)
+            app.series.update_config(
+                deposition_date,
+                keyword,
+                quarter_bases,
+                quarter_descriptions,
+                quarter_led_colors,
+                description_scope,
+                quarter_layout,
+            )
             app.log(f"Обновлены настройки серии: {app.series.series_folder}")
         else:
             app.app_settings["default_root"] = root_var.get()
@@ -377,6 +528,8 @@ def save_series_settings(
                 quarter_bases,
                 quarter_descriptions,
                 quarter_led_colors,
+                description_scope,
+                quarter_layout,
             )
             app.log(f"Создана серия: {app.series.series_folder}")
         app.show_measurement_menu()

@@ -531,7 +531,8 @@ def create_status_holder_canvas(app, parent):
     canvas = tk.Canvas(parent, width=width, height=height, background="white", highlightthickness=0)
     canvas.pack(fill="x", expand=False, padx=8, pady=8)
     app.status_canvas = canvas
-    app.status_canvas_layout = build_holder_layout(width, height)
+    quarter_layout = app.series.config.get("quarter_layout") if app.series is not None else None
+    app.status_canvas_layout = build_holder_layout(width, height, quarter_layout)
     return canvas
 
 
@@ -544,17 +545,20 @@ def render_status_holder_canvas(app) -> None:
     draw_holder_base(canvas, width, height)
     rows = {row.get("Pixel ID"): row for row in app.series.journal.list_pixels()}
     deposition_date = short_date_for_map(str(app.series.config.get("deposition_date", "") or ""))
-    layout = getattr(app, "status_canvas_layout", build_holder_layout(width, height))
+    layout = getattr(
+        app,
+        "status_canvas_layout",
+        build_holder_layout(width, height, app.series.config.get("quarter_layout")),
+    )
 
-    for quarter_number in [2, 1, 3, 4]:
+    for quarter_number, info in layout.items():
         code = quarter_code(app.series.config, quarter_number)
         description = quarter_description(app.series.config, quarter_number)
-        info = layout[quarter_number]
         number_x, number_y = info["number_xy"]
         canvas.create_text(number_x, number_y, text=str(quarter_number), font=("Segoe UI", 24, "bold"), fill="#17345F")
         if description:
             desc_x = min(max(number_x, 100), width - 100)
-            desc_y = number_y - 44 if quarter_number in {1, 2} else number_y + 44
+            desc_y = number_y - 44 if number_y < height / 2 else number_y + 44
             canvas.create_text(
                 desc_x,
                 desc_y,

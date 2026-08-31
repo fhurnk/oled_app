@@ -44,6 +44,8 @@ class SeriesManager:
         quarter_names: Dict[str, str],
         quarter_descriptions: Dict[str, str] | None = None,
         quarter_led_colors: Dict[str, str] | None = None,
+        description_scope: str = "quarter",
+        quarter_layout: Dict[str, int] | None = None,
     ) -> "SeriesManager":
         keyword_safe = safe_filename(keyword, fallback="")
         folder_name = f"{deposition_date}"
@@ -65,6 +67,8 @@ class SeriesManager:
             quarter_names,
             quarter_descriptions or {},
             quarter_led_colors or {},
+            description_scope,
+            quarter_layout,
         )
         config = {
             "app_version": APP_VERSION,
@@ -83,8 +87,16 @@ class SeriesManager:
         quarter_bases: Dict[str, str],
         quarter_descriptions: Dict[str, str],
         quarter_led_colors: Dict[str, str],
+        description_scope: str = "quarter",
+        quarter_layout: Dict[str, int] | None = None,
     ) -> None:
-        quarter_payload = normalize_quarter_payload(quarter_bases, quarter_descriptions, quarter_led_colors)
+        quarter_payload = normalize_quarter_payload(
+            quarter_bases,
+            quarter_descriptions,
+            quarter_led_colors,
+            description_scope,
+            quarter_layout,
+        )
         self.config.update(
             {
                 "app_version": APP_VERSION,

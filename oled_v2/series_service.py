@@ -18,12 +18,17 @@ from oled_app.processing.ivl_preview import (
 )
 from oled_app.series.manager import SeriesManager
 from oled_app.series.metadata import (
+    expand_descriptions_for_scope,
     led_color_label,
+    normalize_description_scope,
     normalize_led_color,
+    normalize_quarter_layout,
     quarter_base,
     quarter_code,
     quarter_description,
     quarter_led_color,
+    series_description_scope,
+    series_quarter_layout,
 )
 from oled_app.settings import load_app_settings
 from oled_app.utils import resolve_series_file
@@ -163,6 +168,8 @@ class SeriesService:
                 values["quarter_bases"],
                 values["quarter_descriptions"],
                 values["quarter_led_colors"],
+                values["description_scope"],
+                values["quarter_layout"],
             )
         except OSError as exc:
             raise SeriesConflictError(f"Не удалось создать серию: {exc}") from exc
@@ -183,6 +190,8 @@ class SeriesService:
                     values["quarter_bases"],
                     values["quarter_descriptions"],
                     values["quarter_led_colors"],
+                    values["description_scope"],
+                    values["quarter_layout"],
                 )
             except OSError as exc:
                 raise SeriesValidationError(f"Не удалось сохранить серию: {exc}") from exc
@@ -268,6 +277,8 @@ class SeriesService:
         if not isinstance(source_bases, dict) or not isinstance(source_descriptions, dict):
             raise SeriesValidationError("Не заданы параметры четырёх четвертей.")
         color = normalize_led_color(payload.get("series_led_color"))
+        description_scope = normalize_description_scope(payload.get("description_scope"))
+        quarter_layout = normalize_quarter_layout(payload.get("quarter_layout"))
         bases: Dict[str, str] = {}
         descriptions: Dict[str, str] = {}
         for number in range(1, 5):
@@ -278,12 +289,19 @@ class SeriesService:
                 f"Описание четверти {key}",
                 180,
             )
+        descriptions = expand_descriptions_for_scope(
+            descriptions,
+            description_scope,
+            quarter_layout,
+        )
         return {
             "deposition_date": deposition_date,
             "keyword": keyword,
             "quarter_bases": bases,
             "quarter_descriptions": descriptions,
             "quarter_led_colors": {str(number): color for number in range(1, 5)},
+            "description_scope": description_scope,
+            "quarter_layout": quarter_layout,
         }
 
     def _require_active_locked(self) -> SeriesManager:
@@ -374,6 +392,8 @@ class SeriesService:
             "keyword": str(config.get("keyword") or ""),
             "created_at": _json_value(config.get("created_at")),
             "series_led_color": quarter_led_color(config, 1),
+            "description_scope": series_description_scope(config),
+            "quarter_layout": series_quarter_layout(config),
             "quarters": [
                 {
                     "number": number,

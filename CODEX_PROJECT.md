@@ -21,8 +21,11 @@ SMU/spectrometer WebSocket PoC are in `oled_v2_app.py`, `oled_v2/`,
 reference series screen, table/status/dialog patterns, and chart palette are in
 `v2_frontend/src/design-system/`. Stage 4's working series API bridge is in
 `oled_v2/series_service.py`, and its create/open/edit/map/table/history/thumbnail/
-queue interface is in `v2_frontend/src/SeriesWorkspace.tsx`. Real hardware
-validation remains pending but does not block Stage 5 software work.
+queue interface is in `v2_frontend/src/SeriesWorkspace.tsx`. Series metadata
+supports red/green/blue/white LED colors, selectable 2x2 quarter layouts, and
+quarter, physical upper/lower-half, or whole-substrate description scopes.
+Real hardware validation remains pending
+but does not block Stage 5 software work.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.

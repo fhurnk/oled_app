@@ -296,6 +296,7 @@ class SpectrumHelper:
             "red": (580, 700),
             "green": (480, 580),
             "blue": (400, 500),
+            "white": (380, 780),
             "other": (300, 1000),
             "auto": (380, 780),
             "visible": (380, 780),

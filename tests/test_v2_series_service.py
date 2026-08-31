@@ -130,6 +130,37 @@ class V2SeriesServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(SeriesValidationError, "ГГГГ-ММ-ДД"):
             self.service.create_series(payload)
 
+    def test_white_color_and_half_description_scope_are_persisted(self) -> None:
+        payload = series_payload(self.root)
+        payload["series_led_color"] = "white"
+        payload["description_scope"] = "half"
+        payload["quarter_layout"] = {
+            "top_left": 4,
+            "top_right": 1,
+            "bottom_left": 2,
+            "bottom_right": 3,
+        }
+        payload["quarter_descriptions"] = {
+            "1": "will be replaced",
+            "2": "bottom",
+            "3": "will be replaced",
+            "4": "top",
+        }
+
+        active = self.service.create_series(payload)["active"]
+
+        self.assertEqual(active["series_led_color"], "white")
+        self.assertEqual(active["description_scope"], "half")
+        self.assertEqual(
+            active["quarter_layout"],
+            payload["quarter_layout"],
+        )
+        self.assertEqual([item["code"] for item in active["quarters"]], ["AW", "BW", "CW", "DW"])
+        self.assertEqual(
+            [item["description"] for item in active["quarters"]],
+            ["top", "bottom", "bottom", "top"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

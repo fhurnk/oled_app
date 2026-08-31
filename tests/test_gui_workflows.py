@@ -42,6 +42,22 @@ class _FakeJournal:
 
 
 class HolderLayoutTests(unittest.TestCase):
+    def test_quarters_can_be_rearranged_in_the_two_by_two_holder(self):
+        layout = build_holder_layout(
+            930,
+            560,
+            {
+                "top_left": 4,
+                "top_right": 3,
+                "bottom_left": 2,
+                "bottom_right": 1,
+            },
+        )
+
+        self.assertLess(layout[4]["number_xy"][0], layout[3]["number_xy"][0])
+        self.assertLess(layout[4]["number_xy"][1], layout[2]["number_xy"][1])
+        self.assertGreater(layout[1]["number_xy"][0], layout[2]["number_xy"][0])
+
     def test_pixels_use_physical_two_by_two_order(self):
         for rect_function in (setup_pixel_rect, pixel_rect_inside_substrate):
             with self.subTest(rect_function=rect_function.__name__):
