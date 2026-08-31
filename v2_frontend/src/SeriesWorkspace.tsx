@@ -31,14 +31,7 @@ import {
 type DialogMode = "create" | "edit" | null;
 
 const pixelOrder = [1, 2, 4, 3];
-const quarterLayoutOptions = [1, 2, 3, 4].flatMap((a) =>
-  [1, 2, 3, 4].filter((b) => b !== a).flatMap((b) =>
-    [1, 2, 3, 4].filter((c) => c !== a && c !== b).map((c) => {
-      const d = [1, 2, 3, 4].find((number) => ![a, b, c].includes(number)) ?? 4;
-      return [a, b, c, d];
-    })
-  )
-);
+const quarterOrder = [2, 1, 3, 4];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -51,7 +44,7 @@ function emptyConfig(root: string): SeriesConfigInput {
     keyword: "",
     series_led_color: "red",
     description_scope: "quarter",
-    quarter_layout: { top_left: 2, top_right: 1, bottom_left: 3, bottom_right: 4 },
+    half_orientation: "top_bottom",
     quarter_bases: { "1": "Q", "2": "Q", "3": "Q", "4": "Q" },
     quarter_descriptions: { "1": "", "2": "", "3": "", "4": "" }
   };
@@ -66,7 +59,7 @@ function editConfig(active: ActiveSeries): SeriesConfigInput {
         ? active.series_led_color
         : "red",
     description_scope: active.description_scope,
-    quarter_layout: active.quarter_layout,
+    half_orientation: active.half_orientation,
     quarter_bases: Object.fromEntries(
       active.quarters.map((quarter) => [String(quarter.number), quarter.base])
     ),
@@ -76,38 +69,32 @@ function editConfig(active: ActiveSeries): SeriesConfigInput {
   };
 }
 
-function quarterLayoutOrder(layout: SeriesConfigInput["quarter_layout"]): number[] {
-  return [layout.top_left, layout.top_right, layout.bottom_left, layout.bottom_right];
-}
-
-function quarterLayoutFromOrder(order: number[]): SeriesConfigInput["quarter_layout"] {
-  return { top_left: order[0], top_right: order[1], bottom_left: order[2], bottom_right: order[3] };
-}
-
-function quarterLayoutLabel(order: number[]): string {
-  return `${order[0]} ${order[1]} / ${order[2]} ${order[3]}`;
-}
-
 function descriptionGroups(
   scope: SeriesConfigInput["description_scope"],
-  layout: SeriesConfigInput["quarter_layout"]
+  halfOrientation: SeriesConfigInput["half_orientation"]
 ): number[][] {
   if (scope === "half") {
-    const order = quarterLayoutOrder(layout);
-    return [order.slice(0, 2), order.slice(2, 4)];
+    return halfOrientation === "left_right" ? [[2, 3], [1, 4]] : [[2, 1], [3, 4]];
   }
   if (scope === "substrate") {
     return [[1, 2, 3, 4]];
   }
-  return quarterLayoutOrder(layout).map((number) => [number]);
+  return quarterOrder.map((number) => [number]);
 }
 
-function descriptionGroupLabel(group: number[], index: number): string {
+function descriptionGroupLabel(
+  group: number[],
+  index: number,
+  halfOrientation: SeriesConfigInput["half_orientation"]
+): string {
   if (group.length === 1) {
     return `Четверть ${group[0]}`;
   }
   if (group.length === 2) {
-    return `${index === 0 ? "Верхняя" : "Нижняя"} половина (${group.join("+")})`;
+    const name = halfOrientation === "left_right"
+      ? (index === 0 ? "Левая" : "Правая")
+      : (index === 0 ? "Верхняя" : "Нижняя");
+    return `${name} половина (${group.join("+")})`;
   }
   return "Вся подложка (1–4)";
 }
@@ -154,7 +141,7 @@ function HolderMap({
 }) {
   return (
     <div className="holder-map" aria-label="Карта подложкодержателя">
-      {quarterLayoutOrder(active.quarter_layout).map((number) => {
+      {quarterOrder.map((number) => {
         const quarter = active.quarters.find((item) => item.number === number);
         if (!quarter) {
           return null;
@@ -650,7 +637,7 @@ export default function SeriesWorkspace({
             onChange={(event) => {
               const scope = event.target.value as SeriesConfigInput["description_scope"];
               const descriptions = { ...form.quarter_descriptions };
-              descriptionGroups(scope, form.quarter_layout).forEach((group) => {
+              descriptionGroups(scope, form.half_orientation).forEach((group) => {
                 const shared = descriptions[String(group[0])] ?? "";
                 group.forEach((number) => { descriptions[String(number)] = shared; });
               });
@@ -662,27 +649,27 @@ export default function SeriesWorkspace({
             <option value="half">Для каждой половины</option>
             <option value="substrate">Для всей подложки</option>
           </SelectField>
-          <SelectField
-            label="Расположение четвертей (верх / низ)"
-            onChange={(event) => {
-              const order = event.target.value.split(",").map(Number);
-              const layout = quarterLayoutFromOrder(order);
-              const descriptions = { ...form.quarter_descriptions };
-              descriptionGroups(form.description_scope, layout).forEach((group) => {
-                const shared = descriptions[String(group[0])] ?? "";
-                group.forEach((number) => { descriptions[String(number)] = shared; });
-              });
-              setForm({ ...form, quarter_layout: layout, quarter_descriptions: descriptions });
-            }}
-            value={quarterLayoutOrder(form.quarter_layout).join(",")}
-          >
-            {quarterLayoutOptions.map((order) => (
-              <option key={order.join("-")} value={order.join(",")}>{quarterLayoutLabel(order)}</option>
-            ))}
-          </SelectField>
+          {form.description_scope === "half" && (
+            <SelectField
+              label="Расположение половин"
+              onChange={(event) => {
+                const halfOrientation = event.target.value as SeriesConfigInput["half_orientation"];
+                const descriptions = { ...form.quarter_descriptions };
+                descriptionGroups(form.description_scope, halfOrientation).forEach((group) => {
+                  const shared = descriptions[String(group[0])] ?? "";
+                  group.forEach((number) => { descriptions[String(number)] = shared; });
+                });
+                setForm({ ...form, half_orientation: halfOrientation, quarter_descriptions: descriptions });
+              }}
+              value={form.half_orientation}
+            >
+              <option value="top_bottom">Верх / низ</option>
+              <option value="left_right">Лево / право</option>
+            </SelectField>
+          )}
         </div>
         <div className="series-quarter-form">
-          {quarterLayoutOrder(form.quarter_layout).map((number) => {
+          {quarterOrder.map((number) => {
             const key = String(number);
             return (
               <fieldset key={number}>
@@ -693,11 +680,11 @@ export default function SeriesWorkspace({
           })}
         </div>
         <div className="series-quarter-form">
-          {descriptionGroups(form.description_scope, form.quarter_layout).map((group, index) => {
+          {descriptionGroups(form.description_scope, form.half_orientation).map((group, index) => {
             const key = String(group[0]);
             return (
               <fieldset key={group.join("-")}>
-                <legend>{descriptionGroupLabel(group, index)}</legend>
+                <legend>{descriptionGroupLabel(group, index, form.half_orientation)}</legend>
                 <TextField
                   label="Описание"
                   maxLength={180}

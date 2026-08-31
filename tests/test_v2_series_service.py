@@ -134,31 +134,23 @@ class V2SeriesServiceTests(unittest.TestCase):
         payload = series_payload(self.root)
         payload["series_led_color"] = "white"
         payload["description_scope"] = "half"
-        payload["quarter_layout"] = {
-            "top_left": 4,
-            "top_right": 1,
-            "bottom_left": 2,
-            "bottom_right": 3,
-        }
+        payload["half_orientation"] = "left_right"
         payload["quarter_descriptions"] = {
-            "1": "will be replaced",
-            "2": "bottom",
+            "1": "right",
+            "2": "left",
             "3": "will be replaced",
-            "4": "top",
+            "4": "will be replaced",
         }
 
         active = self.service.create_series(payload)["active"]
 
         self.assertEqual(active["series_led_color"], "white")
         self.assertEqual(active["description_scope"], "half")
-        self.assertEqual(
-            active["quarter_layout"],
-            payload["quarter_layout"],
-        )
+        self.assertEqual(active["half_orientation"], "left_right")
         self.assertEqual([item["code"] for item in active["quarters"]], ["AW", "BW", "CW", "DW"])
         self.assertEqual(
             [item["description"] for item in active["quarters"]],
-            ["top", "bottom", "bottom", "top"],
+            ["right", "left", "left", "right"],
         )
 
 

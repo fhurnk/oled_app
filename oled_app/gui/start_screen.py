@@ -14,22 +14,21 @@ from openpyxl import load_workbook
 from oled_app.constants import CONFIG_FILE, DEFAULT_ROOT, JOURNAL_FILE, MEASUREMENTS_SHEET, SCRIPT_DIR
 from oled_app.series import (
     DESCRIPTION_SCOPE_LABELS,
+    HALF_ORIENTATION_LABELS,
     LED_COLOR_LABELS,
-    QUARTER_LAYOUT_OPTIONS,
     SeriesManager,
     build_holder_layout,
     description_scope_from_label,
     description_scope_groups,
+    half_orientation_from_label,
     led_color_from_label,
     led_color_label,
     quarter_base,
     quarter_code,
     quarter_description,
     quarter_led_color,
-    quarter_layout_from_label,
-    quarter_layout_label,
     series_description_scope,
-    series_quarter_layout,
+    series_half_orientation,
 )
 from oled_app.settings import hardware_mode_label, load_app_settings, save_app_settings
 from oled_app.utils import today_iso
@@ -238,8 +237,8 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     description_scope_var = tk.StringVar(
         value=DESCRIPTION_SCOPE_LABELS[series_description_scope(config)]
     )
-    quarter_layout_var = tk.StringVar(
-        value=quarter_layout_label(series_quarter_layout(config))
+    half_orientation_var = tk.StringVar(
+        value=HALF_ORIENTATION_LABELS[series_half_orientation(config)]
     )
     color_bar = ttk.Frame(setup_frame)
     color_bar.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 0))
@@ -261,28 +260,28 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     ).pack(side="left")
     layout_bar = ttk.Frame(setup_frame)
     layout_bar.grid(row=1, column=0, sticky="w", padx=10, pady=(8, 0))
-    ttk.Label(layout_bar, text="Расположение четвертей (верх / низ):").pack(side="left", padx=(0, 8))
-    ttk.Combobox(
+    ttk.Label(layout_bar, text="Расположение половин:").pack(side="left", padx=(0, 8))
+    half_orientation_combo = ttk.Combobox(
         layout_bar,
-        textvariable=quarter_layout_var,
-        values=[quarter_layout_label(option) for option in QUARTER_LAYOUT_OPTIONS],
+        textvariable=half_orientation_var,
+        values=list(HALF_ORIENTATION_LABELS.values()),
         state="readonly",
         width=13,
-    ).pack(side="left")
+    )
+    half_orientation_combo.pack(side="left")
     description_frame = ttk.Frame(setup_frame)
     description_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(8, 0))
     holder_canvas = tk.Canvas(setup_frame, width=930, height=560, background="white", highlightthickness=1, highlightbackground="#D0D7DE")
     holder_canvas.grid(row=3, column=0, sticky="ew", padx=10, pady=(8, 8))
 
     quarter_vars = build_quarter_input_vars(config)
-    layout = build_holder_layout(930, 560, quarter_layout_from_label(quarter_layout_var.get()))
-    base_windows: Dict[int, int] = {}
+    layout = build_holder_layout(930, 560)
     for q in [2, 1, 3, 4]:
         info = layout[q]
         x, y = info["entry_xy"]
         control_y = y if y < 280 else y + 54
         entry = ttk.Entry(holder_canvas, textvariable=quarter_vars[str(q)]["base"], width=9)
-        base_windows[q] = holder_canvas.create_window(
+        holder_canvas.create_window(
             x,
             control_y,
             window=entry,
@@ -295,8 +294,8 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     def current_scope() -> str:
         return description_scope_from_label(description_scope_var.get())
 
-    def current_layout() -> Dict[str, int]:
-        return quarter_layout_from_label(quarter_layout_var.get())
+    def current_half_orientation() -> str:
+        return half_orientation_from_label(half_orientation_var.get())
 
     def synchronize_descriptions() -> None:
         nonlocal description_syncing
@@ -304,7 +303,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
             return
         description_syncing = True
         try:
-            for group in description_scope_groups(current_scope(), current_layout()):
+            for group in description_scope_groups(current_scope(), current_half_orientation()):
                 shared = quarter_vars[str(group[0])]["description"].get()
                 for quarter_number in group[1:]:
                     quarter_vars[str(quarter_number)]["description"].set(shared)
@@ -314,12 +313,15 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     def rebuild_description_inputs() -> None:
         for child in description_frame.winfo_children():
             child.destroy()
-        groups = description_scope_groups(current_scope(), current_layout())
+        groups = description_scope_groups(current_scope(), current_half_orientation())
         for index, group in enumerate(groups):
             if len(group) == 1:
                 label = f"Четверть {group[0]}"
             elif len(group) == 2:
-                half_name = "Верхняя" if index == 0 else "Нижняя"
+                if current_half_orientation() == "left_right":
+                    half_name = "Левая" if index == 0 else "Правая"
+                else:
+                    half_name = "Верхняя" if index == 0 else "Нижняя"
                 label = f"{half_name} половина ({group[0]}+{group[1]})"
             else:
                 label = "Вся подложка (1–4)"
@@ -350,35 +352,27 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
             holder_canvas,
             quarter_vars,
             series_color_var,
-            current_layout(),
         )
 
     def change_description_scope(*_args) -> None:
+        half_orientation_combo.configure(
+            state="readonly" if current_scope() == "half" else "disabled"
+        )
         synchronize_descriptions()
         rebuild_description_inputs()
         render_series_setup_holder(
             holder_canvas,
             quarter_vars,
             series_color_var,
-            current_layout(),
         )
-
-    def change_quarter_layout(*_args) -> None:
-        layout = build_holder_layout(930, 560, current_layout())
-        for q, window_id in base_windows.items():
-            x, y = layout[q]["entry_xy"]
-            holder_canvas.coords(window_id, x, y if y < 280 else y + 54)
-        change_description_scope()
 
     for q_vars in quarter_vars.values():
         q_vars["base"].trace_add("write", refresh_holder)
         q_vars["description"].trace_add("write", refresh_holder)
     series_color_var.trace_add("write", refresh_holder)
     description_scope_var.trace_add("write", change_description_scope)
-    quarter_layout_var.trace_add("write", change_quarter_layout)
-    synchronize_descriptions()
-    rebuild_description_inputs()
-    refresh_holder()
+    half_orientation_var.trace_add("write", change_description_scope)
+    change_description_scope()
 
     ttk.Label(
         setup_frame,
@@ -395,7 +389,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     ttk.Button(
         bottom,
         text=button_text,
-        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars, series_color_var, description_scope_var, quarter_layout_var),
+        command=lambda: save_series_settings(app, edit_mode, root_var, dep_date_var, keyword_var, quarter_vars, series_color_var, description_scope_var, half_orientation_var),
     ).pack(side="right")
 
 
@@ -419,7 +413,7 @@ def collect_quarter_payload(
     quarter_vars: Dict[str, Dict[str, tk.StringVar]],
     series_color_var: tk.StringVar,
     description_scope_var: tk.StringVar | None = None,
-    quarter_layout_var: tk.StringVar | None = None,
+    half_orientation_var: tk.StringVar | None = None,
 ):
     quarter_bases = {str(q): quarter_vars[str(q)]["base"].get().strip() or "Q" for q in range(1, 5)}
     quarter_descriptions = {str(q): quarter_vars[str(q)]["description"].get().strip() for q in range(1, 5)}
@@ -428,22 +422,21 @@ def collect_quarter_payload(
     scope = description_scope_from_label(
         description_scope_var.get() if description_scope_var is not None else "quarter"
     )
-    layout = quarter_layout_from_label(
-        quarter_layout_var.get() if quarter_layout_var is not None else "2 1 / 3 4"
+    half_orientation = half_orientation_from_label(
+        half_orientation_var.get() if half_orientation_var is not None else "Верх / низ"
     )
-    return quarter_bases, quarter_descriptions, quarter_led_colors, scope, layout
+    return quarter_bases, quarter_descriptions, quarter_led_colors, scope, half_orientation
 
 
 def render_series_setup_holder(
     canvas: tk.Canvas,
     quarter_vars: Dict[str, Dict[str, tk.StringVar]],
     series_color_var: tk.StringVar,
-    quarter_layout: Dict[str, int] | None = None,
 ) -> None:
     canvas.delete("drawing")
     width = int(canvas.cget("width"))
     height = int(canvas.cget("height"))
-    layout = build_holder_layout(width, height, quarter_layout)
+    layout = build_holder_layout(width, height)
     canvas.create_text(width / 2, 22, text="Предпросмотр имен пикселей в журнале серии", fill="#17345F", font=("Segoe UI", 10, "bold"), tags=("drawing",))
 
     config = {
@@ -494,14 +487,14 @@ def save_series_settings(
     quarter_vars: Dict[str, Dict[str, tk.StringVar]],
     series_color_var: tk.StringVar,
     description_scope_var: tk.StringVar,
-    quarter_layout_var: tk.StringVar,
+    half_orientation_var: tk.StringVar,
 ) -> None:
     try:
-        quarter_bases, quarter_descriptions, quarter_led_colors, description_scope, quarter_layout = collect_quarter_payload(
+        quarter_bases, quarter_descriptions, quarter_led_colors, description_scope, half_orientation = collect_quarter_payload(
             quarter_vars,
             series_color_var,
             description_scope_var,
-            quarter_layout_var,
+            half_orientation_var,
         )
         deposition_date = dep_date_var.get().strip() or today_iso()
         keyword = keyword_var.get().strip()
@@ -515,7 +508,7 @@ def save_series_settings(
                 quarter_descriptions,
                 quarter_led_colors,
                 description_scope,
-                quarter_layout,
+                half_orientation,
             )
             app.log(f"Обновлены настройки серии: {app.series.series_folder}")
         else:
@@ -529,7 +522,7 @@ def save_series_settings(
                 quarter_descriptions,
                 quarter_led_colors,
                 description_scope,
-                quarter_layout,
+                half_orientation,
             )
             app.log(f"Создана серия: {app.series.series_folder}")
         app.show_measurement_menu()

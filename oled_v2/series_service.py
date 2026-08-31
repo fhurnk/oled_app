@@ -21,14 +21,14 @@ from oled_app.series.metadata import (
     expand_descriptions_for_scope,
     led_color_label,
     normalize_description_scope,
+    normalize_half_orientation,
     normalize_led_color,
-    normalize_quarter_layout,
     quarter_base,
     quarter_code,
     quarter_description,
     quarter_led_color,
     series_description_scope,
-    series_quarter_layout,
+    series_half_orientation,
 )
 from oled_app.settings import load_app_settings
 from oled_app.utils import resolve_series_file
@@ -169,7 +169,7 @@ class SeriesService:
                 values["quarter_descriptions"],
                 values["quarter_led_colors"],
                 values["description_scope"],
-                values["quarter_layout"],
+                values["half_orientation"],
             )
         except OSError as exc:
             raise SeriesConflictError(f"Не удалось создать серию: {exc}") from exc
@@ -191,7 +191,7 @@ class SeriesService:
                     values["quarter_descriptions"],
                     values["quarter_led_colors"],
                     values["description_scope"],
-                    values["quarter_layout"],
+                    values["half_orientation"],
                 )
             except OSError as exc:
                 raise SeriesValidationError(f"Не удалось сохранить серию: {exc}") from exc
@@ -278,7 +278,7 @@ class SeriesService:
             raise SeriesValidationError("Не заданы параметры четырёх четвертей.")
         color = normalize_led_color(payload.get("series_led_color"))
         description_scope = normalize_description_scope(payload.get("description_scope"))
-        quarter_layout = normalize_quarter_layout(payload.get("quarter_layout"))
+        half_orientation = normalize_half_orientation(payload.get("half_orientation"))
         bases: Dict[str, str] = {}
         descriptions: Dict[str, str] = {}
         for number in range(1, 5):
@@ -292,7 +292,7 @@ class SeriesService:
         descriptions = expand_descriptions_for_scope(
             descriptions,
             description_scope,
-            quarter_layout,
+            half_orientation,
         )
         return {
             "deposition_date": deposition_date,
@@ -301,7 +301,7 @@ class SeriesService:
             "quarter_descriptions": descriptions,
             "quarter_led_colors": {str(number): color for number in range(1, 5)},
             "description_scope": description_scope,
-            "quarter_layout": quarter_layout,
+            "half_orientation": half_orientation,
         }
 
     def _require_active_locked(self) -> SeriesManager:
@@ -393,7 +393,7 @@ class SeriesService:
             "created_at": _json_value(config.get("created_at")),
             "series_led_color": quarter_led_color(config, 1),
             "description_scope": series_description_scope(config),
-            "quarter_layout": series_quarter_layout(config),
+            "half_orientation": series_half_orientation(config),
             "quarters": [
                 {
                     "number": number,

@@ -22,8 +22,8 @@ reference series screen, table/status/dialog patterns, and chart palette are in
 `v2_frontend/src/design-system/`. Stage 4's working series API bridge is in
 `oled_v2/series_service.py`, and its create/open/edit/map/table/history/thumbnail/
 queue interface is in `v2_frontend/src/SeriesWorkspace.tsx`. Series metadata
-supports red/green/blue/white LED colors, selectable 2x2 quarter layouts, and
-quarter, physical upper/lower-half, or whole-substrate description scopes.
+supports red/green/blue/white LED colors, a fixed `2 1 / 3 4` quarter layout,
+quarter, selectable top/bottom or left/right half, and whole-substrate description scopes.
 Real hardware validation remains pending
 but does not block Stage 5 software work.
 Current progress is in

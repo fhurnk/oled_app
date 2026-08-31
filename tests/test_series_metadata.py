@@ -9,7 +9,6 @@ from oled_app.series.metadata import (
     led_color_label,
     normalize_led_color,
     normalize_quarter_payload,
-    quarter_layout_order,
     quarter_base,
     quarter_code,
     quarter_led_color,
@@ -60,26 +59,20 @@ class DescriptionScopeTests(unittest.TestCase):
         )
         self.assertEqual(payload["description_scope"], "half")
 
-    def test_half_scope_follows_selected_top_and_bottom_rows(self) -> None:
-        layout = {
-            "top_left": 4,
-            "top_right": 3,
-            "bottom_left": 1,
-            "bottom_right": 2,
-        }
+    def test_half_scope_can_expand_left_and_right_descriptions(self) -> None:
         payload = normalize_quarter_payload(
             {str(number): "Q" for number in range(1, 5)},
-            {"1": "lower", "2": "ignored", "3": "ignored", "4": "upper"},
+            {"1": "right", "2": "left", "3": "ignored", "4": "ignored"},
             {"1": "white"},
             "half",
-            layout,
+            "left_right",
         )
 
-        self.assertEqual(quarter_layout_order(payload["quarter_layout"]), (4, 3, 1, 2))
-        self.assertEqual(description_scope_groups("half", layout), ((4, 3), (1, 2)))
+        self.assertEqual(payload["half_orientation"], "left_right")
+        self.assertEqual(description_scope_groups("half", "left_right"), ((2, 3), (1, 4)))
         self.assertEqual(
             payload["quarter_descriptions"],
-            {"1": "lower", "2": "lower", "3": "upper", "4": "upper"},
+            {"1": "right", "2": "left", "3": "left", "4": "right"},
         )
 
     def test_substrate_scope_expands_one_description_to_all_quarters(self) -> None:

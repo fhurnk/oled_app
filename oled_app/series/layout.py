@@ -5,13 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
-from .metadata import normalize_quarter_layout
-
-
 def build_holder_layout(
     width: int = 930,
     height: int = 620,
-    quarter_layout: Any = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Geometry for substrate holder maps in the legacy GUI."""
     box_w = 86
@@ -22,26 +18,26 @@ def build_holder_layout(
     top_y1, top_y3 = 145, 235
     bottom_y1, bottom_y3 = 320, 405
 
-    position_layout = {
-        "top_left": {
+    result = {
+        2: {
             "number_xy": (48, 92),
             "name_xy": (92, 36),
             "entry_xy": (78, 62),
             "substrates": [(left_inner_x, top_y1), (left_inner_x, top_y3), (left_outer_x, top_y3)],
         },
-        "top_right": {
+        1: {
             "number_xy": (width - 48, 92),
             "name_xy": (width - 248, 36),
             "entry_xy": (width - 230, 62),
             "substrates": [(right_inner_x, top_y1), (right_inner_x, top_y3), (right_outer_x, top_y3)],
         },
-        "bottom_left": {
+        3: {
             "number_xy": (48, height - 118),
             "name_xy": (92, height - 155),
             "entry_xy": (78, height - 130),
             "substrates": [(left_inner_x, bottom_y3), (left_inner_x, bottom_y1), (left_outer_x, bottom_y1)],
         },
-        "bottom_right": {
+        4: {
             "number_xy": (width - 48, height - 118),
             "name_xy": (width - 248, height - 155),
             "entry_xy": (width - 230, height - 130),
@@ -49,11 +45,6 @@ def build_holder_layout(
         },
     }
 
-    normalized = normalize_quarter_layout(quarter_layout)
-    result = {
-        normalized[position]: info
-        for position, info in position_layout.items()
-    }
     for info in result.values():
         detailed = []
         for substrate_number, (x, y) in enumerate(info["substrates"], start=1):

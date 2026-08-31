@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from itertools import permutations
 from typing import Any, Dict
 
 from oled_app.utils import safe_filename
@@ -17,14 +16,8 @@ DESCRIPTION_SCOPE_QUARTER = "quarter"
 DESCRIPTION_SCOPE_HALF = "half"
 DESCRIPTION_SCOPE_SUBSTRATE = "substrate"
 
-QUARTER_LAYOUT_POSITIONS = ("top_left", "top_right", "bottom_left", "bottom_right")
-DEFAULT_QUARTER_LAYOUT = {
-    "top_left": 2,
-    "top_right": 1,
-    "bottom_left": 3,
-    "bottom_right": 4,
-}
-QUARTER_LAYOUT_OPTIONS = tuple(permutations((1, 2, 3, 4)))
+HALF_ORIENTATION_TOP_BOTTOM = "top_bottom"
+HALF_ORIENTATION_LEFT_RIGHT = "left_right"
 
 LED_COLOR_SUFFIXES = {
     LED_COLOR_RED: "R",
@@ -51,6 +44,11 @@ DESCRIPTION_SCOPE_LABELS = {
     DESCRIPTION_SCOPE_QUARTER: "Для каждой четверти",
     DESCRIPTION_SCOPE_HALF: "Для каждой половины",
     DESCRIPTION_SCOPE_SUBSTRATE: "Для всей подложки",
+}
+
+HALF_ORIENTATION_LABELS = {
+    HALF_ORIENTATION_TOP_BOTTOM: "Верх / низ",
+    HALF_ORIENTATION_LEFT_RIGHT: "Лево / право",
 }
 
 
@@ -122,70 +120,57 @@ def series_description_scope(config: Dict[str, Any]) -> str:
     return normalize_description_scope(config.get("description_scope"))
 
 
-def normalize_quarter_layout(value: Any) -> Dict[str, int]:
-    if isinstance(value, dict):
-        try:
-            layout = {
-                position: int(value.get(position))
-                for position in QUARTER_LAYOUT_POSITIONS
-            }
-        except (TypeError, ValueError):
-            layout = {}
-    elif isinstance(value, (list, tuple)) and len(value) == 4:
-        try:
-            layout = dict(zip(QUARTER_LAYOUT_POSITIONS, (int(item) for item in value)))
-        except (TypeError, ValueError):
-            layout = {}
-    else:
-        layout = {}
-    if set(layout.values()) != {1, 2, 3, 4}:
-        return dict(DEFAULT_QUARTER_LAYOUT)
-    return layout
+def normalize_half_orientation(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    aliases = {
+        HALF_ORIENTATION_TOP_BOTTOM: HALF_ORIENTATION_TOP_BOTTOM,
+        "top/bottom": HALF_ORIENTATION_TOP_BOTTOM,
+        "верх / низ": HALF_ORIENTATION_TOP_BOTTOM,
+        "верх/низ": HALF_ORIENTATION_TOP_BOTTOM,
+        HALF_ORIENTATION_LEFT_RIGHT: HALF_ORIENTATION_LEFT_RIGHT,
+        "left/right": HALF_ORIENTATION_LEFT_RIGHT,
+        "лево / право": HALF_ORIENTATION_LEFT_RIGHT,
+        "лево/право": HALF_ORIENTATION_LEFT_RIGHT,
+    }
+    return aliases.get(text, HALF_ORIENTATION_TOP_BOTTOM)
 
 
-def quarter_layout_order(value: Any) -> tuple[int, int, int, int]:
-    layout = normalize_quarter_layout(value)
-    return tuple(layout[position] for position in QUARTER_LAYOUT_POSITIONS)
+def half_orientation_from_label(value: Any) -> str:
+    text = str(value or "").strip()
+    for orientation, label in HALF_ORIENTATION_LABELS.items():
+        if text == label:
+            return orientation
+    return normalize_half_orientation(text)
 
 
-def quarter_layout_label(value: Any) -> str:
-    top_left, top_right, bottom_left, bottom_right = quarter_layout_order(value)
-    return f"{top_left} {top_right} / {bottom_left} {bottom_right}"
-
-
-def quarter_layout_from_label(value: Any) -> Dict[str, int]:
-    text = str(value or "")
-    numbers = [int(char) for char in text if char in "1234"]
-    return normalize_quarter_layout(numbers)
-
-
-def series_quarter_layout(config: Dict[str, Any]) -> Dict[str, int]:
-    return normalize_quarter_layout(config.get("quarter_layout"))
+def series_half_orientation(config: Dict[str, Any]) -> str:
+    return normalize_half_orientation(config.get("half_orientation"))
 
 
 def description_scope_groups(
     value: Any,
-    quarter_layout: Any = None,
+    half_orientation: Any = HALF_ORIENTATION_TOP_BOTTOM,
 ) -> tuple[tuple[int, ...], ...]:
     scope = normalize_description_scope(value)
     if scope == DESCRIPTION_SCOPE_HALF:
-        top_left, top_right, bottom_left, bottom_right = quarter_layout_order(quarter_layout)
-        return ((top_left, top_right), (bottom_left, bottom_right))
+        if normalize_half_orientation(half_orientation) == HALF_ORIENTATION_LEFT_RIGHT:
+            return ((2, 3), (1, 4))
+        return ((2, 1), (3, 4))
     if scope == DESCRIPTION_SCOPE_SUBSTRATE:
         return ((1, 2, 3, 4),)
-    return tuple((quarter_number,) for quarter_number in quarter_layout_order(quarter_layout))
+    return ((2,), (1,), (3,), (4,))
 
 
 def expand_descriptions_for_scope(
     quarter_descriptions: Dict[str, str],
     value: Any,
-    quarter_layout: Any = None,
+    half_orientation: Any = HALF_ORIENTATION_TOP_BOTTOM,
 ) -> Dict[str, str]:
     descriptions = {
         str(q): str(quarter_descriptions.get(str(q), "") or "").strip()
         for q in range(1, 5)
     }
-    for group in description_scope_groups(value, quarter_layout):
+    for group in description_scope_groups(value, half_orientation):
         shared = descriptions[str(group[0])]
         for quarter_number in group:
             descriptions[str(quarter_number)] = shared
@@ -247,7 +232,7 @@ def normalize_quarter_payload(
     quarter_descriptions: Dict[str, str],
     quarter_led_colors: Dict[str, str],
     description_scope: Any = DESCRIPTION_SCOPE_QUARTER,
-    quarter_layout: Any = None,
+    half_orientation: Any = HALF_ORIENTATION_TOP_BOTTOM,
 ) -> Dict[str, Any]:
     bases = {
         str(q): safe_filename(str(quarter_bases.get(str(q), "Q") or "Q").strip(), fallback="Q")
@@ -256,16 +241,16 @@ def normalize_quarter_payload(
     series_color = normalize_led_color(quarter_led_colors.get("1"))
     colors = {str(q): series_color for q in range(1, 5)}
     normalized_scope = normalize_description_scope(description_scope)
-    normalized_layout = normalize_quarter_layout(quarter_layout)
+    normalized_half_orientation = normalize_half_orientation(half_orientation)
     descriptions = expand_descriptions_for_scope(
         quarter_descriptions,
         normalized_scope,
-        normalized_layout,
+        normalized_half_orientation,
     )
     return {
         "series_led_color": series_color,
         "description_scope": normalized_scope,
-        "quarter_layout": normalized_layout,
+        "half_orientation": normalized_half_orientation,
         "quarter_bases": bases,
         "quarter_descriptions": descriptions,
         "quarter_led_colors": colors,

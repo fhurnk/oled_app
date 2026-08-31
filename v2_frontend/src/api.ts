@@ -154,7 +154,7 @@ export type ActiveSeries = {
   created_at: string | null;
   series_led_color: string;
   description_scope: "quarter" | "half" | "substrate";
-  quarter_layout: Record<"top_left" | "top_right" | "bottom_left" | "bottom_right", number>;
+  half_orientation: "top_bottom" | "left_right";
   quarters: SeriesQuarter[];
   pixels: SeriesPixel[];
   history: SeriesHistoryItem[];
@@ -189,7 +189,7 @@ export type SeriesConfigInput = {
   keyword: string;
   series_led_color: "red" | "green" | "blue" | "white";
   description_scope: "quarter" | "half" | "substrate";
-  quarter_layout: Record<"top_left" | "top_right" | "bottom_left" | "bottom_right", number>;
+  half_orientation: "top_bottom" | "left_right";
   quarter_bases: Record<string, string>;
   quarter_descriptions: Record<string, string>;
 };
