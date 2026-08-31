@@ -82,6 +82,30 @@ function descriptionGroups(
   return quarterOrder.map((number) => [number]);
 }
 
+function synchronizeScopeFields(
+  form: SeriesConfigInput,
+  scope: SeriesConfigInput["description_scope"],
+  halfOrientation: SeriesConfigInput["half_orientation"]
+): SeriesConfigInput {
+  const bases = { ...form.quarter_bases };
+  const descriptions = { ...form.quarter_descriptions };
+  descriptionGroups(scope, halfOrientation).forEach((group) => {
+    const sharedBase = bases[String(group[0])] ?? "Q";
+    const sharedDescription = descriptions[String(group[0])] ?? "";
+    group.forEach((number) => {
+      bases[String(number)] = sharedBase;
+      descriptions[String(number)] = sharedDescription;
+    });
+  });
+  return {
+    ...form,
+    description_scope: scope,
+    half_orientation: halfOrientation,
+    quarter_bases: bases,
+    quarter_descriptions: descriptions
+  };
+}
+
 function descriptionGroupLabel(
   group: number[],
   index: number,
@@ -633,15 +657,10 @@ export default function SeriesWorkspace({
             <option value="red">Красный (R)</option><option value="green">Зелёный (G)</option><option value="blue">Синий (B)</option><option value="white">Белый (W)</option>
           </SelectField>
           <SelectField
-            label="Область описания"
+            label="Область серии"
             onChange={(event) => {
               const scope = event.target.value as SeriesConfigInput["description_scope"];
-              const descriptions = { ...form.quarter_descriptions };
-              descriptionGroups(scope, form.half_orientation).forEach((group) => {
-                const shared = descriptions[String(group[0])] ?? "";
-                group.forEach((number) => { descriptions[String(number)] = shared; });
-              });
-              setForm({ ...form, description_scope: scope, quarter_descriptions: descriptions });
+              setForm(synchronizeScopeFields(form, scope, form.half_orientation));
             }}
             value={form.description_scope}
           >
@@ -654,12 +673,7 @@ export default function SeriesWorkspace({
               label="Расположение половин"
               onChange={(event) => {
                 const halfOrientation = event.target.value as SeriesConfigInput["half_orientation"];
-                const descriptions = { ...form.quarter_descriptions };
-                descriptionGroups(form.description_scope, halfOrientation).forEach((group) => {
-                  const shared = descriptions[String(group[0])] ?? "";
-                  group.forEach((number) => { descriptions[String(number)] = shared; });
-                });
-                setForm({ ...form, half_orientation: halfOrientation, quarter_descriptions: descriptions });
+                setForm(synchronizeScopeFields(form, form.description_scope, halfOrientation));
               }}
               value={form.half_orientation}
             >
@@ -674,7 +688,18 @@ export default function SeriesWorkspace({
             return (
               <fieldset key={number}>
                 <legend>Четверть {number}</legend>
-                <TextField label="Короткая база" maxLength={32} onChange={(event) => setForm({ ...form, quarter_bases: { ...form.quarter_bases, [key]: event.target.value } })} value={form.quarter_bases[key] ?? ""} />
+                <TextField
+                  label="Короткая база"
+                  maxLength={32}
+                  onChange={(event) => {
+                    const bases = { ...form.quarter_bases };
+                    const group = descriptionGroups(form.description_scope, form.half_orientation)
+                      .find((items) => items.includes(number)) ?? [number];
+                    group.forEach((quarterNumber) => { bases[String(quarterNumber)] = event.target.value; });
+                    setForm({ ...form, quarter_bases: bases });
+                  }}
+                  value={form.quarter_bases[key] ?? ""}
+                />
               </fieldset>
             );
           })}

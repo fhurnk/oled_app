@@ -69,7 +69,7 @@ def spectral_integral_at_voltage(
     calibration: Any,
     voltage_V: Any = None,
 ) -> Optional[float]:
-    """Resolve the quarter spectral integral, including a voltage fit when present."""
+    """Resolve the spectral integral, clamping a linear fit at opening voltage."""
 
     if not isinstance(calibration, dict):
         return None
@@ -87,17 +87,20 @@ def spectral_integral_at_voltage(
     activation_voltage = as_float_or_none(
         calibration.get("activation_voltage_V")
     )
-    if (
-        voltage is not None
-        and activation_voltage is not None
-        and voltage < activation_voltage
-    ):
-        return None
     slope = as_float_or_none(calibration.get("slope_integral_per_V"))
     intercept = as_float_or_none(calibration.get("intercept_integral"))
     if voltage is None or slope is None or intercept is None:
         return fallback if fallback is not None and fallback > 0 else None
-    predicted = float(slope) * float(voltage) + float(intercept)
+    if activation_voltage is not None:
+        opening_value = float(slope) * float(activation_voltage) + float(intercept)
+        if not math.isfinite(opening_value) or opening_value <= 0:
+            return fallback if fallback is not None and fallback > 0 else None
+    evaluation_voltage = (
+        max(float(voltage), float(activation_voltage))
+        if activation_voltage is not None
+        else float(voltage)
+    )
+    predicted = float(slope) * evaluation_voltage + float(intercept)
     if not math.isfinite(predicted) or predicted <= 0:
         return fallback if fallback is not None and fallback > 0 else None
     return predicted

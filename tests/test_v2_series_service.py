@@ -147,7 +147,7 @@ class V2SeriesServiceTests(unittest.TestCase):
         self.assertEqual(active["series_led_color"], "white")
         self.assertEqual(active["description_scope"], "half")
         self.assertEqual(active["half_orientation"], "left_right")
-        self.assertEqual([item["code"] for item in active["quarters"]], ["AW", "BW", "CW", "DW"])
+        self.assertEqual([item["code"] for item in active["quarters"]], ["AW", "BW", "BW", "AW"])
         self.assertEqual(
             [item["description"] for item in active["quarters"]],
             ["right", "left", "left", "right"],

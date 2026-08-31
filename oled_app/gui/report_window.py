@@ -14,9 +14,13 @@ from openpyxl import load_workbook
 
 from oled_app.constants import MEASUREMENT_FOLDER_NAMES, SCRIPT_DIR
 from oled_app.reports.origin_report import (
+    REPORT_GROUPING_QUARTERS,
+    REPORT_GROUPING_SETTINGS,
     REPORT_MODE_FULL,
     REPORT_MODE_IVL,
     REPORT_MODE_SPECTRA,
+    report_group_key,
+    report_group_label,
     series_quarter_number,
 )
 from oled_app.utils import (
@@ -60,6 +64,7 @@ def collect_report_spectrum_candidates(
     app,
     date_filter: Optional[str] = None,
     excluded_quarters: Optional[set[int]] = None,
+    grouping: Optional[str] = None,
 ) -> Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]:
     assert app.series is not None
     excluded_quarters = excluded_quarters or set()
@@ -88,12 +93,20 @@ def collect_report_spectrum_candidates(
             latest_by_pixel[pixel] = (mtime, series, substrate, path)
 
     candidates: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
+    config = getattr(app.series, "config", {}) if app.series is not None else {}
     for pixel, (_mtime, series, substrate, path) in latest_by_pixel.items():
         voltages = read_report_spectrum_voltages(path)
         if voltages:
-            candidates.setdefault(series, {}).setdefault(substrate, {})[pixel] = {
+            quarter = series_quarter_number(series)
+            group_key = series if grouping is None else (
+                report_group_key(config, quarter, grouping)
+                if quarter is not None
+                else series
+            )
+            candidates.setdefault(group_key, {}).setdefault(substrate, {})[pixel] = {
                 "file": path,
                 "voltages": voltages,
+                "series": series,
             }
     return candidates
 
@@ -112,13 +125,18 @@ def selected_report_candidates(
     pixel_selection_vars: Dict[str, tk.StringVar],
 ) -> Dict[str, Dict[str, Any]]:
     selected: Dict[str, Dict[str, Any]] = {}
-    for series, substrate_var in substrate_selection_vars.items():
+    for group_key, substrate_var in substrate_selection_vars.items():
         substrate = substrate_var.get().strip()
-        pixel_var = pixel_selection_vars.get(series)
+        pixel_var = pixel_selection_vars.get(group_key)
         pixel = pixel_var.get().strip() if pixel_var is not None else ""
-        info = candidates.get(series, {}).get(substrate, {}).get(pixel)
+        info = candidates.get(group_key, {}).get(substrate, {}).get(pixel)
         if info:
-            selected[pixel] = {"series": series, "subseries": substrate, **info}
+            selected[pixel] = {
+                "group": group_key,
+                "series": info.get("series", group_key),
+                "subseries": substrate,
+                **info,
+            }
     return selected
 
 
@@ -170,6 +188,7 @@ def open_report_window(app) -> None:
     if spectrum_dates:
         available_modes.append(REPORT_MODE_SPECTRA)
     report_mode_var = tk.StringVar(value=available_modes[0])
+    report_grouping_var = tk.StringVar(value=REPORT_GROUPING_SETTINGS)
     ivl_date_var = tk.StringVar(value=ivl_dates[-1] if ivl_dates else "")
     spectrum_date_var = tk.StringVar(value=spectrum_dates[-1] if spectrum_dates else "")
     excluded_quarter_vars = {quarter: tk.BooleanVar(value=False) for quarter in range(1, 5)}
@@ -178,7 +197,12 @@ def open_report_window(app) -> None:
         return {quarter for quarter, var in excluded_quarter_vars.items() if var.get()}
 
     candidates = (
-        collect_report_spectrum_candidates(app, spectrum_date_var.get(), selected_excluded_quarters())
+        collect_report_spectrum_candidates(
+            app,
+            spectrum_date_var.get(),
+            selected_excluded_quarters(),
+            report_grouping_var.get(),
+        )
         if spectrum_dates
         else {}
     )
@@ -206,6 +230,21 @@ def open_report_window(app) -> None:
             value=value,
             state="normal" if value in available_modes else "disabled",
         ).grid(row=0, column=column, sticky="w", padx=10, pady=6)
+
+    grouping_frame = ttk.LabelFrame(main, text="Группировка данных")
+    grouping_frame.pack(fill="x", pady=(0, 10))
+    ttk.Radiobutton(
+        grouping_frame,
+        text="Использовать область из настроек серии",
+        variable=report_grouping_var,
+        value=REPORT_GROUPING_SETTINGS,
+    ).pack(side="left", padx=10, pady=6)
+    ttk.Radiobutton(
+        grouping_frame,
+        text="Всегда разделять на четверти",
+        variable=report_grouping_var,
+        value=REPORT_GROUPING_QUARTERS,
+    ).pack(side="left", padx=10, pady=6)
 
     date_frame = ttk.LabelFrame(main, text="Даты измерений")
     date_frame.pack(fill="x", pady=(0, 10))
@@ -244,7 +283,7 @@ def open_report_window(app) -> None:
             ttk.Label(selection_frame, text="За выбранную дату спектры не найдены.", foreground="#555555").grid(row=0, column=0, sticky="w", padx=8, pady=6)
             return
 
-        for column, header in enumerate(("Подсерия", "Подложка", "Пиксель", "")):
+        for column, header in enumerate(("Группа отчёта", "Подложка", "Пиксель", "")):
             ttk.Label(selection_frame, text=header, font=("Segoe UI", 9, "bold")).grid(
                 row=0,
                 column=column,
@@ -253,18 +292,21 @@ def open_report_window(app) -> None:
                 pady=(5, 3),
             )
 
-        for row, series in enumerate(sorted(candidates), start=1):
-            substrates = sorted(candidates[series])
-            substrate_selection_vars[series] = tk.StringVar(value=substrates[0])
-            pixels = sorted(candidates[series][substrates[0]])
-            pixel_selection_vars[series] = tk.StringVar(value=pixels[0])
-            pixel_selection_vars[series].trace_add("write", refresh_defaults)
+        for row, group_key in enumerate(sorted(candidates), start=1):
+            substrates = sorted(candidates[group_key])
+            substrate_selection_vars[group_key] = tk.StringVar(value=substrates[0])
+            pixels = sorted(candidates[group_key][substrates[0]])
+            pixel_selection_vars[group_key] = tk.StringVar(value=pixels[0])
+            pixel_selection_vars[group_key].trace_add("write", refresh_defaults)
 
-            ttk.Label(selection_frame, text=series + ":").grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
+            ttk.Label(
+                selection_frame,
+                text=report_group_label(app.series.config, group_key) + ":",
+            ).grid(row=row, column=0, sticky="e", padx=(8, 6), pady=3)
             substrate_combo = ttk.Combobox(
                 selection_frame,
                 values=substrates,
-                textvariable=substrate_selection_vars[series],
+                textvariable=substrate_selection_vars[group_key],
                 state="readonly",
                 width=18,
             )
@@ -272,17 +314,17 @@ def open_report_window(app) -> None:
             pixel_combo = ttk.Combobox(
                 selection_frame,
                 values=pixels,
-                textvariable=pixel_selection_vars[series],
+                textvariable=pixel_selection_vars[group_key],
                 state="readonly",
                 width=18,
             )
             pixel_combo.grid(row=row, column=2, sticky="w", padx=(0, 8), pady=3)
 
-            def update_pixels(_event=None, *, selected_series=series, combo=pixel_combo) -> None:
-                substrate = substrate_selection_vars[selected_series].get()
-                available_pixels = sorted(candidates.get(selected_series, {}).get(substrate, {}))
+            def update_pixels(_event=None, *, selected_group=group_key, combo=pixel_combo) -> None:
+                substrate = substrate_selection_vars[selected_group].get()
+                available_pixels = sorted(candidates.get(selected_group, {}).get(substrate, {}))
                 combo.configure(values=available_pixels)
-                pixel_selection_vars[selected_series].set(available_pixels[0] if available_pixels else "")
+                pixel_selection_vars[selected_group].set(available_pixels[0] if available_pixels else "")
 
             substrate_combo.bind("<<ComboboxSelected>>", update_pixels)
             if len(substrates) > 1:
@@ -411,6 +453,7 @@ def open_report_window(app) -> None:
             app,
             spectrum_date_var.get(),
             selected_excluded_quarters(),
+            report_grouping_var.get(),
         )
         refresh_output_name()
         rebuild_selection()
@@ -423,12 +466,16 @@ def open_report_window(app) -> None:
                 app,
                 spectrum_date_var.get(),
                 selected_excluded_quarters(),
+                report_grouping_var.get(),
             )
             if spectrum_dates
             else {}
         )
         rebuild_selection()
         refresh_defaults()
+
+    def change_report_grouping(*_args) -> None:
+        change_excluded_quarters()
 
     def update_report_mode(*_args) -> None:
         mode = report_mode_var.get()
@@ -447,6 +494,7 @@ def open_report_window(app) -> None:
     ivl_date_var.trace_add("write", lambda *_args: refresh_output_name())
     spectrum_date_var.trace_add("write", change_spectrum_date)
     report_mode_var.trace_add("write", update_report_mode)
+    report_grouping_var.trace_add("write", change_report_grouping)
     rebuild_selection()
     update_report_mode()
 
@@ -468,6 +516,8 @@ def open_report_window(app) -> None:
             str(output),
             "--report-mode",
             mode,
+            "--report-grouping",
+            report_grouping_var.get(),
             "--strict",
         ]
         for quarter in sorted(selected_excluded_quarters()):
@@ -492,7 +542,7 @@ def open_report_window(app) -> None:
             ]
         )
         for pixel, info in sorted(selected.items()):
-            cmd.extend(["--spectrum-series-pixel", f"{info['series']}={pixel}"])
+            cmd.extend(["--spectrum-group-pixel", f"{info['group']}={pixel}"])
 
         if same_grid_var.get():
             start = parse_float(global_vars["start"].get(), "Начало напряжения")

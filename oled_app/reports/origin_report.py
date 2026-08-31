@@ -21,6 +21,14 @@ from openpyxl.chart.reference import Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from oled_app.series.metadata import (
+    description_scope_groups,
+    quarter_code,
+    quarter_description,
+    series_description_scope,
+    series_half_orientation,
+)
+
 
 TIMESTAMP_RE = re.compile(
     r"_(?P<day>\d{2})-(?P<month>\d{2})-(?P<year>\d{4})_"
@@ -67,6 +75,10 @@ REPORT_MODE_IVL = "ivl"
 REPORT_MODE_SPECTRA = "spectra"
 REPORT_MODES = (REPORT_MODE_FULL, REPORT_MODE_IVL, REPORT_MODE_SPECTRA)
 
+REPORT_GROUPING_QUARTERS = "quarters"
+REPORT_GROUPING_SETTINGS = "settings"
+REPORT_GROUPINGS = (REPORT_GROUPING_QUARTERS, REPORT_GROUPING_SETTINGS)
+
 
 def report_mode(args: argparse.Namespace) -> str:
     """Return the requested report composition, preserving old callers as full reports."""
@@ -80,6 +92,10 @@ def report_includes_ivl(args: argparse.Namespace) -> bool:
 
 def report_includes_spectra(args: argparse.Namespace) -> bool:
     return report_mode(args) in {REPORT_MODE_FULL, REPORT_MODE_SPECTRA}
+
+
+def report_grouping(args: argparse.Namespace) -> str:
+    return getattr(args, "report_grouping", REPORT_GROUPING_QUARTERS)
 
 
 @dataclass(frozen=True)
@@ -233,6 +249,44 @@ def series_quarter_number(series: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def load_series_config(measurements_dir: Path) -> dict:
+    config_path = Path(measurements_dir).parent / "series_config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        value = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def report_quarter_groups(config: dict, grouping: str) -> tuple[tuple[int, ...], ...]:
+    if grouping != REPORT_GROUPING_SETTINGS:
+        return ((2,), (1,), (3,), (4,))
+    return description_scope_groups(
+        series_description_scope(config),
+        series_half_orientation(config),
+    )
+
+
+def report_group_key(config: dict, quarter_number: int, grouping: str) -> str:
+    quarter_number = int(quarter_number)
+    for group in report_quarter_groups(config, grouping):
+        if quarter_number in group:
+            return "+".join(map(str, group))
+    return str(quarter_number)
+
+
+def report_group_label(config: dict, group_key: str) -> str:
+    try:
+        quarters = tuple(int(value) for value in str(group_key).split("+"))
+    except ValueError:
+        return str(group_key)
+    codes = "+".join(f"{quarter_code(config, number)}{number}" for number in quarters)
+    description = quarter_description(config, quarters[0]).strip() if quarters else ""
+    return f"{description} ({codes})" if description else codes
+
+
 def measurement_sort_key(record) -> tuple:
     return (*pixel_position_key(record.pixel), natural_key(record.series), natural_key(record.subseries))
 
@@ -241,23 +295,26 @@ def apply_quarter_descriptions(
     measurements_dir: Path,
     iv_records: list[IvRecord],
     spectrum_records: list[SpectrumRecord],
+    grouping: str = REPORT_GROUPING_QUARTERS,
 ) -> None:
-    """Use ``Description (code)`` as the visible Origin series name."""
+    """Apply quarter labels or merge records using the configured physical scope."""
 
-    config_path = Path(measurements_dir).parent / "series_config.json"
-    if not config_path.exists():
-        return
-    try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-    except Exception:
+    config = load_series_config(measurements_dir)
+    if not config:
         return
     descriptions = config.get("quarter_descriptions")
     if not isinstance(descriptions, dict):
-        return
+        descriptions = {}
 
     for record in [*iv_records, *spectrum_records]:
         quarter = series_quarter_number(record.series)
         if quarter is None:
+            continue
+        if grouping == REPORT_GROUPING_SETTINGS:
+            record.series = report_group_label(
+                config,
+                report_group_key(config, quarter, grouping),
+            )
             continue
         description = str(descriptions.get(str(quarter), "") or "").strip()
         if description and description != record.series:
@@ -432,9 +489,51 @@ def collect_spectrum_records(
     date_filter: str | None = None,
     explicit_series_pixels: dict[str, str] | None = None,
     excluded_quarters: set[int] | None = None,
+    explicit_group_pixels: dict[str, str] | None = None,
+    series_config: dict | None = None,
+    grouping: str = REPORT_GROUPING_QUARTERS,
 ) -> list[SpectrumRecord]:
     explicit_series_pixels = explicit_series_pixels or {}
+    explicit_group_pixels = explicit_group_pixels or {}
+    series_config = series_config or {}
     excluded_quarters = excluded_quarters or set()
+    if explicit_group_pixels:
+        candidates_by_group: dict[str, list[MeasurementPath]] = {}
+        for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
+            quarter = series_quarter_number(meta.series)
+            if quarter in excluded_quarters or quarter is None:
+                continue
+            group_key = report_group_key(series_config, quarter, grouping)
+            candidates_by_group.setdefault(group_key, []).append(meta)
+
+        selected_by_group: dict[str, MeasurementPath] = {}
+        for group_key, candidates in candidates_by_group.items():
+            selected_pixel = explicit_group_pixels.get(group_key)
+            if selected_pixel:
+                matching = [item for item in candidates if item.pixel == selected_pixel]
+                if not matching:
+                    warnings.append(
+                        f"Selected spectrum pixel not found for report group {group_key}: {selected_pixel}"
+                    )
+                    continue
+                selected_by_group[group_key] = sorted(matching, key=lambda item: item.timestamp)[-1]
+                continue
+            pixels = sorted({item.pixel for item in candidates}, key=pixel_position_key)
+            if require_explicit_selection:
+                warnings.append(
+                    f"Spectrum report group {group_key} requires explicit substrate and pixel selection; "
+                    f"available pixels: {pixels}"
+                )
+                continue
+            selected_by_group[group_key] = sorted(candidates, key=lambda item: item.timestamp)[-1]
+
+        records: list[SpectrumRecord] = []
+        for meta in selected_by_group.values():
+            record = read_spectrum_record(meta, sheet_name, warnings)
+            if record is not None:
+                records.append(record)
+        return sorted(records, key=measurement_sort_key)
+
     if explicit_series_pixels:
         candidates_by_series: dict[str, list[MeasurementPath]] = {}
         for meta in latest_by_pixel(spectra_root, "SPECTRUM_*.xlsx", date_filter).values():
@@ -639,6 +738,7 @@ def write_readme(ws, args: argparse.Namespace, iv_count: int, spectra_count: int
         ("OLED report origin-preparation workbook", None),
         ("Created by", "scripts/build_report_origin_workbook.py"),
         ("Report mode", report_mode(args)),
+        ("Report grouping", report_grouping(args)),
         ("Measurements dir", str(args.measurements_dir)),
         ("IVL date", (args.ivl_date or "latest") if includes_ivl else "excluded"),
         ("Spectrum date", (args.spectrum_date or "latest") if includes_spectra else "excluded"),
@@ -1133,6 +1233,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
     measurements_dir = Path(args.measurements_dir)
     iv_root = measurements_dir / "01_IVL_VAH"
     spectra_root = measurements_dir / "02_SPECTRA"
+    series_config = load_series_config(measurements_dir)
 
     includes_ivl = report_includes_ivl(args)
     includes_spectra = report_includes_spectra(args)
@@ -1150,6 +1251,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
     )
     explicit_pixels = parse_spectrum_pixels(args.spectrum_pixel or [])
     explicit_series_pixels = parse_spectrum_pixels(getattr(args, "spectrum_series_pixel", None) or [])
+    explicit_group_pixels = parse_spectrum_pixels(getattr(args, "spectrum_group_pixel", None) or [])
     spectrum_records = (
         collect_spectrum_records(
             spectra_root,
@@ -1160,6 +1262,9 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
             args.spectrum_date,
             explicit_series_pixels,
             excluded_quarters,
+            explicit_group_pixels,
+            series_config,
+            report_grouping(args),
         )
         if includes_spectra and spectra_root.exists()
         else []
@@ -1194,6 +1299,7 @@ def collect_report_data(args: argparse.Namespace) -> ReportData:
         measurements_dir,
         iv_records,
         spectrum_records,
+        report_grouping(args),
     )
 
     if args.strict and warnings:
@@ -1460,6 +1566,7 @@ def write_origin_readme(op, args: argparse.Namespace, data: ReportData) -> None:
             "OLED report Origin project",
             "Created by scripts/build_report_origin_workbook.py",
             f"Report mode: {report_mode(args)}",
+            f"Report grouping: {report_grouping(args)}",
             f"Measurements dir: {args.measurements_dir}",
             f"IVL date: {(args.ivl_date or 'latest') if report_includes_ivl(args) else 'excluded'}",
             f"Spectrum date: {(args.spectrum_date or 'latest') if report_includes_spectra(args) else 'excluded'}",
@@ -1842,6 +1949,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=REPORT_MODE_FULL,
         help="Report composition: full, IVL only, or spectra only.",
     )
+    parser.add_argument(
+        "--report-grouping",
+        choices=REPORT_GROUPINGS,
+        default=REPORT_GROUPING_QUARTERS,
+        help="Keep physical quarters separate or group them by series settings.",
+    )
     parser.add_argument("--ivl-date", default=None, help="Use IVL files only from this YYYY-MM-DD measurement date.")
     parser.add_argument("--spectrum-date", default=None, help="Use spectrum files only from this YYYY-MM-DD measurement date.")
     parser.add_argument(
@@ -1865,6 +1978,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "Explicit one-pixel selection in SERIES=PIXEL form. This selects one substrate through its pixel "
             "when a series contains spectra from multiple substrates. Can be passed multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--spectrum-group-pixel",
+        action="append",
+        default=[],
+        help=(
+            "Explicit one-pixel selection in QUARTER_GROUP=PIXEL form. "
+            "Group examples: 1, 2+1, or 1+2+3+4. Can be passed multiple times."
         ),
     )
     parser.add_argument(

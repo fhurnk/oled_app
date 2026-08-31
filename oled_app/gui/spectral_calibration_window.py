@@ -15,8 +15,15 @@ from oled_app.processing.spectral_calibration import (
     read_spectrum_integral_points,
     spectral_recalculation_output_path,
 )
-from oled_app.series import ensure_quarter_calibration_folder
-from oled_app.series.metadata import quarter_code, quarter_description
+from oled_app.series import ensure_scope_calibration_folder
+from oled_app.series.metadata import (
+    description_scope_groups,
+    quarter_code,
+    quarter_description,
+    scope_group_for_quarter,
+    series_description_scope,
+    series_half_orientation,
+)
 from oled_app.settings import DEFAULT_APP_SETTINGS, save_app_settings
 from oled_app.utils import (
     SPECTRAL_CALIBRATION_METHODS,
@@ -84,10 +91,10 @@ def ask_quarter_calibration_pixels(
     app,
     candidates_by_quarter: Dict[int, List[str]],
 ) -> Optional[List[str]]:
-    """Select any available quarters and one spectrum pixel for each."""
+    """Select one spectrum for each configured quarter/half/substrate scope."""
 
     dialog = tk.Toplevel(app)
-    dialog.title("Спектральная калибровка четвертей")
+    dialog.title("Спектральная калибровка областей")
     dialog.transient(app)
     dialog.grab_set()
 
@@ -95,20 +102,20 @@ def ask_quarter_calibration_pixels(
     main.pack(fill="both", expand=True)
     ttk.Label(
         main,
-        text="Выберите четверти и пиксель-калибратор для каждой из них.",
+        text="Выберите области и один пиксель со спектром для каждой из них.",
         font=("Segoe UI", 10, "bold"),
     ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
     ttk.Label(
         main,
         text=(
-            "Пересчёт каждой четверти будет сохранён в отдельный файл. "
-            "Ошибка одной четверти не остановит остальные."
+            "Области берутся из настроек серии. Один спектр задаёт калибровку "
+            "для всех четвертей выбранной половины или всей подложки."
         ),
         foreground="#555555",
         wraplength=650,
     ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 10))
 
-    for column, text in enumerate(("Выбрать", "Четверть", "Пиксель со спектром", "Доступно")):
+    for column, text in enumerate(("Выбрать", "Область", "Пиксель со спектром", "Доступно")):
         ttk.Label(main, text=text, font=("Segoe UI", 9, "bold")).grid(
             row=2,
             column=column,
@@ -117,10 +124,24 @@ def ask_quarter_calibration_pixels(
             pady=(0, 4),
         )
 
-    selected_vars: Dict[int, tk.BooleanVar] = {}
-    pixel_vars: Dict[int, tk.StringVar] = {}
-    pixel_combos: Dict[int, ttk.Combobox] = {}
+    selected_vars: Dict[tuple[int, ...], tk.BooleanVar] = {}
+    pixel_vars: Dict[tuple[int, ...], tk.StringVar] = {}
+    pixel_combos: Dict[tuple[int, ...], ttk.Combobox] = {}
     config = app.series.config if app.series is not None else {}
+    groups = description_scope_groups(
+        series_description_scope(config),
+        series_half_orientation(config),
+    )
+    candidates_by_group = {
+        group: sorted(
+            {
+                pixel
+                for quarter_number in group
+                for pixel in candidates_by_quarter.get(quarter_number, [])
+            }
+        )
+        for group in groups
+    }
     calibration_settings = getattr(app, "app_settings", {}).get(
         "spectral_calibration",
         DEFAULT_APP_SETTINGS["spectral_calibration"],
@@ -142,36 +163,41 @@ def ask_quarter_calibration_pixels(
         )
     )
 
-    def update_combo_state(quarter_number: int) -> None:
-        combo = pixel_combos[quarter_number]
+    def update_combo_state(group: tuple[int, ...]) -> None:
+        combo = pixel_combos[group]
         state = (
             "readonly"
-            if candidates_by_quarter.get(quarter_number)
-            and selected_vars[quarter_number].get()
+            if candidates_by_group.get(group)
+            and selected_vars[group].get()
             else "disabled"
         )
         combo.configure(state=state)
 
-    for quarter_number in range(1, 5):
-        candidates = candidates_by_quarter.get(quarter_number, [])
-        selected_vars[quarter_number] = tk.BooleanVar(value=bool(candidates))
-        pixel_vars[quarter_number] = tk.StringVar(value=candidates[0] if candidates else "")
-        row_number = quarter_number + 2
+    for index, group in enumerate(groups):
+        candidates = candidates_by_group.get(group, [])
+        selected_vars[group] = tk.BooleanVar(value=bool(candidates))
+        pixel_vars[group] = tk.StringVar(value=candidates[0] if candidates else "")
+        row_number = index + 3
         check = ttk.Checkbutton(
             main,
-            variable=selected_vars[quarter_number],
-            command=lambda q=quarter_number: update_combo_state(q),
+            variable=selected_vars[group],
+            command=lambda selected_group=group: update_combo_state(selected_group),
         )
         check.grid(row=row_number, column=0, sticky="w", padx=(2, 14), pady=5)
         if not candidates:
             check.configure(state="disabled")
 
-        code = quarter_code(config, quarter_number)
-        description = quarter_description(config, quarter_number).strip()
-        quarter_label = f"{quarter_number} — {code}"
+        codes = "+".join(f"{quarter_code(config, number)}{number}" for number in group)
+        description = quarter_description(config, group[0]).strip()
+        if len(group) == 1:
+            scope_label = f"Четверть {group[0]} — {codes}"
+        elif len(group) == 2:
+            scope_label = f"Половина {group[0]}+{group[1]} — {codes}"
+        else:
+            scope_label = f"Вся подложка — {codes}"
         if description:
-            quarter_label += f" · {description}"
-        ttk.Label(main, text=quarter_label).grid(
+            scope_label += f" · {description}"
+        ttk.Label(main, text=scope_label).grid(
             row=row_number,
             column=1,
             sticky="w",
@@ -181,12 +207,12 @@ def ask_quarter_calibration_pixels(
         combo = ttk.Combobox(
             main,
             values=candidates,
-            textvariable=pixel_vars[quarter_number],
+            textvariable=pixel_vars[group],
             state="readonly" if candidates else "disabled",
             width=28,
         )
         combo.grid(row=row_number, column=2, sticky="ew", padx=(0, 12), pady=5)
-        pixel_combos[quarter_number] = combo
+        pixel_combos[group] = combo
         ttk.Label(
             main,
             text=f"{len(candidates)}" if candidates else "нет спектров",
@@ -196,22 +222,22 @@ def ask_quarter_calibration_pixels(
     result: Dict[str, Optional[List[str]]] = {"pixels": None}
 
     def set_all(selected: bool) -> None:
-        for quarter_number in range(1, 5):
-            if candidates_by_quarter.get(quarter_number):
-                selected_vars[quarter_number].set(selected)
-                update_combo_state(quarter_number)
+        for group in groups:
+            if candidates_by_group.get(group):
+                selected_vars[group].set(selected)
+                update_combo_state(group)
 
     def confirm() -> None:
         selected_pixels = [
-            pixel_vars[quarter_number].get()
-            for quarter_number in range(1, 5)
-            if selected_vars[quarter_number].get()
-            and pixel_vars[quarter_number].get()
+            pixel_vars[group].get()
+            for group in groups
+            if selected_vars[group].get()
+            and pixel_vars[group].get()
         ]
         if not selected_pixels:
             messagebox.showwarning(
                 "Спектральная калибровка",
-                "Выберите хотя бы одну четверть.",
+                "Выберите хотя бы одну область.",
                 parent=dialog,
             )
             return
@@ -250,8 +276,9 @@ def ask_quarter_calibration_pixels(
         result["pixels"] = selected_pixels
         dialog.destroy()
 
+    controls_row = len(groups) + 3
     thresholds = ttk.LabelFrame(main, text="Выбор медианы или линейной модели", padding=8)
-    thresholds.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+    thresholds.grid(row=controls_row, column=0, columnspan=4, sticky="ew", pady=(12, 0))
     ttk.Label(thresholds, text="Допуск интеграла от медианы, %:").grid(
         row=0,
         column=0,
@@ -294,7 +321,7 @@ def ask_quarter_calibration_pixels(
     ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
     buttons = ttk.Frame(main)
-    buttons.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+    buttons.grid(row=controls_row + 1, column=0, columnspan=4, sticky="ew", pady=(12, 0))
     ttk.Button(buttons, text="Выбрать все доступные", command=lambda: set_all(True)).pack(
         side="left"
     )
@@ -355,10 +382,10 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
 
     summary_lines: List[str] = []
     if completed:
-        summary_lines.append(f"Успешно пересчитано четвертей: {len(completed)}.")
+        summary_lines.append(f"Успешно пересчитано областей: {len(completed)}.")
         for result in completed:
             summary_lines.append(
-                f"• Четверть {result['quarter']}, {result['pixel']}: "
+                f"• Четверти {result.get('quarters', result['quarter'])}, {result['pixel']}: "
                 f"интеграл {result['coefficient']:.9g}; "
                 f"{Path(result['output']).name}"
             )
@@ -369,7 +396,7 @@ def calibrate_quarter_from_latest_spectrum(app) -> None:
         summary_lines.extend(f"• {error}" for error in errors)
     if completed:
         summary_lines.append(
-            "\nФайлы сохранены в папке calibration соответствующей четверти. "
+            "\nФайлы сохранены в папке calibration соответствующей области. "
             "Для применения коэффициентов к ранее снятым XLSX нажмите "
             "«Пересчитать мкА → кд/м²»."
         )
@@ -425,6 +452,7 @@ def _calibrate_quarter_pixel(
         if linear_model_outlier_percent is None:
             linear_model_outlier_percent = configured_linear
     quarter_number = int(row.get("Quarter number") or 1)
+    target_quarters = scope_group_for_quarter(app.series.config, quarter_number)
     opening_voltage = as_float_or_none(row.get("Opening voltage (V)"))
     stored_calibration = app.series.integral_calibration_for_pixel(pixel_id)
     if (
@@ -437,13 +465,13 @@ def _calibrate_quarter_pixel(
     if stored_calibration is not None:
         source_pixel = str(stored_calibration.get("source_pixel") or "не указан")
         choice = messagebox.askyesnocancel(
-            "Спектральный интеграл четверти",
+            "Спектральный интеграл области",
             (
-                f"Для четверти {quarter_number} уже есть калибровка по пикселю "
+                f"Для области {'+'.join(map(str, target_quarters))} уже есть калибровка по пикселю "
                 f"{source_pixel}.\n\n"
-                "Да — применить сохранённый интеграл четверти к выбранному спектру.\n"
-                "Нет — заменить калибровку четверти расчётом по выбранному пикселю.\n"
-                "Отмена — пропустить эту четверть и продолжить остальные."
+                "Да — применить сохранённый интеграл области к выбранному спектру.\n"
+                "Нет — заменить калибровку области расчётом по выбранному пикселю.\n"
+                "Отмена — пропустить эту область и продолжить остальные."
             ),
             parent=app,
         )
@@ -469,10 +497,10 @@ def _calibrate_quarter_pixel(
             median_tolerance_percent=median_tolerance_percent,
             linear_model_outlier_percent=linear_model_outlier_percent,
         )
-    calibration_folder = ensure_quarter_calibration_folder(
+    calibration_folder = ensure_scope_calibration_folder(
         app.series.series_folder,
         app.series.config,
-        quarter_number,
+        target_quarters,
     )
     output_path = create_spectral_recalculation_workbook(
         spectral_recalculation_output_path(
@@ -486,10 +514,11 @@ def _calibrate_quarter_pixel(
         points,
         calibration,
         rgb_photodiode_coefficient=rgb_photo_coefficient,
+        target_quarters=target_quarters,
     )
     if not use_stored_calibration:
-        app.series.save_quarter_integral_calibration(
-            quarter_number,
+        app.series.save_scope_integral_calibration(
+            target_quarters,
             calibration.as_dict(),
         )
     action_status = "RECALCULATED" if use_stored_calibration else "CALIBRATED"
@@ -514,10 +543,10 @@ def _calibrate_quarter_pixel(
     action_text = (
         f"применён к {pixel_id}"
         if use_stored_calibration
-        else f"рассчитан по {pixel_id} и назначен четверти"
+        else f"рассчитан по {pixel_id} и назначен области"
     )
     app.log(
-        f"Четверть {quarter_number}: спектральный интеграл "
+        f"Область {'+'.join(map(str, target_quarters))}: спектральный интеграл "
         f"{calibration.coefficient:.9g}, интегральный коэффициент "
         f"{configured_integral:.9g}; произведение "
         f"{calibration.coefficient * configured_integral:.9g} "
@@ -531,6 +560,7 @@ def _calibrate_quarter_pixel(
     )
     return {
         "quarter": quarter_number,
+        "quarters": "+".join(map(str, target_quarters)),
         "pixel": pixel_id,
         "coefficient": calibration.coefficient,
         "output": output_path,

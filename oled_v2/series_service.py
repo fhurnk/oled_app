@@ -19,6 +19,7 @@ from oled_app.processing.ivl_preview import (
 from oled_app.series.manager import SeriesManager
 from oled_app.series.metadata import (
     expand_descriptions_for_scope,
+    expand_bases_for_scope,
     led_color_label,
     normalize_description_scope,
     normalize_half_orientation,
@@ -291,6 +292,11 @@ class SeriesService:
             )
         descriptions = expand_descriptions_for_scope(
             descriptions,
+            description_scope,
+            half_orientation,
+        )
+        bases = expand_bases_for_scope(
+            bases,
             description_scope,
             half_orientation,
         )

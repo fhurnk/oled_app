@@ -66,6 +66,23 @@ def ensure_quarter_calibration_folder(
     return output_dir
 
 
+def ensure_scope_calibration_folder(
+    series_folder: Path,
+    config: Dict[str, Any],
+    quarter_numbers: tuple[int, ...],
+) -> Path:
+    """Create one calibration folder for a quarter, half, or full substrate."""
+
+    normalized = tuple(dict.fromkeys(int(number) for number in quarter_numbers))
+    if len(normalized) == 1:
+        return ensure_quarter_calibration_folder(series_folder, config, normalized[0])
+    parts = [f"{quarter_code(config, number)}{number}" for number in normalized]
+    folder_name = safe_filename("+".join(parts), fallback="scope")
+    output_dir = Path(series_folder) / "calibration" / folder_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
 def ensure_camera_session_folder(
     series_folder: Path,
     pixel_id: str,

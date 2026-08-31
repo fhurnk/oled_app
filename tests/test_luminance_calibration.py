@@ -55,6 +55,33 @@ from oled_app.series.paths import ensure_quarter_calibration_folder
 
 
 class SpectralSensitivityTests(unittest.TestCase):
+    def test_scope_calibration_is_saved_once_and_assigned_to_all_target_quarters(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            manager = object.__new__(SeriesManager)
+            manager.series_folder = root
+            manager.config_path = root / "series_config.json"
+            manager.config = {
+                "quarter_bases": {"1": "C", "2": "C", "3": "D", "4": "D"},
+                "series_led_color": "red",
+            }
+            manager.journal = SimpleNamespace(config=manager.config)
+
+            manager.save_scope_integral_calibration(
+                (2, 1),
+                {"method": "normalized_shape_integral_filtered_median", "coefficient": 3.49},
+            )
+
+            calibrations = manager.config["quarter_integral_calibrations"]
+            self.assertEqual(calibrations["1"]["coefficient"], 3.49)
+            self.assertEqual(calibrations["2"]["coefficient"], 3.49)
+            self.assertEqual(calibrations["1"]["target_quarters"], [2, 1])
+            self.assertEqual(
+                calibrations["1"]["calibration_file"],
+                calibrations["2"]["calibration_file"],
+            )
+            self.assertTrue((root / calibrations["1"]["calibration_file"]).is_file())
+
     def test_integral_calibration_files_live_in_quarter_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -411,8 +438,9 @@ class SpectralSensitivityTests(unittest.TestCase):
         self.assertEqual(calibration.points_total, 4)
         self.assertEqual(calibration.points_used, 3)
         self.assertEqual(calibration.points_rejected, 1)
-        self.assertIsNone(calibration.integral_at_voltage(2.99))
+        self.assertAlmostEqual(calibration.integral_at_voltage(2.99), 3.0)
         self.assertAlmostEqual(calibration.integral_at_voltage(3.0), 3.0)
+        self.assertAlmostEqual(calibration.integral_at_voltage(3.01), 3.01)
 
     def test_rgb_coefficient_is_multiplied_by_geometry(self):
         settings = {
@@ -475,7 +503,7 @@ class SpectralSensitivityTests(unittest.TestCase):
                 settings,
                 voltage_V=2.99,
             ),
-            10.0,
+            24.0,
         )
         self.assertAlmostEqual(
             manager.luminance_coefficient_for_pixel(
@@ -1062,7 +1090,7 @@ class ExistingSeriesRecalculationTests(unittest.TestCase):
             result = load_workbook(workbook, data_only=True)
             try:
                 ws = result["Cycle_1"]
-                self.assertAlmostEqual(ws["H5"].value, 10.0)
+                self.assertAlmostEqual(ws["H5"].value, 18.0)
                 self.assertAlmostEqual(ws["H6"].value, 24.0)
             finally:
                 result.close()

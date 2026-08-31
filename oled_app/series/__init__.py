@@ -20,6 +20,7 @@ from .metadata import (
     default_integral_conversion_coefficient,
     description_scope_from_label,
     description_scope_groups,
+    expand_bases_for_scope,
     geometric_conversion_coefficient,
     half_orientation_from_label,
     led_color_from_label,
@@ -31,12 +32,14 @@ from .metadata import (
     quarter_led_color,
     series_description_scope,
     series_half_orientation,
+    scope_group_for_quarter,
 )
 from .paths import (
     ensure_camera_session_folder,
     ensure_day_folder,
     ensure_measurement_folder,
     ensure_quarter_calibration_folder,
+    ensure_scope_calibration_folder,
 )
 from .statuses import ivl_status_marker, pixel_status_color
 
@@ -62,6 +65,7 @@ __all__ = [
     "ensure_day_folder",
     "ensure_measurement_folder",
     "ensure_quarter_calibration_folder",
+    "ensure_scope_calibration_folder",
     "generate_pixels",
     "geometric_conversion_coefficient",
     "half_orientation_from_label",
@@ -72,6 +76,7 @@ __all__ = [
     "default_integral_conversion_coefficient",
     "description_scope_from_label",
     "description_scope_groups",
+    "expand_bases_for_scope",
     "pixel_status_color",
     "quarter_base",
     "quarter_code",
@@ -79,5 +84,6 @@ __all__ = [
     "quarter_led_color",
     "series_description_scope",
     "series_half_orientation",
+    "scope_group_for_quarter",
     "short_date_for_map",
 ]

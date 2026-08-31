@@ -20,6 +20,8 @@ from oled_app.reports.origin_report import (
     REPORT_MODE_FULL,
     REPORT_MODE_IVL,
     REPORT_MODE_SPECTRA,
+    REPORT_GROUPING_QUARTERS,
+    REPORT_GROUPING_SETTINGS,
     ReportData,
     SpectrumRecord,
     apply_quarter_descriptions,
@@ -29,6 +31,7 @@ from oled_app.reports.origin_report import (
     collect_spectrum_records,
     create_origin_iv_book,
     parse_args,
+    report_group_key,
     series_quarter_number,
 )
 
@@ -91,6 +94,31 @@ def _write_spectrum(path: Path, voltage: float = 2.0) -> None:
 
 
 class ReportWindowSelectionTests(unittest.TestCase):
+    def test_candidates_follow_half_grouping_from_series_settings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            series_folder = Path(temp_dir)
+            spectra_root = series_folder / "measurements" / "02_SPECTRA" / "2026-07-18"
+            _write_spectrum(spectra_root / "CG1" / "CG1_1" / "CG1_1_1" / "SPECTRUM_CG1_1_1.xlsx")
+            _write_spectrum(spectra_root / "CG2" / "CG2_1" / "CG2_1_1" / "SPECTRUM_CG2_1_1.xlsx")
+            app = SimpleNamespace(
+                series=SimpleNamespace(
+                    series_folder=series_folder,
+                    config={"description_scope": "half", "half_orientation": "top_bottom"},
+                )
+            )
+
+            candidates = collect_report_spectrum_candidates(
+                app,
+                "2026-07-18",
+                grouping=REPORT_GROUPING_SETTINGS,
+            )
+
+            self.assertEqual(set(candidates), {"2+1"})
+            self.assertEqual(
+                {pixel for substrates in candidates["2+1"].values() for pixel in substrates},
+                {"CG1_1_1", "CG2_1_1"},
+            )
+
     def test_output_name_reflects_selected_report_mode(self):
         self.assertEqual(report_output_name("2026-07-20", "", report_mode=REPORT_MODE_IVL), "report_IVL_2026-07-20.opju")
         self.assertEqual(
@@ -152,6 +180,17 @@ class ReportWindowSelectionTests(unittest.TestCase):
 
 
 class ReportBuilderSelectionTests(unittest.TestCase):
+    def test_cli_accepts_report_grouping(self):
+        self.assertEqual(
+            parse_args(["--report-grouping", REPORT_GROUPING_SETTINGS]).report_grouping,
+            REPORT_GROUPING_SETTINGS,
+        )
+
+    def test_report_group_key_uses_configured_half(self):
+        config = {"description_scope": "half", "half_orientation": "left_right"}
+        self.assertEqual(report_group_key(config, 3, REPORT_GROUPING_SETTINGS), "2+3")
+        self.assertEqual(report_group_key(config, 3, REPORT_GROUPING_QUARTERS), "3")
+
     def test_cli_accepts_each_report_mode(self):
         for mode in (REPORT_MODE_FULL, REPORT_MODE_IVL, REPORT_MODE_SPECTRA):
             with self.subTest(mode=mode):
@@ -264,6 +303,38 @@ class ReportBuilderSelectionTests(unittest.TestCase):
             self.assertEqual(iv_record.series, "ETM1 10nm (CLR1)")
             self.assertEqual(spectrum_record.series, "ETM1 10nm (CLR1)")
 
+    def test_series_settings_merge_report_names_for_a_half(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            series_folder = Path(temp_dir)
+            measurements = series_folder / "measurements"
+            measurements.mkdir()
+            (series_folder / "series_config.json").write_text(
+                json.dumps(
+                    {
+                        "description_scope": "half",
+                        "half_orientation": "top_bottom",
+                        "series_led_color": "red",
+                        "quarter_bases": {"1": "C", "2": "C", "3": "D", "4": "D"},
+                        "quarter_descriptions": {"1": "top", "2": "top", "3": "bottom", "4": "bottom"},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            records = [
+                IvRecord(Path("one.xlsx"), "date", "CR1", "CR1_1", "CR1_1_1", "Cycle_1", "WORKING", []),
+                IvRecord(Path("two.xlsx"), "date", "CR2", "CR2_1", "CR2_1_1", "Cycle_1", "WORKING", []),
+            ]
+
+            apply_quarter_descriptions(
+                measurements,
+                records,
+                [],
+                REPORT_GROUPING_SETTINGS,
+            )
+
+            self.assertEqual({record.series for record in records}, {"top (CR2+CR1)"})
+
     def test_series_selection_keeps_one_substrate_and_pixel(self):
         timestamp = datetime(2026, 7, 18, 12, 0, 0)
         paths = {
@@ -300,6 +371,38 @@ class ReportBuilderSelectionTests(unittest.TestCase):
 
         self.assertEqual([record.pixel for record in records], ["CG1_2_3"])
         self.assertEqual(records[0].subseries, "CG1_2")
+        self.assertEqual(warnings, [])
+
+    def test_group_selection_keeps_one_spectrum_for_a_configured_half(self):
+        timestamp = datetime(2026, 7, 18, 12, 0, 0)
+        paths = {
+            "CG1_1_1": MeasurementPath(Path("one.xlsx"), "2026-07-18", "CG1", "CG1_1", "CG1_1_1", timestamp),
+            "CG2_1_1": MeasurementPath(Path("two.xlsx"), "2026-07-18", "CG2", "CG2_1", "CG2_1_1", timestamp),
+        }
+
+        def make_record(meta, _sheet_name, _warnings):
+            return SpectrumRecord(
+                meta.path, meta.date_dir, meta.series, meta.subseries, meta.pixel,
+                [2.0], [500.0], [[100.0]],
+            )
+
+        warnings = []
+        with patch("oled_app.reports.origin_report.latest_by_pixel", return_value=paths), patch(
+            "oled_app.reports.origin_report.read_spectrum_record",
+            side_effect=make_record,
+        ):
+            records = collect_spectrum_records(
+                Path("spectra"),
+                {},
+                "Processed counts per s",
+                True,
+                warnings,
+                explicit_group_pixels={"2+1": "CG1_1_1"},
+                series_config={"description_scope": "half", "half_orientation": "top_bottom"},
+                grouping=REPORT_GROUPING_SETTINGS,
+            )
+
+        self.assertEqual([record.pixel for record in records], ["CG1_1_1"])
         self.assertEqual(warnings, [])
 
     def test_excluded_quarter_is_skipped_before_reading_measurements(self):

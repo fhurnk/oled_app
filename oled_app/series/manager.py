@@ -8,7 +8,10 @@ from typing import Any, Dict
 
 from oled_app.constants import APP_VERSION, CONFIG_FILE
 from oled_app.series.journal import SeriesJournal
-from oled_app.series.paths import ensure_quarter_calibration_folder
+from oled_app.series.paths import (
+    ensure_quarter_calibration_folder,
+    ensure_scope_calibration_folder,
+)
 from oled_app.series.metadata import (
     default_integral_conversion_coefficient,
     geometric_conversion_coefficient,
@@ -225,6 +228,45 @@ class SeriesManager:
             calibrations = {}
             self.config["quarter_integral_calibrations"] = calibrations
         calibrations[str(quarter_number)] = calibration_data
+        self.save_config()
+
+    def save_scope_integral_calibration(
+        self,
+        quarter_numbers: tuple[int, ...],
+        calibration: Dict[str, Any],
+    ) -> None:
+        """Assign one spectral calibration to every quarter in a physical scope."""
+
+        normalized = tuple(dict.fromkeys(int(number) for number in quarter_numbers))
+        if not normalized:
+            raise ValueError("Не выбрана область спектральной калибровки")
+        if len(normalized) == 1:
+            self.save_quarter_integral_calibration(normalized[0], calibration)
+            return
+
+        calibration_data = dict(calibration)
+        calibration_data["target_quarters"] = list(normalized)
+        calibration_folder = ensure_scope_calibration_folder(
+            self.series_folder,
+            self.config,
+            normalized,
+        )
+        calibration_path = calibration_folder / "integral_calibration.json"
+        calibration_data["calibration_file"] = str(
+            calibration_path.relative_to(self.series_folder)
+        )
+        temp_path = calibration_path.with_name(f".{calibration_path.name}.updating")
+        temp_path.write_text(
+            json.dumps(calibration_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temp_path.replace(calibration_path)
+        calibrations = self.config.setdefault("quarter_integral_calibrations", {})
+        if not isinstance(calibrations, dict):
+            calibrations = {}
+            self.config["quarter_integral_calibrations"] = calibrations
+        for quarter_number in normalized:
+            calibrations[str(quarter_number)] = dict(calibration_data)
         self.save_config()
 
     @staticmethod

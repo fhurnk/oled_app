@@ -177,6 +177,49 @@ def expand_descriptions_for_scope(
     return descriptions
 
 
+def expand_bases_for_scope(
+    quarter_bases: Dict[str, str],
+    value: Any,
+    half_orientation: Any = HALF_ORIENTATION_TOP_BOTTOM,
+) -> Dict[str, str]:
+    """Give every quarter in one physical description scope the same base.
+
+    The quarter number remains part of the final pixel ID, so sharing a base
+    keeps the quarters distinct while preventing one half/substrate from being
+    represented by unrelated prefixes.
+    """
+
+    bases = {
+        str(q): safe_filename(
+            str(quarter_bases.get(str(q), "Q") or "Q").strip(),
+            fallback="Q",
+        )
+        for q in range(1, 5)
+    }
+    for group in description_scope_groups(value, half_orientation):
+        shared = bases[str(group[0])]
+        for quarter_number in group:
+            bases[str(quarter_number)] = shared
+    return bases
+
+
+def scope_group_for_quarter(
+    config: Dict[str, Any],
+    quarter_number: int,
+) -> tuple[int, ...]:
+    """Return the configured physical scope containing ``quarter_number``."""
+
+    quarter_number = int(quarter_number)
+    groups = description_scope_groups(
+        series_description_scope(config),
+        series_half_orientation(config),
+    )
+    for group in groups:
+        if quarter_number in group:
+            return group
+    return (quarter_number,)
+
+
 def quarter_base(config: Dict[str, Any], quarter_number: int) -> str:
     key = str(quarter_number)
     bases = config.get("quarter_bases")
@@ -234,14 +277,15 @@ def normalize_quarter_payload(
     description_scope: Any = DESCRIPTION_SCOPE_QUARTER,
     half_orientation: Any = HALF_ORIENTATION_TOP_BOTTOM,
 ) -> Dict[str, Any]:
-    bases = {
-        str(q): safe_filename(str(quarter_bases.get(str(q), "Q") or "Q").strip(), fallback="Q")
-        for q in range(1, 5)
-    }
     series_color = normalize_led_color(quarter_led_colors.get("1"))
     colors = {str(q): series_color for q in range(1, 5)}
     normalized_scope = normalize_description_scope(description_scope)
     normalized_half_orientation = normalize_half_orientation(half_orientation)
+    bases = expand_bases_for_scope(
+        quarter_bases,
+        normalized_scope,
+        normalized_half_orientation,
+    )
     descriptions = expand_descriptions_for_scope(
         quarter_descriptions,
         normalized_scope,

@@ -6,6 +6,7 @@ from oled_app.measurements.spectrum import SpectrumHelper
 from oled_app.series.metadata import (
     base_luminance_coefficient_for_color,
     description_scope_groups,
+    expand_bases_for_scope,
     led_color_label,
     normalize_led_color,
     normalize_quarter_payload,
@@ -44,6 +45,18 @@ class LedColorMetadataTests(unittest.TestCase):
 
 
 class DescriptionScopeTests(unittest.TestCase):
+    def test_bases_are_shared_inside_half_and_substrate_scopes(self) -> None:
+        source = {"1": "A", "2": "B", "3": "C", "4": "D"}
+
+        self.assertEqual(
+            expand_bases_for_scope(source, "half", "top_bottom"),
+            {"1": "B", "2": "B", "3": "C", "4": "C"},
+        )
+        self.assertEqual(
+            expand_bases_for_scope(source, "substrate"),
+            {"1": "A", "2": "A", "3": "A", "4": "A"},
+        )
+
     def test_half_scope_expands_top_and_bottom_descriptions(self) -> None:
         payload = normalize_quarter_payload(
             {str(number): "Q" for number in range(1, 5)},

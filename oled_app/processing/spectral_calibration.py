@@ -529,6 +529,11 @@ def calibrate_quarter_spectral_integral(
                 float(value)
                 for value in np.polyfit(linear_voltages, linear_integrals, 1)
             )
+            opening_integral = slope * activation_voltage + intercept
+            if not math.isfinite(opening_integral) or opening_integral <= 0:
+                raise ValueError(
+                    "Линейная модель даёт неположительный интеграл в точке открытия."
+                )
             predicted = slope * linear_voltages + intercept
             residual_sum = float(np.sum((linear_integrals - predicted) ** 2))
             total_sum = float(
@@ -543,7 +548,10 @@ def calibrate_quarter_spectral_integral(
             selected_mask = linear_mask
             selected_values = linear_integrals
             method = "normalized_shape_integral_linear_voltage"
-            equation = f"integral(V) = {slope:.12g} * V + {intercept:.12g}"
+            equation = (
+                f"integral(V) = {slope:.12g} * max(V, {activation_voltage:.12g}) "
+                f"+ {intercept:.12g}"
+            )
         else:
             absolute_deviation = np.abs(integral_values - median_integral)
             mad = float(np.median(absolute_deviation))
@@ -650,6 +658,7 @@ def create_spectral_recalculation_workbook(
     calibration: QuarterIntegralCalibration,
     sensitivity_csv: Optional[Path] = None,
     rgb_photodiode_coefficient: Optional[float] = None,
+    target_quarters: Optional[Sequence[int]] = None,
 ) -> Path:
     """Save on-demand CIE/BPW34 recalculation without modifying the source."""
 
@@ -667,15 +676,17 @@ def create_spectral_recalculation_workbook(
         if effective_photo is None or calibration.geometric_coefficient == 0
         else effective_photo / calibration.geometric_coefficient
     )
+    target_quarters = tuple(int(number) for number in (target_quarters or (quarter_number,)))
     metadata = [
         ("Source spectrum", str(Path(source_workbook).resolve())),
         ("Pixel", pixel_id),
         ("Quarter", int(quarter_number)),
+        ("Calibration target quarters", "+".join(map(str, target_quarters))),
         ("Recalculated", now_str()),
         ("Sensitivity CSV", str(Path(sensitivity_csv or DEFAULT_SENSITIVITY_CSV).resolve())),
         ("RGB coefficient before geometry", base_color_coefficient),
         ("Previous photodiode coefficient (RGB * geometry)", effective_photo),
-        ("Quarter spectral integral", calibration.coefficient),
+        ("Scope spectral integral", calibration.coefficient),
         ("Integral coefficient (settings)", calibration.integral_coefficient),
         (
             "Coefficient replacing RGB",
@@ -720,13 +731,13 @@ def create_spectral_recalculation_workbook(
         "Shape integral (CIE/BPW34)",
         "Weighted integral (counts/s*nm)",
         "Point coefficient replacing RGB",
-        "Quarter spectral integral at V",
-        "Quarter coefficient replacing RGB",
-        "Luminance by quarter calibration (cd/m^2)",
+        "Scope spectral integral at V",
+        "Scope coefficient replacing RGB",
+        "Luminance by scope calibration (cd/m^2)",
         "Difference from previous RGB luminance (%)",
         "Point integral deviation from model (%)",
         "Used in calibration",
-        "Linear calibration active",
+        "Linear calibration state",
         "Status",
     ]
     header_row = 3 + len(metadata) + 2
@@ -743,7 +754,16 @@ def create_spectral_recalculation_workbook(
         model_integral = calibration.integral_at_voltage(point.get("voltage_V"))
         calibration_active = model_integral is not None
         if calibration.method == "normalized_shape_integral_linear_voltage":
-            linear_activation_state = "YES" if calibration_active else "NO"
+            voltage = as_float_or_none(point.get("voltage_V"))
+            if (
+                calibration_active
+                and voltage is not None
+                and calibration.activation_voltage_V is not None
+                and voltage < calibration.activation_voltage_V
+            ):
+                linear_activation_state = "CLAMPED_AT_OPENING"
+            else:
+                linear_activation_state = "YES" if calibration_active else "NO"
         else:
             linear_activation_state = "N/A"
         integral_luminance = (

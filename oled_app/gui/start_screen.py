@@ -250,7 +250,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
         state="readonly",
         width=16,
     ).pack(side="left")
-    ttk.Label(color_bar, text="Область описания:").pack(side="left", padx=(24, 8))
+    ttk.Label(color_bar, text="Область серии:").pack(side="left", padx=(24, 8))
     ttk.Combobox(
         color_bar,
         textvariable=description_scope_var,
@@ -289,7 +289,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
             tags=("controls",),
         )
 
-    description_syncing = False
+    scope_syncing = False
 
     def current_scope() -> str:
         return description_scope_from_label(description_scope_var.get())
@@ -297,18 +297,23 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
     def current_half_orientation() -> str:
         return half_orientation_from_label(half_orientation_var.get())
 
-    def synchronize_descriptions() -> None:
-        nonlocal description_syncing
-        if description_syncing:
+    def synchronize_scope_fields(source_quarter: int | None = None) -> None:
+        nonlocal scope_syncing
+        if scope_syncing:
             return
-        description_syncing = True
+        scope_syncing = True
         try:
             for group in description_scope_groups(current_scope(), current_half_orientation()):
-                shared = quarter_vars[str(group[0])]["description"].get()
-                for quarter_number in group[1:]:
-                    quarter_vars[str(quarter_number)]["description"].set(shared)
+                representative = source_quarter if source_quarter in group else group[0]
+                shared_base = quarter_vars[str(representative)]["base"].get()
+                shared_description = quarter_vars[str(representative)]["description"].get()
+                for quarter_number in group:
+                    if quarter_number == representative:
+                        continue
+                    quarter_vars[str(quarter_number)]["base"].set(shared_base)
+                    quarter_vars[str(quarter_number)]["description"].set(shared_description)
         finally:
-            description_syncing = False
+            scope_syncing = False
 
     def rebuild_description_inputs() -> None:
         for child in description_frame.winfo_children():
@@ -346,8 +351,8 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
             )
             description_frame.columnconfigure(column, weight=1)
 
-    def refresh_holder(*_args) -> None:
-        synchronize_descriptions()
+    def refresh_holder(*_args, source_quarter: int | None = None) -> None:
+        synchronize_scope_fields(source_quarter)
         render_series_setup_holder(
             holder_canvas,
             quarter_vars,
@@ -358,7 +363,7 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
         half_orientation_combo.configure(
             state="readonly" if current_scope() == "half" else "disabled"
         )
-        synchronize_descriptions()
+        synchronize_scope_fields()
         rebuild_description_inputs()
         render_series_setup_holder(
             holder_canvas,
@@ -366,9 +371,15 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
             series_color_var,
         )
 
-    for q_vars in quarter_vars.values():
-        q_vars["base"].trace_add("write", refresh_holder)
-        q_vars["description"].trace_add("write", refresh_holder)
+    for quarter_number, q_vars in quarter_vars.items():
+        q_vars["base"].trace_add(
+            "write",
+            lambda *_args, q=int(quarter_number): refresh_holder(source_quarter=q),
+        )
+        q_vars["description"].trace_add(
+            "write",
+            lambda *_args, q=int(quarter_number): refresh_holder(source_quarter=q),
+        )
     series_color_var.trace_add("write", refresh_holder)
     description_scope_var.trace_add("write", change_description_scope)
     half_orientation_var.trace_add("write", change_description_scope)
@@ -376,7 +387,11 @@ def show_series_settings_screen(app, edit_mode: bool = False) -> None:
 
     ttk.Label(
         setup_frame,
-        text="В поле четверти задается короткая база, например C. Цвет добавляет суффикс R/G/B/W: C + белый = CW.",
+        text=(
+            "Короткая база задаёт префикс, например C. Цвет добавляет суффикс "
+            "R/G/B/W: C + белый = CW. Для половины или всей подложки база "
+            "автоматически общая внутри выбранной области."
+        ),
         foreground="#555555",
         wraplength=880,
     ).grid(row=4, column=0, sticky="w", padx=10, pady=(0, 10))
