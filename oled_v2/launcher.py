@@ -155,6 +155,34 @@ def poc_smoke() -> int:
     return 0
 
 
+def ivl_smoke() -> int:
+    """Exercise simulator IVL, compatible workbook and shutdown in source or exe."""
+    from .ivl import IvlController
+    from openpyxl import load_workbook
+
+    with tempfile.TemporaryDirectory(prefix="oled-v2-ivl-smoke-") as folder:
+        controller = IvlController(Path(folder))
+        try:
+            controller.start({"sweep_end": 0.2, "sweep_increment": 0.1})
+            deadline = time.monotonic() + 20
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            state = controller.snapshot()
+            if state["status"] != "completed" or not state["safe_shutdown_confirmed"]:
+                raise RuntimeError(f"IVL smoke failed: {state}")
+            wb = load_workbook(state["result"]["file"], read_only=True)
+            try:
+                if "Summary" not in wb.sheetnames or "Cycle_1" not in wb.sheetnames:
+                    raise RuntimeError("IVL workbook contract mismatch")
+            finally:
+                wb.close()
+            print(json.dumps({"ivl_status": state["status"], "points": len(state["points"]),
+                              "safe_shutdown_confirmed": True, "workbook_verified": True}))
+        finally:
+            controller.shutdown()
+    return 0
+
+
 def series_smoke() -> int:
     """Create, queue, close, and reopen a compatible temporary series."""
 
@@ -292,6 +320,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run an authenticated eight-point simulator PoC and verify safe shutdown.",
     )
+    parser.add_argument("--ivl-smoke", action="store_true",
+                        help="Run a simulator IVL cycle and verify CSV/XLSX and shutdown.")
     parser.add_argument(
         "--series-smoke",
         action="store_true",
@@ -315,6 +345,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return backend_smoke()
     if args.poc_smoke:
         return poc_smoke()
+    if args.ivl_smoke:
+        return ivl_smoke()
     if args.series_smoke:
         return series_smoke()
     try:

@@ -70,7 +70,10 @@
     "gui_report_window_module": "oled_app/gui/report_window.py",
     "requirements": "requirements.txt",
     "v2_requirements": "requirements-v2.txt",
-    "simulator_config_example": "oled_simulator_config.json"
+    "simulator_config_example": "oled_simulator_config.json",
+    "v2_ivl_controller": "oled_v2/ivl.py",
+    "v2_ivl_workspace": "v2_frontend/src/IvlWorkspace.tsx",
+    "v2_ivl_smoke_command": ".\\env\\Scripts\\python.exe .\\oled_v2_app.py --ivl-smoke"
   },
   "documentation": {
     "human_readme": "README.md",
@@ -93,7 +96,7 @@
     "current_release": "v2.0.0-alpha",
     "previous_release": "v1.9.1",
     "previous_prerelease": "v1.9.0-beta-3",
-    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts, Stage 1 delivers the isolated FastAPI/React/WebView2 onedir prototype, Stage 2 has a tested simulator SMU/spectrometer WebSocket PoC, Stage 3 delivers shared design tokens/components, and Stage 4 adds the compatible working series APIs and workspace, including white LEDs, a fixed 2 1 / 3 4 quarter layout, selectable top/bottom or left/right halves, shared prefixes and spectral calibrations for quarter/half/whole-substrate scopes, and report grouping by quarter or configured scope, while real hardware validation remains pending.",
+    "release_scope": "Execute the v2 interface migration while preserving the stable Tkinter application; Stage 0 freezes v1.9.1 contracts, Stage 1 delivers the isolated FastAPI/React/WebView2 onedir prototype, Stage 2 has a tested simulator SMU/spectrometer WebSocket PoC, Stage 3 delivers shared design tokens/components, and Stage 4 adds the compatible working series APIs and workspace, including white LEDs, a fixed 2 1 / 3 4 quarter layout, selectable top/bottom or left/right halves, shared prefixes and spectral calibrations for quarter/half/whole-substrate scopes, and report grouping by quarter or configured scope, while real hardware validation remains pending. Stage 5 begins with a single simulator IVL cycle, validated parameters, backend snapshots, safe shutdown and isolated CSV/XLSX; series measurement parity remains pending.",
     "mutable_prerelease": {
       "enabled": true,
       "tag": "v2.0.0-alpha",

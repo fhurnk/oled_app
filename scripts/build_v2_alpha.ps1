@@ -1,10 +1,11 @@
 param(
-    [switch]$SkipFrontend
+    [switch]$SkipFrontend,
+    [string]$PythonPath
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$python = Join-Path $projectRoot "env\Scripts\python.exe"
+$python = if ($PythonPath) { (Resolve-Path -LiteralPath $PythonPath).Path } else { Join-Path $projectRoot "env\Scripts\python.exe" }
 
 function Remove-GeneratedDirectory {
     param([string]$Path)

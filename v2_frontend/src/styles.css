@@ -2040,3 +2040,12 @@ select:focus-visible {
     height: 180px;
   }
 }
+
+.ivl-workspace { display: grid; gap: 16px; min-width: 0; }
+.ivl-workspace .panel { padding: 20px; min-width: 0; }
+.ivl-workspace p { overflow-wrap: anywhere; }
+.ivl-fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; border: 0; padding: 0; margin: 16px 0; }
+.ivl-fields label { display: grid; gap: 8px; font-size: 12px; }
+.ivl-fields input { width: 100%; min-width: 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+.ivl-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+@media (max-width: 1250px) { .ivl-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

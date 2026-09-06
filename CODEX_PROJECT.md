@@ -26,7 +26,11 @@ supports red/green/blue/white LED colors, a fixed `2 1 / 3 4` quarter layout,
 quarter, selectable top/bottom or left/right half, and whole-substrate scopes.
 Each combined scope has one shared name prefix and one spectral calibration.
 Real hardware validation remains pending
-but does not block Stage 5 software work.
+but does not block Stage 5 software work. Stage 5 now has a standalone, single-cycle
+simulator IVL screen in `oled_v2/ivl.py` and `v2_frontend/src/IvlWorkspace.tsx`,
+with validated parameters, backend snapshots, safe shutdown and CSV/XLSX.
+It does not yet support series journaling, confirmation cycles or operator decisions.
+Use `--ivl-smoke` to verify this slice in source and onedir builds.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -120,7 +124,7 @@ $env:GIT_DIR = ".git-local"
 $env:GIT_WORK_TREE = (Get-Location).Path
 ```
 
-Use the Visual Studio bundled Git if plain `git` is not on PATH.
+Prefer Git for Windows (`C:\Program Files\Git\cmd\git.exe`); Visual Studio is not a runtime requirement.
 
 ## Do Not Commit
 

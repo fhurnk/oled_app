@@ -22,7 +22,7 @@ type ChartOption = ComposeOption<
   LineSeriesOption | GridComponentOption | LegendComponentOption | TooltipComponentOption
 >;
 
-function LivePocChart({ points }: { points: PocPoint[] }) {
+function LivePocChart({ points }: { points: Pick<PocPoint, "voltage_measured_V" | "current_mA" | "photodiode_uA">[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -113,7 +113,7 @@ function LivePocChart({ points }: { points: PocPoint[] }) {
 
   return (
     <div className="poc-chart-wrap">
-      <div className="poc-chart" ref={containerRef} role="img" aria-label="Live-график аппаратного PoC" />
+      <div className="poc-chart" ref={containerRef} role="img" aria-label="График тока OLED и фототока" />
       {points.length === 0 && (
         <div className="poc-chart__empty">
           <span>⌁</span>

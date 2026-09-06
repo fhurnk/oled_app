@@ -14,6 +14,24 @@ Tkinter-интерфейс по-прежнему запускается чере
 штатным приложением до завершения функциональной и аппаратной проверки. Все
 следующие этапы обновляют тот же prerelease и тег `v2.0.0-alpha`.
 
+Stage 5 начат: пункт `ВАЯХ` выполняет один цикл эмулятора с параметрами,
+проверкой, графиком, CSV/XLSX и остановкой. Очередь серии, подтверждающие циклы,
+решения оператора, спектры и стабильность в новом интерфейсе ещё не перенесены.
+Результаты тестовой ВАЯХ находятся в
+`%LOCALAPPDATA%\OLED Measurement App\simulator_ivl\<run_id>`; журнал серии не меняется.
+
+### Запуск Без Visual Studio
+
+Откройте `dist\OLED Measurement App 2 Alpha\OLED Measurement App 2 Alpha.exe`.
+Переносите всю папку `OLED Measurement App 2 Alpha`, включая `_internal`.
+В `onedir` включены Python и frontend: отдельно устанавливать Visual Studio,
+Python и Node.js для запуска не требуется. Нужен Windows WebView2 Runtime.
+Проверка на чистом лабораторном Windows-ПК и реальном оборудовании ещё впереди.
+
+Для разработчика: существующий `env` на этом ПК создан из Python Visual Studio.
+Можно передать другое подготовленное окружение с `requirements-v2.txt`:
+`./scripts/build_v2_alpha.ps1 -PythonPath C:\path\to\venv\Scripts\python.exe`.
+
 ## Быстрый Запуск
 
 Новый модульный GUI:
@@ -41,6 +59,7 @@ Tkinter-интерфейс по-прежнему запускается чере
 .\env\Scripts\python.exe .\oled_v2_app.py --backend-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --poc-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --series-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py --ivl-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py
 ```
 

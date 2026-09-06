@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import LivePocChart from "./LivePocChart";
+import IvlWorkspace from "./IvlWorkspace";
 import SeriesWorkspace from "./SeriesWorkspace";
 import {
   Button,
@@ -24,12 +25,12 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type StreamState = "connecting" | "connected" | "disconnected";
-type ActiveView = "overview" | "series";
+type ActiveView = "overview" | "series" | "ivl";
 
 const navigation = [
   ["Обзор", "overview", true],
   ["Серия", "series", true],
-  ["ВАЯХ", "ivl", false],
+  ["ВАЯХ", "ivl", true],
   ["Спектры", "spectrum", false],
   ["Стабильность", "stability", false],
   ["Камера", "camera", false],
@@ -257,7 +258,7 @@ function App() {
               disabled={!enabled}
               key={key}
               onClick={() => {
-                if (key === "overview" || key === "series") {
+                if (key === "overview" || key === "series" || key === "ivl") {
                   setActiveView(key);
                 }
               }}
@@ -282,7 +283,7 @@ function App() {
             Диагностика
             <small>скоро</small>
           </button>
-          <div className="build-label">v2.0.0 alpha · этап 4</div>
+          <div className="build-label">v2.0.0 alpha · этап 5</div>
         </div>
       </aside>
 
@@ -290,13 +291,13 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : "Серии OLED"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : "Создание, открытие и совместимый журнал измерений"}
+                : activeView === "ivl" ? "Один цикл с сохранением CSV и Excel" : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -307,7 +308,9 @@ function App() {
         </header>
 
         <section className="content">
-          {activeView === "series" ? (
+          {activeView === "ivl" ? (
+          <IvlWorkspace />
+        ) : activeView === "series" ? (
             <SeriesWorkspace onSeriesChanged={() => void refreshAppState()} />
           ) : (
             <>

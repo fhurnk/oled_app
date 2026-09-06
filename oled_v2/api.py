@@ -18,6 +18,7 @@ from oled_app.settings import load_app_settings
 from .config import API_SCHEMA_VERSION, SessionConfig
 from .logging_setup import log_directory
 from .poc import PocBusyError, PocController
+from .ivl import IvlController
 from .security import (
     WS_APP_PROTOCOL,
     ControllerLease,
@@ -68,6 +69,8 @@ def create_app(
     series_root: Optional[Path] = None,
 ) -> FastAPI:
     poc_controller = PocController(logger=logger)
+    ivl_controller = IvlController()
+    operation_gate = asyncio.Lock()
     series_service = SeriesService(default_root=series_root, logger=logger)
 
     @asynccontextmanager
@@ -77,6 +80,7 @@ def create_app(
         try:
             yield
         finally:
+            await asyncio.to_thread(ivl_controller.shutdown)
             await asyncio.to_thread(poc_controller.shutdown)
             app.state.ready = False
 
@@ -90,6 +94,7 @@ def create_app(
     )
     app.state.session_config = config
     app.state.controller_lease = ControllerLease()
+    app.state.ivl_controller = ivl_controller
     app.state.poc_controller = poc_controller
     app.state.series_service = series_service
     app.state.started_at = _utc_now()
@@ -149,8 +154,8 @@ def create_app(
             "hardware": hardware,
             "series": series_service.app_summary(),
             "migration": {
-                "stage": 4,
-                "status": "stage_4_series_workspace_complete",
+                "stage": 5,
+                "status": "stage_5_simulator_ivl_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
@@ -248,6 +253,36 @@ def create_app(
             raise series_http_error(exc) from exc
         return FileResponse(str(thumbnail), media_type="image/png", headers=SECURITY_HEADERS)
 
+    def require_hardware_idle():
+        if ivl_controller.snapshot()["active"] or poc_controller.snapshot(False)["active"]:
+            raise HTTPException(status_code=409, detail="Дождитесь завершения текущей операции.")
+
+    @app.get("/api/ivl/state")
+    async def ivl_state(_client_id: str = Depends(require_controller)) -> dict:
+        return ivl_controller.snapshot()
+
+    @app.post("/api/ivl/preflight")
+    async def ivl_preflight(payload: dict = Body(...),
+                            _client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return ivl_controller.preflight(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/ivl/start", status_code=202)
+    async def ivl_start(payload: dict = Body(...),
+                        _client_id: str = Depends(require_controller)) -> dict:
+        async with operation_gate:
+            require_hardware_idle()
+            try:
+                return ivl_controller.start(payload)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/ivl/stop")
+    async def ivl_stop(_client_id: str = Depends(require_controller)) -> dict:
+        return ivl_controller.stop()
+
     @app.get("/api/poc/state")
     async def poc_state(_client_id: str = Depends(require_controller)) -> dict:
         return poc_controller.snapshot(include_points=True)
@@ -255,7 +290,9 @@ def create_app(
     @app.post("/api/poc/probe")
     async def poc_probe(_client_id: str = Depends(require_controller)) -> dict:
         try:
-            return await asyncio.to_thread(poc_controller.probe_current_hardware)
+            async with operation_gate:
+                require_hardware_idle()
+                return await asyncio.to_thread(poc_controller.probe_current_hardware)
         except PocBusyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -271,10 +308,12 @@ def create_app(
         try:
             point_count = int(values.get("point_count", 32))
             interval_ms = float(values.get("interval_ms", 80.0))
-            return poc_controller.start_simulator(
-                point_count=point_count,
-                interval_s=interval_ms / 1000.0,
-            )
+            async with operation_gate:
+                require_hardware_idle()
+                return poc_controller.start_simulator(
+                    point_count=point_count,
+                    interval_s=interval_ms / 1000.0,
+                )
         except (TypeError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
