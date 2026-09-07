@@ -91,9 +91,9 @@ class IvlTests(unittest.TestCase):
             controller = backend.server.config.app.state.ivl_controller
             controller.output_root = self.controller.output_root
             headers = {}
-            def request(path, payload=None):
+            def request(path, payload=None, method=None):
                 req = urllib.request.Request(backend.session.origin + path, headers=headers,
-                    data=json.dumps(payload).encode() if payload is not None else None)
+                    data=json.dumps(payload).encode() if payload is not None else None, method=method)
                 try:
                     with urllib.request.urlopen(req, timeout=5) as response:
                         return response.status, json.load(response)
@@ -107,6 +107,10 @@ class IvlTests(unittest.TestCase):
             self.assertEqual(code, 202)
             for path in ("/api/ivl/start", "/api/poc/start", "/api/poc/probe"):
                 self.assertEqual(request(path, {})[0], 409)
+            for path, method in (("open", "POST"), ("close", "POST"), ("create", "POST"),
+                                 ("current", "PUT"), ("root", "PUT"), ("current/refresh", "POST"),
+                                 ("current/spectrum-priority", "PUT")):
+                self.assertEqual(request("/api/series/" + path, {}, method)[0], 409)
             snapshot = request("/api/ivl/state")[1]
             self.assertEqual(snapshot["run_id"], started["run_id"])
             request("/api/ivl/stop", {})

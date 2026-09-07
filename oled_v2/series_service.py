@@ -266,6 +266,37 @@ class SeriesService:
                 raise SeriesNotFoundError(f"Миниатюра ВАЯХ для {selected} не найдена.")
             return thumbnail
 
+    def ivl_target(self, target: Dict[str, Any], params, settings) -> Dict[str, Any]:
+        """Resolve a selected pixel without creating any measurement files."""
+        if not isinstance(target, dict) or set(target) != {"series_path", "pixel_id"}:
+            raise SeriesValidationError("Нужны папка серии и выбранный пиксель.")
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != target["series_path"]:
+                raise SeriesConflictError("Активная серия изменилась. Выберите пиксель заново.")
+            row = manager.journal.get_pixel(target["pixel_id"])
+            if row is None:
+                raise SeriesNotFoundError("Выбранный пиксель отсутствует в серии.")
+            params.luminance_cd_m2_per_uA = manager.rgb_luminance_coefficient_for_pixel(
+                target["pixel_id"], settings)
+            params.luminance_calibration_model = manager.luminance_model_for_pixel(
+                target["pixel_id"], settings)
+            return {**target, "pixel_row": row}
+
+    def record_ivl(self, target, params, result) -> None:
+        """Serialize a simulator result with all other journal readers/writers."""
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != target["series_path"]:
+                raise SeriesConflictError("Серия изменилась; результат сохранён без записи в журнал.")
+            manager.journal.update_after_measurement(
+                "IVL", target["pixel_id"], result["status"], Path(result["file"]),
+                {**params.as_dict(), "hardware_mode": "simulator", "v2_run_id": result["run_id"]},
+                notes="ЭМУЛЯТОР v2. " + result["ivl_diagnosis"],
+                opening_voltage=result["opening_voltage"],
+                max_current_mA=result["max_current_mA"], max_photo_uA=result["max_photo_uA"],
+            )
+
     def _validated_config_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         deposition_date = _clean_text(payload.get("deposition_date"), "Дата напыления", 32, True)
         try:

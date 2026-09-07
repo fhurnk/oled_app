@@ -69,9 +69,9 @@ def create_app(
     series_root: Optional[Path] = None,
 ) -> FastAPI:
     poc_controller = PocController(logger=logger)
-    ivl_controller = IvlController()
     operation_gate = asyncio.Lock()
     series_service = SeriesService(default_root=series_root, logger=logger)
+    ivl_controller = IvlController(series_service=series_service)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -171,11 +171,17 @@ def create_app(
             code = status.HTTP_400_BAD_REQUEST
         return HTTPException(status_code=code, detail=str(exc))
 
+    async def series_mutation_guard(_client_id: str = Depends(require_controller)):
+        async with operation_gate:
+            if ivl_controller.snapshot()["active"]:
+                raise HTTPException(status_code=409, detail="Завершите ВАЯХ перед изменением серии.")
+            yield
+
     @app.get("/api/series/state")
     async def series_state(_client_id: str = Depends(require_controller)) -> dict:
         return await asyncio.to_thread(series_service.state)
 
-    @app.put("/api/series/root")
+    @app.put("/api/series/root", dependencies=[Depends(series_mutation_guard)])
     async def series_root_update(
         payload: Optional[dict] = Body(default=None),
         _client_id: str = Depends(require_controller),
@@ -185,7 +191,7 @@ def create_app(
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 
-    @app.post("/api/series/open")
+    @app.post("/api/series/open", dependencies=[Depends(series_mutation_guard)])
     async def series_open(
         payload: Optional[dict] = Body(default=None),
         _client_id: str = Depends(require_controller),
@@ -195,11 +201,11 @@ def create_app(
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 
-    @app.post("/api/series/close")
+    @app.post("/api/series/close", dependencies=[Depends(series_mutation_guard)])
     async def series_close(_client_id: str = Depends(require_controller)) -> dict:
         return await asyncio.to_thread(series_service.close_series)
 
-    @app.post("/api/series/create", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/series/create", dependencies=[Depends(series_mutation_guard)], status_code=status.HTTP_201_CREATED)
     async def series_create(
         payload: Optional[dict] = Body(default=None),
         _client_id: str = Depends(require_controller),
@@ -209,7 +215,7 @@ def create_app(
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 
-    @app.put("/api/series/current")
+    @app.put("/api/series/current", dependencies=[Depends(series_mutation_guard)])
     async def series_update(
         payload: Optional[dict] = Body(default=None),
         _client_id: str = Depends(require_controller),
@@ -219,14 +225,14 @@ def create_app(
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 
-    @app.post("/api/series/current/refresh")
+    @app.post("/api/series/current/refresh", dependencies=[Depends(series_mutation_guard)])
     async def series_refresh(_client_id: str = Depends(require_controller)) -> dict:
         try:
             return await asyncio.to_thread(series_service.refresh_active)
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 
-    @app.put("/api/series/current/spectrum-priority")
+    @app.put("/api/series/current/spectrum-priority", dependencies=[Depends(series_mutation_guard)])
     async def series_spectrum_priority(
         payload: Optional[dict] = Body(default=None),
         _client_id: str = Depends(require_controller),
@@ -265,7 +271,10 @@ def create_app(
     async def ivl_preflight(payload: dict = Body(...),
                             _client_id: str = Depends(require_controller)) -> dict:
         try:
-            return ivl_controller.preflight(payload)
+            async with operation_gate:
+                return await asyncio.to_thread(ivl_controller.preflight, payload)
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -275,9 +284,21 @@ def create_app(
         async with operation_gate:
             require_hardware_idle()
             try:
-                return ivl_controller.start(payload)
+                return await asyncio.to_thread(ivl_controller.start, payload)
+            except SeriesServiceError as exc:
+                raise series_http_error(exc) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/ivl/opening")
+    async def ivl_opening(payload: dict = Body(...),
+                          _client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return ivl_controller.decide_opening(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/ivl/stop")
     async def ivl_stop(_client_id: str = Depends(require_controller)) -> dict:

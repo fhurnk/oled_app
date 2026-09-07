@@ -372,15 +372,23 @@ export function openPocStream(
   return socket;
 }
 
+export type IvlTarget = {series_path: string; pixel_id: string};
+export type IvlInput = Record<string, number | IvlTarget | null>;
 export type IvlState = {
   status: string; active: boolean; run_id: string | null;
   points: Omit<PocPoint, "spectrum_peak_nm" | "spectrum_peak_counts">[];
   error: string | null; safe_shutdown_confirmed: boolean | null;
   params?: Record<string, number>; raw_file?: string; message?: string;
-  result: {file: string; status: string; opening_voltage: number | null; current_limit_reached: boolean} | null;
+  target?: IvlTarget | null; pixel_id?: string; cycle?: number; point_count?: number;
+  decision?: {id: string; kind: string; message: string} | null;
+  result: {file: string; status: string; opening_voltage: number | null;
+    current_limit_reached: boolean; journaled: boolean; cycles: number} | null;
 };
-export type IvlPreflight = {params: Record<string, number>; output_root: string; note: string};
+export type IvlPreflight = {params: Record<string, number>; output_root: string; note: string;
+  target: IvlTarget | null; luminance_coefficient: number; spectral_calibration: boolean};
 export const fetchIvlState = () => requestJson<IvlState>("/api/ivl/state");
-export const preflightIvl = (params: Record<string, number>) => requestJson<IvlPreflight>("/api/ivl/preflight", {method: "POST", body: JSON.stringify(params)});
-export const startIvl = (params: Record<string, number>) => requestJson<IvlState>("/api/ivl/start", {method: "POST", body: JSON.stringify(params)});
+export const preflightIvl = (params: IvlInput) => requestJson<IvlPreflight>("/api/ivl/preflight", {method: "POST", body: JSON.stringify(params)});
+export const startIvl = (params: IvlInput) => requestJson<IvlState>("/api/ivl/start", {method: "POST", body: JSON.stringify(params)});
 export const stopIvl = () => requestJson<IvlState>("/api/ivl/stop", {method: "POST"});
+export const decideIvlOpening = (run_id: string, decision_id: string, value: number | null) =>
+  requestJson<IvlState>("/api/ivl/opening", {method: "POST", body: JSON.stringify({run_id, decision_id, value})});

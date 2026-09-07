@@ -11,6 +11,7 @@ import {
 } from "./design-system/components";
 import {
   type AppState,
+  type IvlTarget,
   type HardwareProbe,
   type PocEvent,
   type PocPoint,
@@ -49,6 +50,7 @@ const pocStatusLabels: Record<string, string> = {
 };
 
 function App() {
+  const [ivlTarget, setIvlTarget] = useState<IvlTarget | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [appState, setAppState] = useState<AppState | null>(null);
   const [pocState, setPocState] = useState<PocState | null>(null);
@@ -297,7 +299,7 @@ function App() {
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : activeView === "ivl" ? "Один цикл с сохранением CSV и Excel" : "Создание, открытие и совместимый журнал измерений"}
+                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -309,9 +311,9 @@ function App() {
 
         <section className="content">
           {activeView === "ivl" ? (
-          <IvlWorkspace />
+          <IvlWorkspace initialTarget={ivlTarget} />
         ) : activeView === "series" ? (
-            <SeriesWorkspace onSeriesChanged={() => void refreshAppState()} />
+            <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (
             <>
           <div className={`connection-banner connection-banner--${loadState}`}>

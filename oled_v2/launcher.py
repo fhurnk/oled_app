@@ -158,6 +158,7 @@ def poc_smoke() -> int:
 def ivl_smoke() -> int:
     """Exercise simulator IVL, compatible workbook and shutdown in source or exe."""
     from .ivl import IvlController
+    from .series_service import SeriesService
     from openpyxl import load_workbook
 
     with tempfile.TemporaryDirectory(prefix="oled-v2-ivl-smoke-") as folder:
@@ -176,8 +177,26 @@ def ivl_smoke() -> int:
                     raise RuntimeError("IVL workbook contract mismatch")
             finally:
                 wb.close()
+            service = SeriesService(Path(folder) / "series")
+            active = service.create_series({"root": str(Path(folder) / "series"),
+                "deposition_date": "2026-09-06", "keyword": "ivl-smoke",
+                "series_led_color": "green", "quarter_bases": {str(n): "Q" for n in range(1, 5)},
+                "quarter_descriptions": {str(n): "Simulator" for n in range(1, 5)}})["active"]
+            controller.series_service = service
+            controller.start({"sweep_end": 0.2, "sweep_increment": 0.1,
+                "target": {"series_path": active["path"], "pixel_id": active["pixels"][0]["pixel_id"]}})
+            deadline = time.monotonic() + 20
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            state = controller.snapshot()
+            if state["status"] != "completed" or not state["result"]["journaled"]:
+                raise RuntimeError(f"Series IVL smoke failed: {state}")
+            reopened = service.open_series(active["path"])["active"]
+            if reopened["metrics"]["ivl"] != 1 or not reopened["pixels"][0]["thumbnail_available"]:
+                raise RuntimeError("Series IVL result/thumbnail was not persisted")
             print(json.dumps({"ivl_status": state["status"], "points": len(state["points"]),
-                              "safe_shutdown_confirmed": True, "workbook_verified": True}))
+                "safe_shutdown_confirmed": state["safe_shutdown_confirmed"],
+                "workbook_verified": True, "series_journal_verified": True, "thumbnail_verified": True}))
         finally:
             controller.shutdown()
     return 0

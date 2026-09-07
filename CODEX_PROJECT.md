@@ -26,10 +26,11 @@ supports red/green/blue/white LED colors, a fixed `2 1 / 3 4` quarter layout,
 quarter, selectable top/bottom or left/right half, and whole-substrate scopes.
 Each combined scope has one shared name prefix and one spectral calibration.
 Real hardware validation remains pending
-but does not block Stage 5 software work. Stage 5 now has a standalone, single-cycle
-simulator IVL screen in `oled_v2/ivl.py` and `v2_frontend/src/IvlWorkspace.tsx`,
+but does not block Stage 5 software work. Stage 5 now has a simulator IVL screen in `oled_v2/ivl.py` and `v2_frontend/src/IvlWorkspace.tsx`,
 with validated parameters, backend snapshots, safe shutdown and CSV/XLSX.
-It does not yet support series journaling, confirmation cycles or operator decisions.
+It supports selected-series-pixel journaling/thumbnail/calibration, multiple cycles,
+burnout confirmation, recoverable manual opening decisions and NO_CONTACT retry.
+Series mutations are guarded while IVL is active. Full-series queues are still pending.
 Use `--ivl-smoke` to verify this slice in source and onedir builds.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
