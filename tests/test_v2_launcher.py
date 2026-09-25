@@ -9,13 +9,21 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from oled_v2.launcher import series_smoke, status_lines
+from oled_v2.launcher import console_write, series_smoke, status_lines
 from oled_v2.logging_setup import log_directory, remove_expired_logs
 
 
 class V2LauncherTests(unittest.TestCase):
+    def test_windowed_build_can_finish_cli_action_without_stdout(self) -> None:
+        with patch("oled_v2.launcher.sys.stdout", None):
+            console_write("completed")
+        detached = Mock()
+        detached.write.side_effect = OSError("detached")
+        with patch("oled_v2.launcher.sys.stdout", detached):
+            console_write("completed")
+
     def test_status_keeps_tkinter_as_stable_default(self) -> None:
         self.assertIn(
             "Stable default launcher: oled_modular_app.py (Tkinter)",

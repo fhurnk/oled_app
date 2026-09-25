@@ -29,8 +29,11 @@ Real hardware validation remains pending
 but does not block Stage 5 software work. Stage 5 now has a simulator IVL screen in `oled_v2/ivl.py` and `v2_frontend/src/IvlWorkspace.tsx`,
 with validated parameters, backend snapshots, safe shutdown and CSV/XLSX.
 It supports selected-series-pixel journaling/thumbnail/calibration, multiple cycles,
-burnout confirmation, recoverable manual opening decisions and NO_CONTACT retry.
-Series mutations are guarded while IVL is active. Full-series queues are still pending.
+burnout confirmation, recoverable manual opening decisions and an automatic
+full-series queue from a selected pixel. The backend persists queue progress,
+can skip known NONWORKING/BURNED pixels, and handles NO_CONTACT with same-pixel
+retry, current-substrate skip or normal continuation. Series mutations are
+guarded while IVL is active. Spectrum and stability workflows are still pending.
 Use `--ivl-smoke` to verify this slice in source and onedir builds.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default

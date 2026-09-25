@@ -19,6 +19,19 @@ from .logging_setup import configure_logging, log_directory
 from .server import LocalBackend
 
 
+def console_write(value: str, error: bool = False) -> None:
+    """Write CLI diagnostics only when the process has an attached console."""
+    stream = sys.stderr if error else sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.write(str(value) + "\n")
+        stream.flush()
+    except (AttributeError, OSError, RuntimeError):
+        # PyInstaller windowed builds can expose a detached placeholder stream.
+        return
+
+
 def dependency_status() -> dict:
     return {
         "fastapi": importlib.util.find_spec("fastapi") is not None,
@@ -63,7 +76,7 @@ def backend_smoke() -> int:
             payload = json.loads(response.read().decode("utf-8"))
         if payload.get("application", {}).get("version") != APP_VERSION:
             raise RuntimeError("Backend version does not match APP_VERSION.")
-        print(
+        console_write(
             json.dumps(
                 {
                     "ready": payload["backend"]["ready"],
@@ -140,7 +153,7 @@ def poc_smoke() -> int:
         if terminal_state.get("safe_shutdown_confirmed") is not True:
             raise RuntimeError("PoC did not confirm safe SMU shutdown.")
 
-        print(
+        console_write(
             json.dumps(
                 {
                     "status": terminal_state["status"],
@@ -191,12 +204,38 @@ def ivl_smoke() -> int:
             state = controller.snapshot()
             if state["status"] != "completed" or not state["result"]["journaled"]:
                 raise RuntimeError(f"Series IVL smoke failed: {state}")
+            queue_start = active["pixels"][-2]["pixel_id"]
+            controller.start({
+                "sweep_end": 0.2,
+                "sweep_increment": 0.1,
+                "queue": {
+                    "series_path": active["path"],
+                    "start_pixel": queue_start,
+                    "skip_nonworking": True,
+                },
+            })
+            deadline = time.monotonic() + 30
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                queue_state = controller.snapshot()
+                decision = queue_state.get("decision")
+                if decision and decision.get("kind") == "queue_no_contact":
+                    controller.decide_queue({
+                        "run_id": queue_state["run_id"],
+                        "decision_id": decision["id"],
+                        "action": "continue",
+                    })
+                time.sleep(0.05)
+            state = controller.snapshot()
+            if (state["status"] != "completed" or not state.get("queue")
+                    or state["queue"]["completed"] != 2 or state["queue"]["remaining"] != 0):
+                raise RuntimeError(f"Series IVL queue smoke failed: {state}")
             reopened = service.open_series(active["path"])["active"]
-            if reopened["metrics"]["ivl"] != 1 or not reopened["pixels"][0]["thumbnail_available"]:
+            if reopened["metrics"]["ivl"] != 3 or not reopened["pixels"][0]["thumbnail_available"]:
                 raise RuntimeError("Series IVL result/thumbnail was not persisted")
-            print(json.dumps({"ivl_status": state["status"], "points": len(state["points"]),
+            console_write(json.dumps({"ivl_status": state["status"], "points": len(state["points"]),
                 "safe_shutdown_confirmed": state["safe_shutdown_confirmed"],
-                "workbook_verified": True, "series_journal_verified": True, "thumbnail_verified": True}))
+                "workbook_verified": True, "series_journal_verified": True, "thumbnail_verified": True,
+                "queue_completed": state["queue"]["completed"]}))
         finally:
             controller.shutdown()
     return 0
@@ -266,7 +305,7 @@ def series_smoke() -> int:
             if int(reopened_active.get("metrics", {}).get("spectrum_queue", 0)) != 4:
                 raise RuntimeError("Series smoke lost the queue after reopening.")
 
-            print(
+            console_write(
                 json.dumps(
                     {
                         "status": "completed",
@@ -358,7 +397,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     if args.status:
         for line in status_lines():
-            print(line)
+            console_write(line)
         return 0
     if args.backend_smoke:
         return backend_smoke()
@@ -371,5 +410,5 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     try:
         return launch_desktop(auto_close_after_s=1.5 if args.window_smoke else None)
     except Exception as exc:
-        print(f"Не удалось запустить v2 prototype: {exc}", file=sys.stderr)
+        console_write(f"Не удалось запустить v2 prototype: {exc}", error=True)
         return 1

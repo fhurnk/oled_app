@@ -6,6 +6,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from oled_app.constants import APP_VERSION
@@ -22,6 +23,12 @@ class V2SessionConfigTests(unittest.TestCase):
         self.assertEqual(parsed.path, "/")
         self.assertEqual(parsed.query, "")
         self.assertEqual(parsed.fragment, "session=secret-token")
+
+    def test_backend_starts_without_console_streams(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("sys.stdout", None), patch("sys.stderr", None):
+                with LocalBackend(series_root=Path(folder)) as backend:
+                    self.assertIsNotNone(backend.session)
 
 
 class ControllerLeaseTests(unittest.TestCase):
@@ -96,7 +103,7 @@ class V2LoopbackBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["application"]["version"], APP_VERSION)
         self.assertEqual(payload["backend"]["bound_host"], "127.0.0.1")
-        self.assertEqual(payload["migration"]["status"], "stage_5_simulator_ivl_in_progress")
+        self.assertEqual(payload["migration"]["status"], "stage_5_series_ivl_queue_in_progress")
         self.assertTrue(payload["migration"]["tkinter_default_preserved"])
 
         with self.assertRaises(urllib.error.HTTPError) as raised:

@@ -155,7 +155,7 @@ def create_app(
             "series": series_service.app_summary(),
             "migration": {
                 "stage": 5,
-                "status": "stage_5_simulator_ivl_in_progress",
+                "status": "stage_5_series_ivl_queue_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
@@ -295,6 +295,16 @@ def create_app(
                           _client_id: str = Depends(require_controller)) -> dict:
         try:
             return ivl_controller.decide_opening(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/ivl/queue-decision")
+    async def ivl_queue_decision(payload: dict = Body(...),
+                                 _client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return ivl_controller.decide_queue(payload)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:

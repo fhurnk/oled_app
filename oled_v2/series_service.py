@@ -283,6 +283,54 @@ class SeriesService:
                 target["pixel_id"], settings)
             return {**target, "pixel_row": row}
 
+    def ivl_queue_targets(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve an ordered IVL queue without mutating the journal."""
+        if not isinstance(request, dict) or set(request) != {
+            "series_path", "start_pixel", "skip_nonworking"
+        }:
+            raise SeriesValidationError(
+                "Для очереди ВАЯХ нужны серия, стартовый пиксель и режим пропуска."
+            )
+        if not isinstance(request.get("skip_nonworking"), bool):
+            raise SeriesValidationError("Режим пропуска должен быть логическим значением.")
+        with self._lock:
+            manager = self._require_active_locked()
+            series_path = str(manager.series_folder.resolve())
+            if series_path != request.get("series_path"):
+                raise SeriesConflictError("Активная серия изменилась. Настройте очередь заново.")
+            rows = manager.journal.list_pixels()
+            pixel_ids = [str(row.get("Pixel ID") or "") for row in rows]
+            start_pixel = _clean_text(request.get("start_pixel"), "Стартовый пиксель", 160, True)
+            if start_pixel not in pixel_ids:
+                raise SeriesNotFoundError(f"Пиксель не найден: {start_pixel}")
+            start_index = pixel_ids.index(start_pixel)
+            candidates = rows[start_index:]
+            skipped = []
+            targets = []
+            for row in candidates:
+                pixel_id = str(row.get("Pixel ID") or "")
+                status = str(row.get("Last status") or "").upper()
+                if request["skip_nonworking"] and status in {"NONWORKING", "BURNED"}:
+                    skipped.append(pixel_id)
+                    continue
+                targets.append({
+                    "series_path": series_path,
+                    "pixel_id": pixel_id,
+                    "pixel_row": row,
+                    "quarter_number": int(row.get("Quarter number") or 0),
+                    "substrate_number": int(row.get("Substrate number") or 0),
+                })
+            if not targets:
+                raise SeriesValidationError("После выбранного пикселя очередь ВАЯХ пуста.")
+            return {
+                "series_path": series_path,
+                "start_pixel": start_pixel,
+                "skip_nonworking": request["skip_nonworking"],
+                "candidate_count": len(candidates),
+                "skipped_pixels": skipped,
+                "targets": targets,
+            }
+
     def record_ivl(self, target, params, result) -> None:
         """Serialize a simulator result with all other journal readers/writers."""
         with self._lock:

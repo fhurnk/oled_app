@@ -48,6 +48,17 @@ class IvlSeriesTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("Opening decision did not arrive")
 
+    def queue_input(self, start_pixel, skip_nonworking=False):
+        return {
+            "queue": {
+                "series_path": self.target["series_path"],
+                "start_pixel": start_pixel,
+                "skip_nonworking": skip_nonworking,
+            },
+            "sweep_end": 0.2,
+            "sweep_increment": 0.1,
+        }
+
     def test_preflight_resolves_calibration_without_measurement_files(self):
         result = self.controller.preflight(self.input)
         self.assertEqual(result["target"], self.target)
@@ -175,6 +186,56 @@ class IvlSeriesTests(unittest.TestCase):
         self.assertNotEqual(first["result"]["file"], second["result"]["file"])
         self.assertTrue(Path(first["result"]["file"]).is_file())
         self.assertTrue(Path(second["result"]["file"]).is_file())
+        self.assertEqual(len(self.service.state()["active"]["history"]), 2)
+
+    def test_series_queue_runs_from_selected_pixel_and_persists_progress(self):
+        pixels = self.service.state()["active"]["pixels"]
+        start = pixels[-2]["pixel_id"]
+        with self.force_statuses(["NONWORKING", "NONWORKING"]):
+            preview = self.controller.preflight(self.queue_input(start))
+            self.assertEqual(preview["queue"]["total"], 2)
+            self.controller.start(self.queue_input(start))
+            state = wait_terminal(self.controller)
+        self.assertEqual(state["status"], "completed", state)
+        self.assertEqual(state["queue"]["completed"], 2)
+        self.assertEqual(state["queue"]["remaining"], 0)
+        self.assertEqual(state["queue"]["attempts"], 2)
+        self.assertEqual(len(self.service.state()["active"]["history"]), 2)
+
+    def test_no_contact_can_skip_rest_of_current_substrate(self):
+        pixels = self.service.state()["active"]["pixels"]
+        start = pixels[-4]["pixel_id"]
+        with self.force_statuses(["NO_CONTACT"]):
+            self.controller.start(self.queue_input(start))
+            state = self.wait_decision()
+            self.assertEqual(state["decision"]["kind"], "queue_no_contact")
+            self.controller.decide_queue({
+                "run_id": state["run_id"],
+                "decision_id": state["decision"]["id"],
+                "action": "skip_substrate",
+            })
+            state = wait_terminal(self.controller)
+        self.assertEqual(state["status"], "completed", state)
+        self.assertEqual(state["queue"]["completed"], 1)
+        self.assertEqual(len(state["queue"]["skipped_pixels"]), 3)
+        self.assertEqual(state["queue"]["remaining"], 0)
+
+    def test_no_contact_retry_creates_a_second_attempt_for_same_pixel(self):
+        last = self.service.state()["active"]["pixels"][-1]["pixel_id"]
+        with self.force_statuses(["NO_CONTACT", "NONWORKING"]):
+            self.controller.start(self.queue_input(last))
+            state = self.wait_decision()
+            self.controller.decide_queue({
+                "run_id": state["run_id"],
+                "decision_id": state["decision"]["id"],
+                "action": "retry",
+            })
+            state = wait_terminal(self.controller)
+        self.assertEqual(state["queue"]["completed"], 1)
+        self.assertEqual(state["queue"]["attempts"], 2)
+        self.assertEqual(len(state["queue"]["results"]), 2)
+        self.assertNotEqual(state["queue"]["results"][0]["file"],
+                            state["queue"]["results"][1]["file"])
         self.assertEqual(len(self.service.state()["active"]["history"]), 2)
 
     def test_cycles_validation_and_fractional_delay(self):

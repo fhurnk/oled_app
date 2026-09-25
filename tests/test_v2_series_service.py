@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
-from oled_app.constants import CONFIG_FILE, JOURNAL_FILE
+from oled_app.constants import CONFIG_FILE, JOURNAL_FILE, PIXELS_SHEET
 from oled_v2.series_service import (
     SeriesNotFoundError,
     SeriesService,
@@ -80,6 +80,34 @@ class V2SeriesServiceTests(unittest.TestCase):
         cleared = self.service.set_spectrum_priority(first, False, "substrate")
         self.assertEqual(cleared["queue_update"]["changed"], 4)
         self.assertEqual(cleared["active"]["metrics"]["spectrum_queue"], 0)
+
+    def test_ivl_queue_starts_at_selected_pixel_and_skips_known_unusable(self) -> None:
+        active = self.service.create_series(series_payload(self.root))["active"]
+        pixels = active["pixels"]
+        start = pixels[1]["pixel_id"]
+        burned = pixels[2]["pixel_id"]
+        workbook = load_workbook(Path(active["path"]) / JOURNAL_FILE)
+        try:
+            sheet = workbook[PIXELS_SHEET]
+            headers = {cell.value: cell.column for cell in sheet[1]}
+            for row in range(2, sheet.max_row + 1):
+                if sheet.cell(row, headers["Pixel ID"]).value == burned:
+                    sheet.cell(row, headers["Last status"], "BURNED")
+                    break
+            workbook.save(Path(active["path"]) / JOURNAL_FILE)
+        finally:
+            workbook.close()
+
+        queue = self.service.ivl_queue_targets({
+            "series_path": active["path"],
+            "start_pixel": start,
+            "skip_nonworking": True,
+        })
+
+        self.assertEqual(queue["candidate_count"], 47)
+        self.assertEqual(queue["targets"][0]["pixel_id"], start)
+        self.assertNotIn(burned, [item["pixel_id"] for item in queue["targets"]])
+        self.assertEqual(queue["skipped_pixels"], [burned])
 
     def test_refresh_builds_thumbnail_and_returns_history(self) -> None:
         state = self.service.create_series(series_payload(self.root))

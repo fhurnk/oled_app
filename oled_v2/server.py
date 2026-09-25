@@ -54,6 +54,7 @@ class LocalBackend:
             app,
             host=session.host,
             port=session.port,
+            log_config=None,
             log_level="warning",
             access_log=False,
             lifespan="on",

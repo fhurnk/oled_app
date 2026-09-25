@@ -2048,4 +2048,8 @@ select:focus-visible {
 .ivl-fields label { display: grid; gap: 8px; font-size: 12px; }
 .ivl-fields input { width: 100%; min-width: 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
 .ivl-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.ivl-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.ivl-checkbox input { width: auto; }
+.ivl-queue-progress { display: grid; gap: 4px; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-primary-soft); }
+.ivl-queue-progress span { color: var(--color-text-muted); font-size: 12px; }
 @media (max-width: 1250px) { .ivl-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

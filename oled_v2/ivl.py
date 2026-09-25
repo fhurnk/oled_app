@@ -78,27 +78,38 @@ class IvlController:
             raise ValueError("Параметры ВАЯХ должны быть объектом.")
         values = dict(payload)
         target = values.pop("target", None)
+        queue_request = values.pop("queue", None)
+        if target is not None and queue_request is not None:
+            raise ValueError("Выберите одиночный пиксель или очередь серии.")
         params = validate_params(values)
         context = None
+        queue = None
         if target is not None:
             if self.series_service is None:
                 raise ValueError("Серийная ВАЯХ недоступна.")
             context = self.series_service.ivl_target(target, params, load_app_settings())
-        return params, context
+        elif queue_request is not None:
+            if self.series_service is None:
+                raise ValueError("Очередь серии недоступна.")
+            queue = self.series_service.ivl_queue_targets(queue_request)
+        return params, context, queue
 
     def preflight(self, payload):
-        params, target = self._prepare(payload)
+        params, target, queue = self._prepare(payload)
         return {"mode": "simulator", "params": {k: getattr(params, k) for k in FIELDS},
                 "target": {k: target[k] for k in ("series_path", "pixel_id")} if target else None,
-                "output_root": target["series_path"] if target else str(self.output_root),
+                "queue": self._queue_public(queue) if queue else None,
+                "output_root": (target or queue or {}).get("series_path", str(self.output_root)),
                 "cycles": params.num_cycles,
                 "luminance_coefficient": params.luminance_cd_m2_per_uA,
-                "spectral_calibration": params.luminance_calibration_model is not None,
-                "note": ("Эмулятор: результат будет записан в журнал выбранной серии."
+                "spectral_calibration": (params.luminance_calibration_model is not None
+                                         if target else None if queue else False),
+                "note": (f"Эмулятор: очередь из {len(queue['targets'])} пикселей будет записана в журнал серии."
+                         if queue else "Эмулятор: результат будет записан в журнал выбранной серии."
                          if target else "Эмулятор SIM_IVL: результаты отделены от серий.")}
 
     def start(self, payload):
-        params, target = self._prepare(payload)
+        params, target, queue = self._prepare(payload)
         with self._lock:
             if self._state["active"]:
                 raise RuntimeError("ВАЯХ уже выполняется.")
@@ -107,14 +118,41 @@ class IvlController:
             self._state = {"status": "running", "active": True, "points": [], "error": None,
                            "safe_shutdown_confirmed": None, "result": None,
                            "run_id": uuid4().hex, "started_at": utc_now(),
-                           "pixel_id": target["pixel_id"] if target else "SIM_IVL",
+                           "pixel_id": (target["pixel_id"] if target else
+                                        queue["targets"][0]["pixel_id"] if queue else "SIM_IVL"),
                            "target": {k: target[k] for k in ("series_path", "pixel_id")} if target else None,
                            "cycle": 1, "point_count": 0, "decision": None,
-                           "params": {k: getattr(params, k) for k in FIELDS}}
-            self._thread = threading.Thread(target=self._run, args=(params, target), daemon=True,
+                           "params": {k: getattr(params, k) for k in FIELDS},
+                           "queue": self._queue_state(queue) if queue else None}
+            self._thread = threading.Thread(target=self._run, args=(params, target, queue), daemon=True,
                                             name="oled-v2-ivl")
             self._thread.start()
             return self.snapshot()
+
+    @staticmethod
+    def _queue_public(queue):
+        return {
+            "enabled": True,
+            "series_path": queue["series_path"],
+            "start_pixel": queue["start_pixel"],
+            "skip_nonworking": queue["skip_nonworking"],
+            "candidate_count": queue["candidate_count"],
+            "total": len(queue["targets"]),
+            "skipped_pixels": list(queue["skipped_pixels"]),
+        }
+
+    @classmethod
+    def _queue_state(cls, queue):
+        return {
+            **cls._queue_public(queue),
+            "completed": 0,
+            "remaining": len(queue["targets"]),
+            "attempts": 0,
+            "current_index": 0,
+            "current_pixel": queue["targets"][0]["pixel_id"],
+            "completed_pixels": [],
+            "results": [],
+        }
 
     def decide_opening(self, payload):
         with self._lock:
@@ -135,6 +173,23 @@ class IvlController:
             self._decision_ready.set()
             return self.snapshot()
 
+    def decide_queue(self, payload):
+        with self._lock:
+            decision = self._state.get("decision")
+            if (not decision or decision.get("kind") != "queue_no_contact"
+                    or self._state["status"] != "awaiting_queue_decision"
+                    or payload.get("run_id") != self._state["run_id"]
+                    or payload.get("decision_id") != decision["id"]):
+                raise RuntimeError("Запрос решения устарел или уже обработан.")
+            action = payload.get("action")
+            if action not in {"retry", "skip_substrate", "continue"}:
+                raise ValueError("Действие должно быть retry, skip_substrate или continue.")
+            self._decision_value = action
+            self._state["decision"] = None
+            self._state["status"] = "processing"
+            self._decision_ready.set()
+            return self.snapshot()
+
     def _opening_voltage(self, result):
         with self._lock:
             self._decision_ready.clear()
@@ -147,6 +202,27 @@ class IvlController:
         if self._stop.is_set():
             raise MeasurementStopped()
         result["opening_voltage"] = self._decision_value
+
+    def _queue_no_contact(self, pixel_id):
+        with self._lock:
+            self._decision_ready.clear()
+            self._state["status"] = "awaiting_queue_decision"
+            self._state["decision"] = {
+                "id": uuid4().hex,
+                "kind": "queue_no_contact",
+                "message": (
+                    f"Для {pixel_id} нет контакта. Повторите пиксель, пропустите остаток "
+                    "этой подложки или продолжите обычную очередь."
+                ),
+                "pixel_id": pixel_id,
+                "actions": ["retry", "skip_substrate", "continue"],
+            }
+        while not self._decision_ready.wait(0.1):
+            if self._stop.is_set():
+                raise MeasurementStopped()
+        if self._stop.is_set():
+            raise MeasurementStopped()
+        return self._decision_value
 
     def stop(self):
         with self._lock:
@@ -181,91 +257,191 @@ class IvlController:
         if self._stop.is_set():
             raise MeasurementStopped()
 
-    def _run(self, params, target):
-        confirmed = None
+    def _run(self, params, target, queue):
         final_status = "failed"
         run_id = self._state["run_id"]
-        pixel_id = self._state["pixel_id"]
         try:
             private_folder = self.output_root / run_id
             private_folder.mkdir(parents=True, exist_ok=False)
             settings = deepcopy(load_app_settings())
             settings["hardware_mode"] = HARDWARE_MODE_SIM
             settings["simulator_config_path"] = str(private_folder / "simulator_config.json")
-            if target:
-                folder = ensure_measurement_folder(Path(target["series_path"]), "IVL", pixel_id,
-                                                   target["pixel_row"])
-                stem = f"IVL_{safe_filename(pixel_id)}_{timestamp_for_file()}_{run_id[:8]}"
-                raw = raw_csv_path(folder, stem + "_raw.csv", settings)
+            if queue:
+                self._run_queue(params, queue, settings, private_folder, run_id)
             else:
-                folder, stem = private_folder, "IVL_SIM_IVL"
-                raw = folder / (stem + "_raw.csv")
-            prepare_hardware_environment(pixel_id, settings, self._log)
-            import xtralien
-            with self._lock:
-                self._state["output_folder"] = str(folder)
-                self._state["raw_file"] = str(raw)
-            cycles = []
-            cycles_to_run = params.num_cycles
-            confirmations_left = params.burned_confirmation_cycles
-            started = time.monotonic()
-            with RawCsvWriter(raw, IVL_RAW_HEADERS) as writer:
-                with xtralien.Device("SIM") as smu:
-                    try:
-                        cycle_number = 1
-                        while cycle_number <= cycles_to_run:
-                            if self._stop.is_set():
-                                raise MeasurementStopped()
-                            cycle = run_ivl_cycle(smu, pixel_id, cycle_number, params, self._log,
-                                progress_callback=self._point, raw_writer=writer,
-                                measurement_started_monotonic=started)
-                            cycles.append(cycle)
-                            if cycle["status"] == "BURNED" and confirmations_left > 0:
-                                confirmations_left -= 1
-                                cycles_to_run = max(cycles_to_run, cycle_number + 1)
-                                self._log("Проверка пробоя: дополнительный подтверждающий цикл.")
-                            elif cycle["status"] in {"BURNED", "NO_CONTACT", "NONWORKING"}:
-                                break
-                            if cycle_number < cycles_to_run and self._stop.wait(params.delay_between_cycles):
-                                raise MeasurementStopped()
-                            cycle_number += 1
-                    finally:
-                        confirmed = safe_shutdown_smu(smu)
-                        with self._lock:
-                            self._state["safe_shutdown_confirmed"] = confirmed
-            if confirmed is not True:
-                raise RuntimeError("Отключение выходов SMU не подтверждено; запись в журнал отменена.")
-            if self._stop.is_set():
-                raise MeasurementStopped()
-            with self._lock:
-                self._state["status"] = "processing"
-            workbook = build_ivl_workbook_from_raw_csv(raw, folder / (stem + ".xlsx"),
-                                                      pixel_id, params, cycles)
-            result = {"file": str(workbook), "status": final_ivl_status(cycles),
-                "opening_voltage": next((c["opening_voltage"] for c in cycles if c["opening_voltage"] is not None), None),
-                "current_limit_reached": any(c["current_limit_reached"] for c in cycles),
-                "ivl_diagnosis": describe_ivl_first_measurement(cycles),
-                "max_current_mA": max(c["max_current_mA"] for c in cycles),
-                "max_photo_uA": max(c["max_photo_uA"] for c in cycles),
-                "cycles": len(cycles), "run_id": run_id, "journaled": False}
-            with self._lock:
-                self._state["result"] = deepcopy(result)
-            if target:
-                create_ivl_thumbnail(ivl_thumbnail_path(workbook, pixel_id), cycles)
-                if result["status"] == "WORKING" and result["opening_voltage"] is None:
-                    self._opening_voltage(result)
-                self.series_service.record_ivl(target, params, result)
-                result["journaled"] = True
-            with self._lock:
-                self._state["result"] = deepcopy(result)
+                self._measure_one(params, target, settings, private_folder, run_id)
             final_status = "completed"
         except MeasurementStopped:
             final_status = "stopped"
-            self._log("Остановлено. Сохранённые файлы доступны; результат в журнал не записан.")
+            self._log("Остановлено. Уже записанные результаты сохранены; текущий незавершённый результат в журнал не добавлен.")
         except Exception as exc:
             with self._lock:
                 self._state["error"] = str(exc)
         finally:
             with self._lock:
                 self._state.update(status=final_status, active=False, decision=None,
-                                   safe_shutdown_confirmed=confirmed, finished_at=utc_now())
+                                   finished_at=utc_now())
+
+    def _run_queue(self, params, queue, settings, private_folder, run_id):
+        targets = list(queue["targets"])
+        index = 0
+        while index < len(targets):
+            if self._stop.is_set():
+                raise MeasurementStopped()
+            target = targets[index]
+            pixel_params = deepcopy(params)
+            target = self.series_service.ivl_target(
+                {"series_path": target["series_path"], "pixel_id": target["pixel_id"]},
+                pixel_params,
+                settings,
+            )
+            target["quarter_number"] = int(target["pixel_row"].get("Quarter number") or 0)
+            target["substrate_number"] = int(target["pixel_row"].get("Substrate number") or 0)
+            with self._lock:
+                queue_state = self._state["queue"]
+                queue_state.update(
+                    current_index=index,
+                    current_pixel=target["pixel_id"],
+                    remaining=len(targets) - index,
+                )
+                self._state.update(
+                    status="running",
+                    pixel_id=target["pixel_id"],
+                    target={k: target[k] for k in ("series_path", "pixel_id")},
+                    points=[], cycle=1, result=None, safe_shutdown_confirmed=None,
+                    params={k: getattr(pixel_params, k) for k in FIELDS},
+                )
+            result = self._measure_one(pixel_params, target, settings, private_folder, run_id)
+            with self._lock:
+                queue_state = self._state["queue"]
+                queue_state["attempts"] += 1
+                queue_state["results"].append({
+                    "pixel_id": target["pixel_id"],
+                    "status": result["status"],
+                    "file": result["file"],
+                    "journaled": result["journaled"],
+                })
+
+            action = "continue"
+            if result["status"] == "NO_CONTACT":
+                action = self._queue_no_contact(target["pixel_id"])
+            if action == "retry":
+                self._log(f"Очередь ВАЯХ: повтор {target['pixel_id']} после проверки контакта.")
+                continue
+
+            if action == "skip_substrate":
+                same_substrate = lambda item: (
+                    int(item.get("quarter_number") or item["pixel_row"].get("Quarter number") or 0)
+                    == target["quarter_number"]
+                    and int(item.get("substrate_number") or item["pixel_row"].get("Substrate number") or 0)
+                    == target["substrate_number"]
+                )
+                skipped = [item["pixel_id"] for item in targets[index + 1:] if same_substrate(item)]
+                targets = targets[:index + 1] + [
+                    item for item in targets[index + 1:] if not same_substrate(item)
+                ]
+                with self._lock:
+                    self._state["queue"]["skipped_pixels"].extend(skipped)
+                self._log(
+                    f"Очередь ВАЯХ: после {target['pixel_id']} пропущено пикселей подложки: {len(skipped)}."
+                )
+
+            with self._lock:
+                queue_state = self._state["queue"]
+                if target["pixel_id"] not in queue_state["completed_pixels"]:
+                    queue_state["completed_pixels"].append(target["pixel_id"])
+                queue_state["completed"] = len(queue_state["completed_pixels"])
+                queue_state["remaining"] = len(targets) - index - 1
+            index += 1
+        with self._lock:
+            self._state["queue"]["current_pixel"] = None
+            self._state["queue"]["remaining"] = 0
+        self._log("Очередь ВАЯХ серии завершена.")
+
+    def _measure_one(self, params, target, settings, private_folder, run_id):
+        pixel_id = target["pixel_id"] if target else "SIM_IVL"
+        if target:
+            folder = ensure_measurement_folder(
+                Path(target["series_path"]), "IVL", pixel_id, target["pixel_row"]
+            )
+            stem = (
+                f"IVL_{safe_filename(pixel_id)}_{timestamp_for_file()}_"
+                f"{run_id[:8]}_{uuid4().hex[:6]}"
+            )
+            raw = raw_csv_path(folder, stem + "_raw.csv", settings)
+        else:
+            folder, stem = private_folder, "IVL_SIM_IVL"
+            raw = folder / (stem + "_raw.csv")
+        prepare_hardware_environment(pixel_id, settings, self._log)
+        import xtralien
+        with self._lock:
+            self._state["output_folder"] = str(folder)
+            self._state["raw_file"] = str(raw)
+        cycles = []
+        cycles_to_run = params.num_cycles
+        confirmations_left = params.burned_confirmation_cycles
+        started = time.monotonic()
+        confirmed = None
+        with RawCsvWriter(raw, IVL_RAW_HEADERS) as writer:
+            with xtralien.Device("SIM") as smu:
+                try:
+                    cycle_number = 1
+                    while cycle_number <= cycles_to_run:
+                        if self._stop.is_set():
+                            raise MeasurementStopped()
+                        cycle = run_ivl_cycle(
+                            smu, pixel_id, cycle_number, params, self._log,
+                            progress_callback=self._point, raw_writer=writer,
+                            measurement_started_monotonic=started,
+                        )
+                        cycles.append(cycle)
+                        if cycle["status"] == "BURNED" and confirmations_left > 0:
+                            confirmations_left -= 1
+                            cycles_to_run = max(cycles_to_run, cycle_number + 1)
+                            self._log("Проверка пробоя: дополнительный подтверждающий цикл.")
+                        elif cycle["status"] in {"BURNED", "NO_CONTACT", "NONWORKING"}:
+                            break
+                        if (cycle_number < cycles_to_run
+                                and self._stop.wait(params.delay_between_cycles)):
+                            raise MeasurementStopped()
+                        cycle_number += 1
+                finally:
+                    confirmed = safe_shutdown_smu(smu)
+                    with self._lock:
+                        self._state["safe_shutdown_confirmed"] = confirmed
+        if confirmed is not True:
+            raise RuntimeError("Отключение выходов SMU не подтверждено; запись в журнал отменена.")
+        if self._stop.is_set():
+            raise MeasurementStopped()
+        with self._lock:
+            self._state["status"] = "processing"
+        workbook = build_ivl_workbook_from_raw_csv(
+            raw, folder / (stem + ".xlsx"), pixel_id, params, cycles
+        )
+        result = {
+            "file": str(workbook),
+            "status": final_ivl_status(cycles),
+            "opening_voltage": next(
+                (cycle["opening_voltage"] for cycle in cycles
+                 if cycle["opening_voltage"] is not None),
+                None,
+            ),
+            "current_limit_reached": any(cycle["current_limit_reached"] for cycle in cycles),
+            "ivl_diagnosis": describe_ivl_first_measurement(cycles),
+            "max_current_mA": max(cycle["max_current_mA"] for cycle in cycles),
+            "max_photo_uA": max(cycle["max_photo_uA"] for cycle in cycles),
+            "cycles": len(cycles),
+            "run_id": run_id,
+            "journaled": False,
+        }
+        with self._lock:
+            self._state["result"] = deepcopy(result)
+        if target:
+            create_ivl_thumbnail(ivl_thumbnail_path(workbook, pixel_id), cycles)
+            if result["status"] == "WORKING" and result["opening_voltage"] is None:
+                self._opening_voltage(result)
+            self.series_service.record_ivl(target, params, result)
+            result["journaled"] = True
+        with self._lock:
+            self._state["result"] = deepcopy(result)
+        return result
