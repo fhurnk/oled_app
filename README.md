@@ -30,11 +30,16 @@ Stage 5: в разделе `Серия` выберите пиксель и на�
 показывает каждую пробу, безопасно отключает SMU и сохраняет совместимые raw
 CSV/XLSX и записи прежнего журнала. Отдельный `SIM_SPECTRUM` также доступен.
 
+Пункт `Стабильность` выполняет отдельный `SIM_STABILITY` или измерение выбранного
+пикселя серии. Доступны удержание тока и напряжения, изменение уставки во время
+прогона, live-график, безопасная остановка и совместимые CSV/XLSX. Для токового
+режима старт можно рассчитать по последней ВАЯХ; серийный результат записывается
+в прежний журнал.
+
 Пока используется только эмулятор: выбирайте тестовую серию. Записи явно
-помечаются `ЭМУЛЯТОР v2`. Отдельные SIM_IVL и SIM_SPECTRUM сохраняются в
-`%LOCALAPPDATA%\OLED Measurement App\simulator_ivl\<run_id>` и
-`%LOCALAPPDATA%\OLED Measurement App\simulator_spectrum\<run_id>`.
-Стабильность в v2 ещё не перенесена.
+помечаются `ЭМУЛЯТОР v2`. Отдельные `SIM_IVL`, `SIM_SPECTRUM` и
+`SIM_STABILITY` сохраняются в каталогах `simulator_ivl`, `simulator_spectrum` и
+`simulator_stability` внутри `%LOCALAPPDATA%\OLED Measurement App`.
 
 ### Запуск Без Visual Studio
 
@@ -77,6 +82,7 @@ Python и Node.js для запуска не требуется. Нужен Wind
 .\env\Scripts\python.exe .\oled_v2_app.py --series-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --ivl-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --spectrum-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py --stability-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py
 ```
 
@@ -211,7 +217,7 @@ Raw CSV и итоговый XLSX отдельно сохраняют выбра�
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
-- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 IVL/спектры и защита desktop-сеанса v2.
+- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 ВАЯХ/спектры/стабильность и защита desktop-сеанса v2.
 - `v2_frontend/` - исходники React/Vite, live-графики, рабочие `SeriesWorkspace.tsx`, `IvlWorkspace.tsx`, `SpectrumWorkspace.tsx` и `src/design-system/`; готовые assets входят в `oled_v2/static/`.
 - `requirements-v2.txt` - дополнительные зависимости v2 и сборщика.
 - `scripts/build_v2_frontend.ps1`, `scripts/build_v2_alpha.ps1` - production frontend и PyInstaller `onedir`.

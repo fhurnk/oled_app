@@ -355,6 +355,99 @@ def spectrum_smoke() -> int:
     return 0
 
 
+def stability_smoke() -> int:
+    """Exercise simulator stability, live setpoint, workbook and series journal."""
+    from openpyxl import Workbook, load_workbook
+
+    from oled_app.measurements.ivl import IVLParams
+    from oled_app.settings import load_app_settings
+    from .series_service import SeriesService
+    from .stability import StabilityController
+
+    with tempfile.TemporaryDirectory(prefix="oled-v2-stability-smoke-") as folder:
+        root = Path(folder)
+        service = SeriesService(root / "series")
+        active = service.create_series({
+            "root": str(root / "series"), "deposition_date": "2026-09-28",
+            "keyword": "stability-smoke", "series_led_color": "green",
+            "quarter_bases": {str(number): "Q" for number in range(1, 5)},
+            "quarter_descriptions": {str(number): "Simulator" for number in range(1, 5)},
+        })["active"]
+        controller = StabilityController(root / "standalone", service)
+        common = {
+            "control_mode": "voltage", "voltage_setpoint_V": 1.0,
+            "voltage_start": 1.0, "voltage_limit": 5.0, "current_limit_mA": 10.0,
+            "measurement_time_s": 0.12, "sample_interval_s": 0.01,
+            "autosave_interval_s": 60.0,
+        }
+        try:
+            started = controller.start(common)
+            deadline = time.monotonic() + 10
+            changed = False
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                state = controller.snapshot()
+                if state["point_count"] and not changed:
+                    controller.setpoint({"run_id": started["run_id"], "value": 1.5})
+                    changed = True
+                time.sleep(0.02)
+            standalone = controller.snapshot()
+            if (standalone["status"] != "completed" or not changed
+                    or standalone["safe_shutdown_confirmed"] is not True
+                    or standalone["result"]["final_setpoint"] != 1.5):
+                raise RuntimeError(f"Standalone stability smoke failed: {standalone}")
+            workbook = load_workbook(standalone["result"]["file"], read_only=True)
+            try:
+                if "Data" not in workbook.sheetnames:
+                    raise RuntimeError("Stability workbook contract mismatch")
+            finally:
+                workbook.close()
+
+            pixel_id = active["pixels"][0]["pixel_id"]
+            ivl_file = Path(active["path"]) / "stability_smoke_ivl.xlsx"
+            seed = Workbook()
+            sheet = seed.active
+            sheet.title = "Cycle_1"
+            sheet.append(["Voltage OLED / LED measured (V)", "Current OLED / LED (mA)"])
+            sheet.append([2.0, 0.0])
+            sheet.append([4.0, 1.0])
+            seed.save(ivl_file)
+            ivl_target = service.ivl_target(
+                {"series_path": active["path"], "pixel_id": pixel_id},
+                IVLParams(), load_app_settings(),
+            )
+            service.record_ivl(ivl_target, IVLParams(), {
+                "status": "WORKING", "file": str(ivl_file), "run_id": "stability-smoke-seed",
+                "ivl_diagnosis": "seed", "opening_voltage": 2.0,
+                "max_current_mA": 1.0, "max_photo_uA": 1.0,
+            })
+            controller.start({
+                **common,
+                "measurement_time_s": 0.08,
+                "target": {"series_path": active["path"], "pixel_id": pixel_id},
+                "use_ivl_start_voltage": False,
+            })
+            deadline = time.monotonic() + 10
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.02)
+            state = controller.snapshot()
+            reopened = service.open_series(active["path"])["active"]
+            pixel = next(item for item in reopened["pixels"] if item["pixel_id"] == pixel_id)
+            if (state["status"] != "completed" or not state["result"]["journaled"]
+                    or not pixel["last_stability_file"]):
+                raise RuntimeError(f"Series stability smoke failed: {state}")
+            console_write(json.dumps({
+                "stability_status": state["status"],
+                "points": state["point_count"],
+                "safe_shutdown_confirmed": state["safe_shutdown_confirmed"],
+                "dynamic_setpoint_verified": changed,
+                "workbook_verified": True,
+                "series_journal_verified": True,
+            }, ensure_ascii=False))
+        finally:
+            controller.shutdown()
+    return 0
+
+
 def series_smoke() -> int:
     """Create, queue, close, and reopen a compatible temporary series."""
 
@@ -496,6 +589,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Run a simulator IVL cycle and verify CSV/XLSX and shutdown.")
     parser.add_argument("--spectrum-smoke", action="store_true",
                         help="Run a simulator spectrum and verify T_int, CSV/XLSX and journal.")
+    parser.add_argument("--stability-smoke", action="store_true",
+                        help="Run simulator stability and verify live setpoint, XLSX and journal.")
     parser.add_argument(
         "--series-smoke",
         action="store_true",
@@ -523,6 +618,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return ivl_smoke()
     if args.spectrum_smoke:
         return spectrum_smoke()
+    if args.stability_smoke:
+        return stability_smoke()
     if args.series_smoke:
         return series_smoke()
     try:

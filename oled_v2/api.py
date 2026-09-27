@@ -20,6 +20,7 @@ from .logging_setup import log_directory
 from .poc import PocBusyError, PocController
 from .ivl import IvlController
 from .spectrum import SpectrumController
+from .stability import StabilityController
 from .security import (
     WS_APP_PROTOCOL,
     ControllerLease,
@@ -74,6 +75,7 @@ def create_app(
     series_service = SeriesService(default_root=series_root, logger=logger)
     ivl_controller = IvlController(series_service=series_service)
     spectrum_controller = SpectrumController(series_service=series_service)
+    stability_controller = StabilityController(series_service=series_service)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -84,6 +86,7 @@ def create_app(
         finally:
             await asyncio.to_thread(ivl_controller.shutdown)
             await asyncio.to_thread(spectrum_controller.shutdown)
+            await asyncio.to_thread(stability_controller.shutdown)
             await asyncio.to_thread(poc_controller.shutdown)
             app.state.ready = False
 
@@ -99,6 +102,7 @@ def create_app(
     app.state.controller_lease = ControllerLease()
     app.state.ivl_controller = ivl_controller
     app.state.spectrum_controller = spectrum_controller
+    app.state.stability_controller = stability_controller
     app.state.poc_controller = poc_controller
     app.state.series_service = series_service
     app.state.started_at = _utc_now()
@@ -159,7 +163,7 @@ def create_app(
             "series": series_service.app_summary(),
             "migration": {
                 "stage": 5,
-                "status": "stage_5_spectrum_queue_in_progress",
+                "status": "stage_5_stability_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
@@ -177,7 +181,8 @@ def create_app(
 
     async def series_mutation_guard(_client_id: str = Depends(require_controller)):
         async with operation_gate:
-            if ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]:
+            if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
+                    or stability_controller.snapshot()["active"]):
                 raise HTTPException(status_code=409, detail="Завершите измерение перед изменением серии.")
             yield
 
@@ -265,6 +270,7 @@ def create_app(
 
     def require_hardware_idle():
         if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
+                or stability_controller.snapshot()["active"]
                 or poc_controller.snapshot(False)["active"]):
             raise HTTPException(status_code=409, detail="Дождитесь завершения текущей операции.")
 
@@ -361,6 +367,49 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/stability/state")
+    async def stability_state(_client_id: str = Depends(require_controller)) -> dict:
+        return stability_controller.snapshot()
+
+    @app.post("/api/stability/preflight")
+    async def stability_preflight(payload: dict = Body(...),
+                                  _client_id: str = Depends(require_controller)) -> dict:
+        try:
+            async with operation_gate:
+                return await asyncio.to_thread(stability_controller.preflight, payload)
+        except SeriesServiceError as exc:
+            raise series_http_error(exc) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/stability/start", status_code=202)
+    async def stability_start(payload: dict = Body(...),
+                              _client_id: str = Depends(require_controller)) -> dict:
+        async with operation_gate:
+            require_hardware_idle()
+            try:
+                return await asyncio.to_thread(stability_controller.start, payload)
+            except SeriesServiceError as exc:
+                raise series_http_error(exc) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/stability/setpoint")
+    async def stability_setpoint(payload: dict = Body(...),
+                                 _client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return stability_controller.setpoint(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/stability/stop")
+    async def stability_stop(_client_id: str = Depends(require_controller)) -> dict:
+        return stability_controller.stop()
 
     @app.get("/api/poc/state")
     async def poc_state(_client_id: str = Depends(require_controller)) -> dict:

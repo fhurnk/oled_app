@@ -40,9 +40,11 @@ compatible T_int optimization previews, current checks, safe shutdown, raw
 CSV/XLSX and series journaling. Checkpoint 14 extends it with substrate and
 marked-pixel queues, confirmation before every pixel, recoverable `NO_CONTACT`,
 keep/delete decisions for rejected data and same-quarter replacement. Stability
-is still pending.
-Use `--ivl-smoke` and `--spectrum-smoke` to verify these slices in source and
-onedir builds.
+arrives in checkpoint 15 through `oled_v2/stability.py` and
+`v2_frontend/src/StabilityWorkspace.tsx`: current/voltage control, mutable live
+setpoint, IVL-derived or manual start, compatible files, safe shutdown and
+series journaling. Use `--ivl-smoke`, `--spectrum-smoke` and
+`--stability-smoke` to verify these slices in source and onedir builds.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -65,6 +67,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 4 series workspace: `v2_frontend/src/SeriesWorkspace.tsx`
 - v2 Stage 5 spectrum controller: `oled_v2/spectrum.py`
 - v2 Stage 5 spectrum workspace: `v2_frontend/src/SpectrumWorkspace.tsx`
+- v2 Stage 5 stability controller: `oled_v2/stability.py`
+- v2 Stage 5 stability workspace: `v2_frontend/src/StabilityWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

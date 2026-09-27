@@ -450,3 +450,34 @@ export const startSpectrum = (params: SpectrumInput) => requestJson<SpectrumStat
 export const stopSpectrum = () => requestJson<SpectrumState>("/api/spectrum/stop", {method: "POST"});
 export const decideSpectrum = (run_id: string, decision_id: string, action: string, pixel_id?: string) =>
   requestJson<SpectrumState>("/api/spectrum/decision", {method: "POST", body: JSON.stringify({run_id, decision_id, action, pixel_id})});
+
+export type StabilityTarget = {series_path: string; pixel_id: string};
+export type StabilityInput = Record<string, number | boolean | string | StabilityTarget | null>;
+export type StabilityPoint = {
+  point: number; elapsed_s: number; control_mode: "current" | "voltage";
+  target_setpoint: number; target_unit: "mA" | "V"; voltage_set_V: number;
+  voltage_measured_V: number; current_measured_mA: number;
+  photodiode_uA: number; luminance_cd_m2: number;
+};
+export type StabilityState = {
+  status: string; active: boolean; run_id: string | null; pixel_id?: string;
+  target?: StabilityTarget | null; use_ivl_start_voltage?: boolean;
+  params?: Record<string, number | string>; points: StabilityPoint[];
+  point_count: number; latest_point?: StabilityPoint | null;
+  current_setpoint?: number; setpoint_revision?: number;
+  message?: string; error: string | null; safe_shutdown_confirmed: boolean | null;
+  result: {file: string; raw_file: string | null; status: string; max_photo_uA: number;
+    control_mode: string; final_setpoint: number; stopped_by_user: boolean;
+    journaled: boolean; events: {event: string; label: string; measurement_time_s: number | null}[]} | null;
+};
+export type StabilityPreflight = {
+  params: Record<string, number | string>; target: StabilityTarget | null;
+  use_ivl_start_voltage: boolean; effective_voltage_start: number;
+  start_voltage_source: string; ivl_voltage_at_target: number | null;
+  output_root: string; note: string;
+};
+export const fetchStabilityState = () => requestJson<StabilityState>("/api/stability/state");
+export const preflightStability = (params: StabilityInput) => requestJson<StabilityPreflight>("/api/stability/preflight", {method: "POST", body: JSON.stringify(params)});
+export const startStability = (params: StabilityInput) => requestJson<StabilityState>("/api/stability/start", {method: "POST", body: JSON.stringify(params)});
+export const setStabilitySetpoint = (run_id: string, value: number) => requestJson<StabilityState>("/api/stability/setpoint", {method: "POST", body: JSON.stringify({run_id, value})});
+export const stopStability = () => requestJson<StabilityState>("/api/stability/stop", {method: "POST"});

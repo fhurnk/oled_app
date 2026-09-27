@@ -211,6 +211,8 @@ def run_stability_measurement(
     control: Optional[StabilitySetpointController] = None,
     progress: Optional[Callable[[Dict[str, Any]], None]] = None,
     measurement_started_monotonic: Optional[float] = None,
+    file_suffix: str = "",
+    shutdown_callback: Optional[Callable[[bool], None]] = None,
 ) -> Dict[str, Any]:
     prepare_hardware_environment(pixel_id, app_settings, log)
     import xtralien
@@ -227,8 +229,10 @@ def run_stability_measurement(
         control = StabilitySetpointController(control_mode, initial_target, maximum=maximum)
     elif control.mode != control_mode:
         raise ValueError("Режим контроллера уставки не совпадает с параметрами стабильности.")
+    suffix = safe_filename(file_suffix, fallback="").strip("_")
     file_stem = (
         f"STABILITY_{safe_filename(pixel_id)}_{control_mode}_{initial_target:g}{target_unit}_{measurement_timestamp}"
+        + (f"_{suffix}" if suffix else "")
     )
     filename = output_dir / f"{file_stem}.xlsx"
     raw_file = raw_csv_path(output_dir, f"{file_stem}_raw.csv", app_settings)
@@ -397,6 +401,8 @@ def run_stability_measurement(
                 measurement_error = exc
             finally:
                 shutdown_confirmed = shutdown_smu_with_reconnect(smu, params.com_port, log=log)
+                if shutdown_callback is not None:
+                    shutdown_callback(bool(shutdown_confirmed))
 
     if measurement_error is not None or not shutdown_confirmed:
         if shutdown_confirmed:
@@ -455,4 +461,5 @@ def run_stability_measurement(
             if current_limit_elapsed_s is not None
             else []
         ),
+        "safe_shutdown_confirmed": bool(shutdown_confirmed),
     }

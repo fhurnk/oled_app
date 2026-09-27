@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from openpyxl import load_workbook
 
 from oled_app.constants import CONFIG_FILE, JOURNAL_FILE, MEASUREMENTS_SHEET
+from oled_app.measurements.stability import interpolate_voltage_at_current_from_ivl
 from oled_app.processing.ivl_preview import (
     create_ivl_thumbnail_from_workbook,
     ivl_thumbnail_needs_refresh,
@@ -483,6 +484,63 @@ class SeriesService:
                 spectrum_peak_count=result.get("spectrum_peak_count"),
                 spectrum_peaks_nm=result.get("spectrum_peaks_nm", ""),
                 spectrum_max_intensity=result.get("spectrum_max_intensity"),
+            )
+
+    def stability_target(self, target, params, settings, use_ivl_start: bool) -> Dict[str, Any]:
+        """Resolve one series pixel and the compatible stability calibration/start."""
+        context = self.ivl_target(target, params, settings)
+        if not context["pixel_row"].get("Last IVL file"):
+            raise SeriesValidationError(
+                "Перед стабильностью выбранного пикселя необходимо снять ВАЯХ."
+            )
+        if params.control_mode == "voltage":
+            params.voltage_start = params.voltage_setpoint_V
+            context["start_voltage_source"] = "voltage_setpoint"
+            return context
+        if not use_ivl_start:
+            context["start_voltage_source"] = "manual"
+            return context
+        with self._lock:
+            manager = self._require_active_locked()
+            ivl_file = resolve_series_file(
+                manager.series_folder,
+                context["pixel_row"].get("Last IVL file"),
+            )
+        voltage = (
+            interpolate_voltage_at_current_from_ivl(ivl_file, params.current_setpoint_mA)
+            if ivl_file else None
+        )
+        if voltage is None or not math.isfinite(float(voltage)):
+            raise SeriesValidationError(
+                "Не удалось определить стартовое напряжение из последней ВАЯХ. "
+                "Отключите автоматический расчёт и задайте старт вручную."
+            )
+        params.voltage_start = 0.9 * float(voltage)
+        context["start_voltage_source"] = "ivl_90_percent"
+        context["ivl_voltage_at_target"] = float(voltage)
+        return context
+
+    def record_stability(self, target, params, result) -> None:
+        """Write one simulator stability result to the compatible series journal."""
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != target["series_path"]:
+                raise SeriesConflictError("Серия изменилась; результат сохранён без записи в журнал.")
+            notes = "ЭМУЛЯТОР v2."
+            if result.get("stopped_by_user"):
+                notes += " Остановлено пользователем."
+            manager.journal.update_after_measurement(
+                "STABILITY",
+                target["pixel_id"],
+                result["status"],
+                Path(result["file"]),
+                {
+                    **params.as_dict(),
+                    "final_setpoint": result.get("final_setpoint"),
+                    "hardware_mode": "simulator",
+                    "v2_run_id": result["run_id"],
+                },
+                notes=notes,
             )
 
     def _validated_config_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
