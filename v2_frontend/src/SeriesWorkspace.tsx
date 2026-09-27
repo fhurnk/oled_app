@@ -221,10 +221,12 @@ function HolderMap({
 
 export default function SeriesWorkspace({
   onSeriesChanged,
-  onMeasureIvl
+  onMeasureIvl,
+  onMeasureSpectrum
 }: {
   onSeriesChanged?: () => void;
   onMeasureIvl?: (target: {series_path: string; pixel_id: string}) => void;
+  onMeasureSpectrum?: (target: {series_path: string; pixel_id: string}) => void;
 }) {
   const [state, setState] = useState<SeriesState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -593,6 +595,7 @@ export default function SeriesWorkspace({
                   <>
                     <Button variant="primary" onClick={() => onMeasureIvl?.({series_path: active.path, pixel_id: selectedPixel.pixel_id})}>ВАЯХ выбранного пикселя · эмулятор</Button>
                     <div className="pixel-inspector__actions">
+                      <Button compact onClick={() => onMeasureSpectrum?.({series_path: active.path, pixel_id: selectedPixel.pixel_id})}>Спектр выбранного пикселя · эмулятор</Button>
                       {!selectedPixel.last_spectrum_file && (
                         <>
                           <Button compact disabled={busy} onClick={() => void runAction(

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import LivePocChart from "./LivePocChart";
 import IvlWorkspace from "./IvlWorkspace";
 import SeriesWorkspace from "./SeriesWorkspace";
+import SpectrumWorkspace from "./SpectrumWorkspace";
 import {
   Button,
   HardwarePill,
@@ -12,6 +13,7 @@ import {
 import {
   type AppState,
   type IvlTarget,
+  type SpectrumTarget,
   type HardwareProbe,
   type PocEvent,
   type PocPoint,
@@ -26,13 +28,13 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type StreamState = "connecting" | "connected" | "disconnected";
-type ActiveView = "overview" | "series" | "ivl";
+type ActiveView = "overview" | "series" | "ivl" | "spectrum";
 
 const navigation = [
   ["Обзор", "overview", true],
   ["Серия", "series", true],
   ["ВАЯХ", "ivl", true],
-  ["Спектры", "spectrum", false],
+  ["Спектры", "spectrum", true],
   ["Стабильность", "stability", false],
   ["Камера", "camera", false],
   ["Отчёты", "reports", false]
@@ -51,6 +53,7 @@ const pocStatusLabels: Record<string, string> = {
 
 function App() {
   const [ivlTarget, setIvlTarget] = useState<IvlTarget | null>(null);
+  const [spectrumTarget, setSpectrumTarget] = useState<SpectrumTarget | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [appState, setAppState] = useState<AppState | null>(null);
   const [pocState, setPocState] = useState<PocState | null>(null);
@@ -293,13 +296,13 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : "Серии OLED"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : "Создание, открытие и совместимый журнал измерений"}
+                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Одиночный спектр · подбор T_int, CSV, Excel и журнал" : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -312,8 +315,10 @@ function App() {
         <section className="content">
           {activeView === "ivl" ? (
           <IvlWorkspace initialTarget={ivlTarget} />
+        ) : activeView === "spectrum" ? (
+          <SpectrumWorkspace initialTarget={spectrumTarget} />
         ) : activeView === "series" ? (
-            <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onSeriesChanged={() => void refreshAppState()} />
+            <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (
             <>
           <div className={`connection-banner connection-banner--${loadState}`}>

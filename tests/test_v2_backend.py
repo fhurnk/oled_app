@@ -103,7 +103,7 @@ class V2LoopbackBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["application"]["version"], APP_VERSION)
         self.assertEqual(payload["backend"]["bound_host"], "127.0.0.1")
-        self.assertEqual(payload["migration"]["status"], "stage_5_series_ivl_queue_in_progress")
+        self.assertEqual(payload["migration"]["status"], "stage_5_single_pixel_spectrum_in_progress")
         self.assertTrue(payload["migration"]["tkinter_default_preserved"])
 
         with self.assertRaises(urllib.error.HTTPError) as raised:

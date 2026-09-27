@@ -406,3 +406,34 @@ export const decideIvlOpening = (run_id: string, decision_id: string, value: num
   requestJson<IvlState>("/api/ivl/opening", {method: "POST", body: JSON.stringify({run_id, decision_id, value})});
 export const decideIvlQueue = (run_id: string, decision_id: string, action: "retry" | "skip_substrate" | "continue") =>
   requestJson<IvlState>("/api/ivl/queue-decision", {method: "POST", body: JSON.stringify({run_id, decision_id, action})});
+
+export type SpectrumTarget = {series_path: string; pixel_id: string};
+export type SpectrumInput = Record<string, number | boolean | string | SpectrumTarget | null>;
+export type SpectrumCurve = {
+  point: number; voltage_V: number; status: string; integration_time_s: number;
+  wavelengths_nm: number[]; intensities: number[];
+};
+export type SpectrumPoint = {
+  index: number; voltage_V: number; integration_time_s: number; status: string;
+  peak_nm: number | null; peak_counts: number | null; peaks_detected: number;
+};
+export type SpectrumState = {
+  status: string; active: boolean; run_id: string | null; pixel_id?: string;
+  target?: SpectrumTarget | null; use_opening_voltage?: boolean;
+  params?: Record<string, number | boolean | string>; points: SpectrumPoint[];
+  point_count?: number; latest_spectrum: SpectrumCurve | null;
+  optimization: (SpectrumCurve & {iteration: number}) | null;
+  message?: string; error: string | null; safe_shutdown_confirmed: boolean | null;
+  result: {file: string | null; raw_files: string[]; status: string;
+    stopped_by_user: boolean; discarded: boolean; spectrum_peak_count: number | null;
+    spectrum_peaks_nm: string; spectrum_max_intensity: number | null; journaled: boolean} | null;
+};
+export type SpectrumPreflight = {
+  params: Record<string, number | boolean | string>; target: SpectrumTarget | null;
+  use_opening_voltage: boolean; effective_voltage_start: number; point_count: number;
+  output_root: string; note: string;
+};
+export const fetchSpectrumState = () => requestJson<SpectrumState>("/api/spectrum/state");
+export const preflightSpectrum = (params: SpectrumInput) => requestJson<SpectrumPreflight>("/api/spectrum/preflight", {method: "POST", body: JSON.stringify(params)});
+export const startSpectrum = (params: SpectrumInput) => requestJson<SpectrumState>("/api/spectrum/start", {method: "POST", body: JSON.stringify(params)});
+export const stopSpectrum = () => requestJson<SpectrumState>("/api/spectrum/stop", {method: "POST"});

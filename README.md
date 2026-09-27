@@ -22,10 +22,16 @@ Stage 5: в разделе `Серия` выберите пиксель и на�
 к следующей подложке или продолжить обычную последовательность. Состояние
 очереди и операторские решения восстанавливаются после перезагрузки интерфейса.
 
+Пункт `Спектры` выполняет одиночный запуск для выбранного пикселя серии или
+отдельного `SIM_SPECTRUM`. Backend подбирает `T_int`, показывает каждую пробу и
+последний спектр, контролирует ток, безопасно отключает SMU и сохраняет
+совместимые raw CSV/XLSX. Серийный результат попадает в прежний журнал.
+
 Пока используется только эмулятор: выбирайте тестовую серию. Записи явно
-помечаются `ЭМУЛЯТОР v2`. Отдельный SIM_IVL сохраняется в
-`%LOCALAPPDATA%\OLED Measurement App\simulator_ivl\<run_id>`.
-Спектры и стабильность в v2 ещё не перенесены.
+помечаются `ЭМУЛЯТОР v2`. Отдельные SIM_IVL и SIM_SPECTRUM сохраняются в
+`%LOCALAPPDATA%\OLED Measurement App\simulator_ivl\<run_id>` и
+`%LOCALAPPDATA%\OLED Measurement App\simulator_spectrum\<run_id>`.
+Очередь спектров по подложке и стабильность в v2 ещё не перенесены.
 
 ### Запуск Без Visual Studio
 
@@ -67,6 +73,7 @@ Python и Node.js для запуска не требуется. Нужен Wind
 .\env\Scripts\python.exe .\oled_v2_app.py --poc-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --series-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --ivl-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py --spectrum-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py
 ```
 
@@ -79,7 +86,8 @@ Python и Node.js для запуска не требуется. Нужен Wind
 создать или открыть совместимую серию, изменить её параметры, выбрать пиксель на
 физической карте, просмотреть таблицу и историю ВАЯХ, обновить миниатюры и
 управлять очередью спектров и перейти к одиночной или последовательной ВАЯХ на
-эмуляторе.
+эмуляторе. Из инспектора пикселя также можно открыть его одиночную спектральную
+съёмку; тот же экран доступен отдельным пунктом `Спектры`.
 
 Тестовая `onedir`-сборка создаётся командой:
 
@@ -200,8 +208,8 @@ Raw CSV и итоговый XLSX отдельно сохраняют выбра�
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
-- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API и защита desktop-сеанса v2.
-- `v2_frontend/` - исходники React/Vite, live-график Apache ECharts, рабочий `SeriesWorkspace.tsx` и `src/design-system/`; готовые assets входят в `oled_v2/static/`.
+- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 IVL/спектры и защита desktop-сеанса v2.
+- `v2_frontend/` - исходники React/Vite, live-графики, рабочие `SeriesWorkspace.tsx`, `IvlWorkspace.tsx`, `SpectrumWorkspace.tsx` и `src/design-system/`; готовые assets входят в `oled_v2/static/`.
 - `requirements-v2.txt` - дополнительные зависимости v2 и сборщика.
 - `scripts/build_v2_frontend.ps1`, `scripts/build_v2_alpha.ps1` - production frontend и PyInstaller `onedir`.
 - `packaging/oled_v2_alpha.spec` - спецификация тестового desktop-дистрибутива.

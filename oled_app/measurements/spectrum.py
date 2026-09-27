@@ -562,6 +562,7 @@ def run_spectrum_measurement(
     final_status = "FAILED"
     stopped_by_user = False
     rejected_pixel = False
+    safe_shutdown_confirmed: Optional[bool] = None
     best_spectrum_metrics = {
         "spectrum_peak_count": None,
         "spectrum_peaks_nm": "",
@@ -873,7 +874,7 @@ def run_spectrum_measurement(
                             f"raw peak={raw_peak_int:.0f} @ {raw_peak_wl:.1f} нм, {status}"
                         )
                 finally:
-                    safe_shutdown_smu(smu)
+                    safe_shutdown_confirmed = safe_shutdown_smu(smu)
 
     if rejected_pixel:
         log(
@@ -887,6 +888,7 @@ def run_spectrum_measurement(
             "status": final_status,
             "stopped_by_user": False,
             "discarded": True,
+            "safe_shutdown_confirmed": safe_shutdown_confirmed,
             **best_spectrum_metrics,
         }
 
@@ -897,5 +899,6 @@ def run_spectrum_measurement(
         "raw_files": kept_raw_files,
         "status": final_status,
         "stopped_by_user": stopped_by_user,
+        "safe_shutdown_confirmed": safe_shutdown_confirmed,
         **best_spectrum_metrics,
     }

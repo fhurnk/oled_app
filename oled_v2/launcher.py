@@ -241,6 +241,72 @@ def ivl_smoke() -> int:
     return 0
 
 
+def spectrum_smoke() -> int:
+    """Exercise simulator T_int optimization, compatible workbook and journal."""
+    from openpyxl import load_workbook
+
+    from .series_service import SeriesService
+    from .spectrum import SpectrumController
+
+    with tempfile.TemporaryDirectory(prefix="oled-v2-spectrum-smoke-") as folder:
+        root = Path(folder)
+        service = SeriesService(root / "series")
+        active = service.create_series({
+            "root": str(root / "series"), "deposition_date": "2026-09-27",
+            "keyword": "spectrum-smoke", "series_led_color": "green",
+            "quarter_bases": {str(number): "Q" for number in range(1, 5)},
+            "quarter_descriptions": {str(number): "Simulator" for number in range(1, 5)},
+        })["active"]
+        controller = SpectrumController(root / "standalone", service)
+        common = {
+            "voltage_start": 3.0, "voltage_end": 3.1, "voltage_step": 0.1,
+            "settle_time_voltage_s": 0.0, "settle_time_spectrum_s": 0.0,
+            "discard_first_scan_after_tint_change": False,
+        }
+        try:
+            controller.start(common)
+            deadline = time.monotonic() + 25
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            standalone = controller.snapshot()
+            if (standalone["status"] != "completed"
+                    or standalone["safe_shutdown_confirmed"] is not True
+                    or standalone["point_count"] != 2):
+                raise RuntimeError(f"Standalone spectrum smoke failed: {standalone}")
+            workbook_path = Path(standalone["result"]["file"])
+            workbook = load_workbook(workbook_path, read_only=True)
+            try:
+                if "Сводка" not in workbook.sheetnames:
+                    raise RuntimeError("Spectrum workbook contract mismatch")
+            finally:
+                workbook.close()
+
+            pixel_id = active["pixels"][0]["pixel_id"]
+            controller.start({
+                **common,
+                "target": {"series_path": active["path"], "pixel_id": pixel_id},
+                "use_opening_voltage": False,
+            })
+            deadline = time.monotonic() + 25
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            state = controller.snapshot()
+            reopened = service.open_series(active["path"])["active"]
+            pixel = next(item for item in reopened["pixels"] if item["pixel_id"] == pixel_id)
+            if (state["status"] != "completed" or not state["result"]["journaled"]
+                    or not pixel["last_spectrum_file"]):
+                raise RuntimeError(f"Series spectrum smoke failed: {state}")
+            console_write(json.dumps({
+                "spectrum_status": state["status"], "points": state["point_count"],
+                "safe_shutdown_confirmed": state["safe_shutdown_confirmed"],
+                "workbook_verified": True, "series_journal_verified": True,
+                "t_int_trials_visible": state["latest_spectrum"] is not None,
+            }, ensure_ascii=False))
+        finally:
+            controller.shutdown()
+    return 0
+
+
 def series_smoke() -> int:
     """Create, queue, close, and reopen a compatible temporary series."""
 
@@ -380,6 +446,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ivl-smoke", action="store_true",
                         help="Run a simulator IVL cycle and verify CSV/XLSX and shutdown.")
+    parser.add_argument("--spectrum-smoke", action="store_true",
+                        help="Run a simulator spectrum and verify T_int, CSV/XLSX and journal.")
     parser.add_argument(
         "--series-smoke",
         action="store_true",
@@ -405,6 +473,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return poc_smoke()
     if args.ivl_smoke:
         return ivl_smoke()
+    if args.spectrum_smoke:
+        return spectrum_smoke()
     if args.series_smoke:
         return series_smoke()
     try:

@@ -33,8 +33,13 @@ burnout confirmation, recoverable manual opening decisions and an automatic
 full-series queue from a selected pixel. The backend persists queue progress,
 can skip known NONWORKING/BURNED pixels, and handles NO_CONTACT with same-pixel
 retry, current-substrate skip or normal continuation. Series mutations are
-guarded while IVL is active. Spectrum and stability workflows are still pending.
-Use `--ivl-smoke` to verify this slice in source and onedir builds.
+guarded while IVL is active. Checkpoint 13 adds a backend-owned single-pixel
+simulator spectrum in `oled_v2/spectrum.py` and
+`v2_frontend/src/SpectrumWorkspace.tsx`: manual or journal opening-voltage start,
+compatible T_int optimization previews, current checks, safe shutdown, raw
+CSV/XLSX and series journaling. Spectrum queues and stability are still pending.
+Use `--ivl-smoke` and `--spectrum-smoke` to verify these slices in source and
+onedir builds.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -55,6 +60,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 3 design system: `v2_frontend/src/design-system/`
 - v2 Stage 4 series bridge: `oled_v2/series_service.py`
 - v2 Stage 4 series workspace: `v2_frontend/src/SeriesWorkspace.tsx`
+- v2 Stage 5 spectrum controller: `oled_v2/spectrum.py`
+- v2 Stage 5 spectrum workspace: `v2_frontend/src/SpectrumWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

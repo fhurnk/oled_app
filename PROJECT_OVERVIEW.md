@@ -11,7 +11,10 @@ Stage 5: ВАЯХ поддерживает одиночный пиксель и 
 миниатюру и ручное напряжение открытия на эмуляторе. Очередь восстанавливается
 после переподключения, умеет пропускать `NONWORKING`/`BURNED` и предлагает
 повтор, следующую подложку или обычное продолжение после `NO_CONTACT`.
-Спектры и стабильность пока остаются задачами переноса. Автономный `onedir` запускается без
+Одиночный спектр выбранного пикселя или `SIM_SPECTRUM` уже перенесён: backend
+подбирает `T_int`, передаёт live-кривую, сохраняет совместимые CSV/XLSX и журнал
+с подтверждённым отключением SMU. Очередь спектров и стабильность остаются
+следующими задачами. Автономный `onedir` запускается без
 Visual Studio, Python и Node.js; WebView2 Runtime нужен на конечном ПК.
 
 ## Как Устроено Приложение
@@ -48,6 +51,10 @@ Visual Studio, Python и Node.js; WebView2 Runtime нужен на конечн�
   одиночную и последовательную ВАЯХ серии: backend владеет очередью, применяет
   калибровку каждого пикселя, сохраняет совместимые файлы и журнал, а frontend
   после переподключения получает текущий пиксель, прогресс и ожидающее решение.
+- Одиночная спектральная часть Stage 5 находится в `oled_v2/spectrum.py` и
+  `v2_frontend/src/SpectrumWorkspace.tsx`: доступен отдельный эмуляторный запуск
+  и выбранный пиксель серии, совместимый подбор `T_int`, live-спектр, CSV/XLSX
+  и запись метрик в прежний журнал.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -147,6 +154,8 @@ oled_app_v2_5_package/
     launcher.py
     logging_setup.py
     poc.py
+    ivl.py
+    spectrum.py
     security.py
     series_service.py
     server.py
@@ -156,6 +165,8 @@ oled_app_v2_5_package/
       App.tsx
       LivePocChart.tsx
       SeriesWorkspace.tsx
+      IvlWorkspace.tsx
+      SpectrumWorkspace.tsx
       api.ts
       design-system/
         chartTheme.ts

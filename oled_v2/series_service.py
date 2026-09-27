@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from datetime import date, datetime
 from pathlib import Path
@@ -343,6 +344,51 @@ class SeriesService:
                 notes="ЭМУЛЯТОР v2. " + result["ivl_diagnosis"],
                 opening_voltage=result["opening_voltage"],
                 max_current_mA=result["max_current_mA"], max_photo_uA=result["max_photo_uA"],
+            )
+
+    def spectrum_target(self, target: Dict[str, Any], params, settings, use_opening: bool) -> Dict[str, Any]:
+        """Resolve one selected series pixel and its compatible spectrum parameters."""
+        context = self.ivl_target(target, params, settings)
+        opening = context["pixel_row"].get("Opening voltage (V)")
+        if use_opening:
+            try:
+                opening_value = float(opening)
+            except (TypeError, ValueError) as exc:
+                raise SeriesValidationError(
+                    f"Для пикселя {target['pixel_id']} нет напряжения открытия."
+                ) from exc
+            if not math.isfinite(opening_value):
+                raise SeriesValidationError(
+                    f"Для пикселя {target['pixel_id']} задано некорректное напряжение открытия."
+                )
+            params.opening_voltage = opening_value
+            params.voltage_start = opening_value
+            params.voltage_start_source = "opening"
+        else:
+            params.opening_voltage = float(opening) if opening not in (None, "") else params.voltage_start
+            params.voltage_start_source = "manual"
+        return context
+
+    def record_spectrum(self, target, params, result) -> None:
+        """Write one simulator spectrum outcome to the compatible series journal."""
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != target["series_path"]:
+                raise SeriesConflictError("Серия изменилась; результат сохранён без записи в журнал.")
+            manager.journal.update_after_measurement(
+                "SPECTRUM",
+                target["pixel_id"],
+                result["status"],
+                Path(result["file"]) if result.get("file") else None,
+                {**params.as_dict(), "hardware_mode": "simulator", "v2_run_id": result["run_id"]},
+                notes=(
+                    "ЭМУЛЯТОР v2. Диагностический спектр сохранён после электрического ограничения."
+                    if result.get("discarded") and result.get("file")
+                    else "ЭМУЛЯТОР v2."
+                ),
+                spectrum_peak_count=result.get("spectrum_peak_count"),
+                spectrum_peaks_nm=result.get("spectrum_peaks_nm", ""),
+                spectrum_max_intensity=result.get("spectrum_max_intensity"),
             )
 
     def _validated_config_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
