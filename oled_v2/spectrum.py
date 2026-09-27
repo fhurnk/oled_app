@@ -14,6 +14,7 @@ import numpy as np
 from oled_app.constants import HARDWARE_MODE_SIM
 from oled_app.measurements.spectrum import (
     SpectrumMeasurementController,
+    SpectrumMeasurementStopped,
     SpectrumParams,
     discard_spectrum_artifacts,
     run_spectrum_measurement,
@@ -136,6 +137,8 @@ class SpectrumController:
         self.output_root = Path(output_root) if output_root else log_directory().parent / "simulator_spectrum"
         self.series_service = series_service
         self._lock = threading.RLock()
+        self._decision_ready = threading.Event()
+        self._decision_value: Optional[Dict[str, Any]] = None
         self._thread: Optional[threading.Thread] = None
         self._control = SpectrumMeasurementController()
         self._state: Dict[str, Any] = {
@@ -153,17 +156,33 @@ class SpectrumController:
             raise ValueError("Параметры спектра должны быть объектом.")
         values = dict(payload)
         target = values.pop("target", None)
+        queue_request = values.pop("queue", None)
         use_opening = values.pop("use_opening_voltage", True)
+        if target is not None and queue_request is not None:
+            raise ValueError("Выберите одиночный пиксель или спектральную очередь.")
         if not isinstance(use_opening, bool):
             raise ValueError("Режим напряжения открытия должен быть логическим значением.")
         params = validate_params(values)
         context = None
+        queue = None
         if target is not None:
             if self.series_service is None:
                 raise ValueError("Спектральное измерение серии недоступно.")
             context = self.series_service.spectrum_target(
                 target, params, load_app_settings(), use_opening
             )
+        elif queue_request is not None:
+            if self.series_service is None:
+                raise ValueError("Спектральная очередь серии недоступна.")
+            queue = self.series_service.spectrum_queue_targets(queue_request)
+            first_params = deepcopy(params)
+            first = queue["targets"][0]
+            self.series_service.spectrum_target(
+                {"series_path": first["series_path"], "pixel_id": first["pixel_id"]},
+                first_params, load_app_settings(), use_opening,
+            )
+            if first_params.voltage_start > first_params.voltage_end:
+                raise ValueError("Напряжение открытия стартового пикселя выше конечного напряжения.")
         else:
             params.opening_voltage = params.voltage_start
             params.voltage_start_source = "manual"
@@ -171,33 +190,70 @@ class SpectrumController:
             raise ValueError(
                 "Напряжение открытия выше конечного напряжения измерения."
             )
-        return params, context, use_opening
+        return params, context, queue, use_opening
 
     def preflight(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        params, target, use_opening = self._prepare(payload)
-        points = int(round((params.voltage_end - params.voltage_start) / params.voltage_step)) + 1
+        params, target, queue, use_opening = self._prepare(payload)
+        effective = deepcopy(params)
+        if queue:
+            first = queue["targets"][0]
+            self.series_service.spectrum_target(
+                {"series_path": first["series_path"], "pixel_id": first["pixel_id"]},
+                effective, load_app_settings(), use_opening,
+            )
+        points = int(round((effective.voltage_end - effective.voltage_start) / effective.voltage_step)) + 1
         return {
             "mode": "simulator",
             "params": public_params(params),
             "target": {key: target[key] for key in ("series_path", "pixel_id")} if target else None,
+            "queue": self._queue_public(queue) if queue else None,
             "use_opening_voltage": use_opening,
-            "effective_voltage_start": params.voltage_start,
+            "effective_voltage_start": effective.voltage_start,
             "point_count": points,
-            "output_root": target["series_path"] if target else str(self.output_root),
+            "output_root": (target or queue or {}).get("series_path", str(self.output_root)),
             "note": (
-                "Эмулятор: результат будет записан в журнал выбранной серии."
+                f"Эмулятор: очередь из {len(queue['targets'])} пикселей будет записана в журнал серии."
+                if queue else "Эмулятор: результат будет записан в журнал выбранной серии."
                 if target else "Эмулятор SIM_SPECTRUM: результат хранится отдельно от серий."
             ),
         }
 
+    @staticmethod
+    def _queue_public(queue):
+        return {
+            "enabled": True,
+            "series_path": queue["series_path"],
+            "start_pixel": queue["start_pixel"],
+            "scope": queue["scope"],
+            "queued_only": queue["queued_only"],
+            "candidate_count": queue["candidate_count"],
+            "total": len(queue["targets"]),
+        }
+
+    @classmethod
+    def _queue_state(cls, queue):
+        return {
+            **cls._queue_public(queue),
+            "completed": 0,
+            "remaining": len(queue["targets"]),
+            "attempts": 0,
+            "current_index": 0,
+            "current_pixel": queue["targets"][0]["pixel_id"],
+            "completed_pixels": [],
+            "skipped_pixels": [],
+            "results": [],
+        }
+
     def start(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        params, target, use_opening = self._prepare(payload)
+        params, target, queue, use_opening = self._prepare(payload)
         with self._lock:
             if self._state["active"]:
                 raise RuntimeError("Спектральное измерение уже выполняется.")
             self._control = SpectrumMeasurementController()
+            self._decision_ready.clear()
+            self._decision_value = None
             run_id = uuid4().hex
-            pixel_id = target["pixel_id"] if target else "SIM_SPECTRUM"
+            pixel_id = target["pixel_id"] if target else queue["targets"][0]["pixel_id"] if queue else "SIM_SPECTRUM"
             self._state = {
                 "status": "running", "active": True, "error": None, "run_id": run_id,
                 "started_at": utc_now(), "finished_at": None, "pixel_id": pixel_id,
@@ -206,9 +262,11 @@ class SpectrumController:
                 "points": [], "point_count": 0, "latest_spectrum": None,
                 "optimization": None, "message": "Подготовка спектрометра…",
                 "safe_shutdown_confirmed": None, "result": None,
+                "decision": None,
+                "queue": self._queue_state(queue) if queue else None,
             }
             self._thread = threading.Thread(
-                target=self._run, args=(params, target, run_id), daemon=True,
+                target=self._run, args=(params, target, queue, run_id), daemon=True,
                 name="oled-v2-spectrum",
             )
             self._thread.start()
@@ -218,8 +276,27 @@ class SpectrumController:
         with self._lock:
             if self._state["active"]:
                 self._control.request_stop()
+                self._decision_ready.set()
                 self._state["status"] = "stop_requested"
                 self._state["message"] = "Запрошена безопасная остановка…"
+            return self.snapshot()
+
+    def decide(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            decision = self._state.get("decision")
+            if (not decision or payload.get("run_id") != self._state.get("run_id")
+                    or payload.get("decision_id") != decision.get("id")):
+                raise RuntimeError("Запрос решения устарел или уже обработан.")
+            action = payload.get("action")
+            if action not in decision.get("actions", []):
+                raise ValueError("Недопустимое действие для текущего решения.")
+            pixel_id = payload.get("pixel_id")
+            if action == "replace" and pixel_id not in decision.get("replacement_pixels", []):
+                raise ValueError("Выбранный пиксель замены недоступен.")
+            self._decision_value = {"action": action, "pixel_id": pixel_id}
+            self._state["decision"] = None
+            self._state["status"] = "processing"
+            self._decision_ready.set()
             return self.snapshot()
 
     def shutdown(self) -> None:
@@ -269,7 +346,28 @@ class SpectrumController:
             }
             self._state["optimization"] = None
 
-    def _run(self, params: SpectrumParams, target, run_id: str) -> None:
+    def _await_decision(self, kind: str, message: str, actions, **extra) -> Dict[str, Any]:
+        with self._lock:
+            self._decision_ready.clear()
+            self._decision_value = None
+            self._state["status"] = f"awaiting_{kind}"
+            self._state["decision"] = {
+                "id": uuid4().hex,
+                "kind": kind,
+                "message": message,
+                "actions": list(actions),
+                **extra,
+            }
+        while not self._decision_ready.wait(0.1):
+            if self._control.stop_requested():
+                raise SpectrumMeasurementStopped()
+        if self._control.stop_requested() or not self._decision_value:
+            raise SpectrumMeasurementStopped()
+        if self._decision_value["action"] == "stop":
+            raise SpectrumMeasurementStopped()
+        return self._decision_value
+
+    def _run(self, params: SpectrumParams, target, queue, run_id: str) -> None:
         terminal = "failed"
         try:
             private = self.output_root / run_id
@@ -277,52 +375,193 @@ class SpectrumController:
             settings = deepcopy(load_app_settings())
             settings["hardware_mode"] = HARDWARE_MODE_SIM
             settings["simulator_config_path"] = str(private / "simulator_config.json")
-            if target:
-                folder = ensure_measurement_folder(
-                    Path(target["series_path"]), "SPECTRUM", target["pixel_id"], target["pixel_row"]
-                )
+            if queue:
+                self._run_queue(params, queue, settings, private, run_id)
             else:
-                folder = private
-            result = run_spectrum_measurement(
-                target["pixel_id"] if target else "SIM_SPECTRUM",
-                folder, params, self._log, settings,
-                progress_callback=self._point,
-                optimization_preview_callback=self._optimization_preview,
-                control=self._control,
-            )
-            confirmed = result.get("safe_shutdown_confirmed")
-            with self._lock:
-                self._state["safe_shutdown_confirmed"] = confirmed
-            if confirmed is not True:
-                raise RuntimeError("Отключение выходов SMU не подтверждено; запись в журнал отменена.")
-            if result.get("discarded"):
-                if result.get("status") == "NO_CONTACT":
-                    discard_spectrum_artifacts(result.get("raw_files", []), self._log)
-                    result["raw_files"] = []
-                else:
-                    result["file"] = save_rejected_spectrum_workbook(
-                        target["pixel_id"] if target else "SIM_SPECTRUM", params, result
-                    )
-            public_result = {
-                "file": str(result["file"]) if result.get("file") else None,
-                "raw_files": [str(path) for path in result.get("raw_files", [])],
-                "status": result.get("status"),
-                "stopped_by_user": bool(result.get("stopped_by_user")),
-                "discarded": bool(result.get("discarded")),
-                "spectrum_peak_count": result.get("spectrum_peak_count"),
-                "spectrum_peaks_nm": result.get("spectrum_peaks_nm", ""),
-                "spectrum_max_intensity": result.get("spectrum_max_intensity"),
-                "journaled": False, "run_id": run_id,
-            }
-            if target and not public_result["stopped_by_user"]:
-                self.series_service.record_spectrum(target, params, public_result)
-                public_result["journaled"] = True
-            with self._lock:
-                self._state["result"] = public_result
-            terminal = "stopped" if public_result["stopped_by_user"] else "completed"
+                result = self._measure_one(
+                    params, target, settings, private, run_id,
+                    interactive_rejection=False,
+                )
+                if result["stopped_by_user"]:
+                    raise SpectrumMeasurementStopped()
+            terminal = "completed"
+        except SpectrumMeasurementStopped:
+            terminal = "stopped"
+            self._log("Спектральная очередь остановлена. Завершённые результаты сохранены.")
         except Exception as exc:
             with self._lock:
                 self._state["error"] = str(exc)
         finally:
             with self._lock:
-                self._state.update(status=terminal, active=False, finished_at=utc_now())
+                self._state.update(
+                    status=terminal, active=False, decision=None, finished_at=utc_now()
+                )
+
+    def _run_queue(self, base_params, queue, settings, private, run_id):
+        targets = list(queue["targets"])
+        attempted = set()
+        index = 0
+        prompt_next = True
+        while index < len(targets):
+            if self._control.stop_requested():
+                raise SpectrumMeasurementStopped()
+            target = targets[index]
+            pixel_id = target["pixel_id"]
+            pixel_params = deepcopy(base_params)
+            target = self.series_service.spectrum_target(
+                {"series_path": target["series_path"], "pixel_id": pixel_id},
+                pixel_params, settings, self._state["use_opening_voltage"],
+            )
+            with self._lock:
+                self._state.update(
+                    pixel_id=pixel_id,
+                    target={key: target[key] for key in ("series_path", "pixel_id")},
+                    params=public_params(pixel_params), points=[], point_count=0,
+                    latest_spectrum=None, optimization=None, result=None,
+                    safe_shutdown_confirmed=None,
+                )
+                self._state["queue"].update(
+                    current_index=index, current_pixel=pixel_id,
+                    remaining=len(targets) - index,
+                )
+            if prompt_next:
+                next_action = self._await_decision(
+                    "next_pixel",
+                    f"Установите пиксель {pixel_id} и подтвердите начало съёмки.",
+                    ["measure", "skip", "stop"],
+                    pixel_id=pixel_id,
+                )["action"]
+                if next_action == "skip":
+                    with self._lock:
+                        self._state["queue"]["skipped_pixels"].append(pixel_id)
+                        self._state["queue"]["remaining"] = len(targets) - index - 1
+                    index += 1
+                    continue
+            prompt_next = True
+            result = self._measure_one(
+                pixel_params, target, settings, private, run_id,
+                interactive_rejection=True,
+            )
+            if result["stopped_by_user"]:
+                raise SpectrumMeasurementStopped()
+            attempted.add(pixel_id)
+            with self._lock:
+                state = self._state["queue"]
+                state["attempts"] += 1
+                state["results"].append({
+                    "pixel_id": pixel_id, "status": result["status"],
+                    "file": result["file"], "journaled": result["journaled"],
+                })
+
+            if result["status"] == "NO_CONTACT":
+                action = self._await_decision(
+                    "no_contact",
+                    f"Для {pixel_id} нет контакта. Проверьте установку пикселя.",
+                    ["retry", "continue", "stop"],
+                    pixel_id=pixel_id,
+                )["action"]
+                if action == "retry":
+                    prompt_next = False
+                    continue
+
+            replacement = None
+            if result["discarded"] and result["status"] != "NO_CONTACT":
+                candidates = self.series_service.spectrum_replacement_targets(
+                    target, attempted | set(self._state["queue"]["completed_pixels"])
+                )
+                if candidates:
+                    replacement_ids = [item["pixel_id"] for item in candidates]
+                    decision = self._await_decision(
+                        "replacement",
+                        f"Спектр {pixel_id} отклонён. Можно выбрать замену в той же четверти.",
+                        ["replace", "continue", "stop"],
+                        pixel_id=pixel_id,
+                        replacement_pixels=replacement_ids,
+                    )
+                    if decision["action"] == "replace":
+                        replacement = next(
+                            item for item in candidates if item["pixel_id"] == decision["pixel_id"]
+                        )
+
+            with self._lock:
+                state = self._state["queue"]
+                if pixel_id not in state["completed_pixels"]:
+                    state["completed_pixels"].append(pixel_id)
+                state["completed"] = len(state["completed_pixels"])
+            if replacement:
+                targets = [item for item in targets if item["pixel_id"] != replacement["pixel_id"]]
+                targets.insert(index + 1, replacement)
+            with self._lock:
+                self._state["queue"]["total"] = len(targets)
+                self._state["queue"]["remaining"] = len(targets) - index - 1
+            index += 1
+        with self._lock:
+            self._state["queue"].update(current_pixel=None, remaining=0)
+        self._log("Спектральная очередь серии завершена.")
+
+    def _measure_one(
+        self, params, target, settings, private, run_id,
+        interactive_rejection: bool,
+    ) -> Dict[str, Any]:
+        pixel_id = target["pixel_id"] if target else "SIM_SPECTRUM"
+        folder = (
+            ensure_measurement_folder(
+                Path(target["series_path"]), "SPECTRUM", pixel_id, target["pixel_row"]
+            )
+            if target else private
+        )
+        with self._lock:
+            self._state["status"] = "running"
+        raw_result = run_spectrum_measurement(
+            pixel_id, folder, params, self._log, settings,
+            progress_callback=self._point,
+            optimization_preview_callback=self._optimization_preview,
+            control=self._control,
+            file_suffix=f"{run_id[:8]}_{uuid4().hex[:6]}",
+        )
+        confirmed = raw_result.get("safe_shutdown_confirmed")
+        with self._lock:
+            self._state["safe_shutdown_confirmed"] = confirmed
+        if confirmed is not True:
+            raise RuntimeError(
+                "Отключение выходов SMU не подтверждено; запись в журнал отменена."
+            )
+        if raw_result.get("discarded"):
+            if raw_result.get("status") == "NO_CONTACT":
+                discard_spectrum_artifacts(raw_result.get("raw_files", []), self._log)
+                raw_result["raw_files"] = []
+            else:
+                action = "keep"
+                if interactive_rejection:
+                    action = self._await_decision(
+                        "rejected_data",
+                        f"{pixel_id}: сохранить частичные данные как диагностический XLSX?",
+                        ["keep", "delete", "stop"],
+                        pixel_id=pixel_id,
+                        status=raw_result.get("status"),
+                    )["action"]
+                if action == "keep":
+                    raw_result["file"] = save_rejected_spectrum_workbook(
+                        pixel_id, params, raw_result
+                    )
+                else:
+                    discard_spectrum_artifacts(raw_result.get("raw_files", []), self._log)
+                    raw_result["raw_files"] = []
+        public_result = {
+            "file": str(raw_result["file"]) if raw_result.get("file") else None,
+            "raw_files": [str(path) for path in raw_result.get("raw_files", [])],
+            "status": raw_result.get("status"),
+            "stopped_by_user": bool(raw_result.get("stopped_by_user")),
+            "discarded": bool(raw_result.get("discarded")),
+            "spectrum_peak_count": raw_result.get("spectrum_peak_count"),
+            "spectrum_peaks_nm": raw_result.get("spectrum_peaks_nm", ""),
+            "spectrum_max_intensity": raw_result.get("spectrum_max_intensity"),
+            "journaled": False,
+            "run_id": run_id,
+        }
+        if target and not public_result["stopped_by_user"]:
+            self.series_service.record_spectrum(target, params, public_result)
+            public_result["journaled"] = True
+        with self._lock:
+            self._state["result"] = deepcopy(public_result)
+        return public_result

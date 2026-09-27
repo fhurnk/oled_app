@@ -245,6 +245,8 @@ def spectrum_smoke() -> int:
     """Exercise simulator T_int optimization, compatible workbook and journal."""
     from openpyxl import load_workbook
 
+    from oled_app.measurements.ivl import IVLParams
+    from oled_app.settings import load_app_settings
     from .series_service import SeriesService
     from .spectrum import SpectrumController
 
@@ -296,11 +298,57 @@ def spectrum_smoke() -> int:
             if (state["status"] != "completed" or not state["result"]["journaled"]
                     or not pixel["last_spectrum_file"]):
                 raise RuntimeError(f"Series spectrum smoke failed: {state}")
+            queue_pixels = active["pixels"][1:3]
+            for item in queue_pixels:
+                target = service.ivl_target(
+                    {"series_path": active["path"], "pixel_id": item["pixel_id"]},
+                    IVLParams(), load_app_settings(),
+                )
+                service.record_ivl(target, IVLParams(), {
+                    "status": "WORKING",
+                    "file": str(Path(active["path"]) / f"{item['pixel_id']}.xlsx"),
+                    "run_id": "spectrum-smoke-seed", "ivl_diagnosis": "seed",
+                    "opening_voltage": 3.0, "max_current_mA": 1.0, "max_photo_uA": 1.0,
+                })
+                service.set_spectrum_priority(item["pixel_id"], True)
+            controller.start({
+                **common,
+                "queue": {
+                    "series_path": active["path"],
+                    "start_pixel": queue_pixels[0]["pixel_id"],
+                    "scope": "substrate",
+                    "queued_only": True,
+                },
+                "use_opening_voltage": False,
+            })
+            deadline = time.monotonic() + 35
+            while controller.snapshot()["active"] and time.monotonic() < deadline:
+                queue_state = controller.snapshot()
+                decision = queue_state.get("decision")
+                if decision:
+                    action = {
+                        "next_pixel": "measure",
+                        "no_contact": "continue",
+                        "rejected_data": "keep",
+                        "replacement": "continue",
+                    }.get(decision.get("kind"))
+                    if action:
+                        controller.decide({
+                            "run_id": queue_state["run_id"],
+                            "decision_id": decision["id"],
+                            "action": action,
+                        })
+                time.sleep(0.05)
+            queue_state = controller.snapshot()
+            if (queue_state["status"] != "completed" or not queue_state.get("queue")
+                    or queue_state["queue"]["completed"] != 2):
+                raise RuntimeError(f"Series spectrum queue smoke failed: {queue_state}")
             console_write(json.dumps({
-                "spectrum_status": state["status"], "points": state["point_count"],
-                "safe_shutdown_confirmed": state["safe_shutdown_confirmed"],
+                "spectrum_status": queue_state["status"], "points": state["point_count"],
+                "safe_shutdown_confirmed": queue_state["safe_shutdown_confirmed"],
                 "workbook_verified": True, "series_journal_verified": True,
                 "t_int_trials_visible": state["latest_spectrum"] is not None,
+                "queue_completed": queue_state["queue"]["completed"],
             }, ensure_ascii=False))
         finally:
             controller.shutdown()

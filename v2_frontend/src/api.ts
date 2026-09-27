@@ -408,7 +408,14 @@ export const decideIvlQueue = (run_id: string, decision_id: string, action: "ret
   requestJson<IvlState>("/api/ivl/queue-decision", {method: "POST", body: JSON.stringify({run_id, decision_id, action})});
 
 export type SpectrumTarget = {series_path: string; pixel_id: string};
-export type SpectrumInput = Record<string, number | boolean | string | SpectrumTarget | null>;
+export type SpectrumQueueInput = {series_path: string; start_pixel: string; scope: "substrate" | "priority"; queued_only: boolean};
+export type SpectrumQueuePreview = SpectrumQueueInput & {enabled: true; candidate_count: number; total: number};
+export type SpectrumQueueState = SpectrumQueuePreview & {
+  completed: number; remaining: number; attempts: number; current_index: number;
+  current_pixel: string | null; completed_pixels: string[]; skipped_pixels: string[];
+  results: {pixel_id: string; status: string; file: string | null; journaled: boolean}[];
+};
+export type SpectrumInput = Record<string, number | boolean | string | SpectrumTarget | SpectrumQueueInput | null>;
 export type SpectrumCurve = {
   point: number; voltage_V: number; status: string; integration_time_s: number;
   wavelengths_nm: number[]; intensities: number[];
@@ -420,9 +427,12 @@ export type SpectrumPoint = {
 export type SpectrumState = {
   status: string; active: boolean; run_id: string | null; pixel_id?: string;
   target?: SpectrumTarget | null; use_opening_voltage?: boolean;
+  queue?: SpectrumQueueState | null;
   params?: Record<string, number | boolean | string>; points: SpectrumPoint[];
   point_count?: number; latest_spectrum: SpectrumCurve | null;
   optimization: (SpectrumCurve & {iteration: number}) | null;
+  decision?: {id: string; kind: string; message: string; actions: string[];
+    pixel_id?: string; status?: string; replacement_pixels?: string[]} | null;
   message?: string; error: string | null; safe_shutdown_confirmed: boolean | null;
   result: {file: string | null; raw_files: string[]; status: string;
     stopped_by_user: boolean; discarded: boolean; spectrum_peak_count: number | null;
@@ -430,6 +440,7 @@ export type SpectrumState = {
 };
 export type SpectrumPreflight = {
   params: Record<string, number | boolean | string>; target: SpectrumTarget | null;
+  queue: SpectrumQueuePreview | null;
   use_opening_voltage: boolean; effective_voltage_start: number; point_count: number;
   output_root: string; note: string;
 };
@@ -437,3 +448,5 @@ export const fetchSpectrumState = () => requestJson<SpectrumState>("/api/spectru
 export const preflightSpectrum = (params: SpectrumInput) => requestJson<SpectrumPreflight>("/api/spectrum/preflight", {method: "POST", body: JSON.stringify(params)});
 export const startSpectrum = (params: SpectrumInput) => requestJson<SpectrumState>("/api/spectrum/start", {method: "POST", body: JSON.stringify(params)});
 export const stopSpectrum = () => requestJson<SpectrumState>("/api/spectrum/stop", {method: "POST"});
+export const decideSpectrum = (run_id: string, decision_id: string, action: string, pixel_id?: string) =>
+  requestJson<SpectrumState>("/api/spectrum/decision", {method: "POST", body: JSON.stringify({run_id, decision_id, action, pixel_id})});

@@ -541,6 +541,7 @@ def run_spectrum_measurement(
         Callable[[int, float, int, float, np.ndarray, np.ndarray, str], None]
     ] = None,
     control: Optional[SpectrumMeasurementController] = None,
+    file_suffix: str = "",
 ) -> Dict[str, Any]:
     prepare_hardware_environment(pixel_id, app_settings, log)
     import xtralien
@@ -553,7 +554,8 @@ def run_spectrum_measurement(
     voltage_array = np.arange(params.voltage_start, params.voltage_end + params.voltage_step / 2, params.voltage_step)
     voltage_array = np.round(voltage_array, 6)
     measurement_timestamp = timestamp_for_file()
-    file_stem = f"SPECTRUM_{safe_filename(pixel_id)}_{measurement_timestamp}"
+    suffix = f"_{safe_filename(file_suffix)}" if str(file_suffix).strip() else ""
+    file_stem = f"SPECTRUM_{safe_filename(pixel_id)}_{measurement_timestamp}{suffix}"
     filename = output_dir / f"{file_stem}.xlsx"
     summary_raw_file = raw_csv_path(output_dir, f"{file_stem}_summary_raw.csv", app_settings)
     spectra_raw_file = raw_csv_path(output_dir, f"{file_stem}_spectra_raw.csv", app_settings)

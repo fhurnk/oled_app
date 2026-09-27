@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  fetchSeriesState, fetchSpectrumState, preflightSpectrum, startSpectrum, stopSpectrum,
+  decideSpectrum, fetchSeriesState, fetchSpectrumState, preflightSpectrum, startSpectrum, stopSpectrum,
   type ActiveSeries, type SpectrumCurve, type SpectrumPreflight, type SpectrumState,
   type SpectrumTarget
 } from "./api";
@@ -16,7 +16,9 @@ const numericFields: [string, string, string][] = [
 ];
 const statusLabels: Record<string, string> = {
   idle: "Ожидание", running: "Съёмка спектров", stop_requested: "Безопасная остановка",
-  completed: "Завершено", stopped: "Остановлено", failed: "Ошибка"
+  completed: "Завершено", stopped: "Остановлено", failed: "Ошибка", processing: "Обработка",
+  awaiting_next_pixel: "Ожидается установка пикселя", awaiting_no_contact: "Нужно решение по контакту",
+  awaiting_rejected_data: "Нужно решение по данным", awaiting_replacement: "Нужно выбрать замену"
 };
 
 function SpectrumChart({curve}: {curve: SpectrumCurve | null}) {
@@ -44,6 +46,8 @@ function SpectrumChart({curve}: {curve: SpectrumCurve | null}) {
 
 export default function SpectrumWorkspace({initialTarget = null}: {initialTarget?: SpectrumTarget | null}) {
   const [target, setTarget] = useState<SpectrumTarget | null>(initialTarget);
+  const [mode, setMode] = useState<"single" | "substrate" | "priority">("single");
+  const [queuedOnly, setQueuedOnly] = useState(false);
   const [series, setSeries] = useState<ActiveSeries | null>(null);
   const [useOpening, setUseOpening] = useState(true);
   const [state, setState] = useState<SpectrumState | null>(null);
@@ -53,6 +57,7 @@ export default function SpectrumWorkspace({initialTarget = null}: {initialTarget
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [replacement, setReplacement] = useState("");
 
   useEffect(() => {
     let disposed = false, initialized = false, timer = 0;
@@ -67,7 +72,10 @@ export default function SpectrumWorkspace({initialTarget = null}: {initialTarget
             const source = next.params ?? defaults.params;
             setValues(Object.fromEntries(numericFields.map(([key]) => [key, String(source[key])])));
             setLedType(String(source.led_type ?? "auto"));
-            if (next.active) { setTarget(next.target ?? null); setUseOpening(next.use_opening_voltage ?? true); }
+            if (next.active) {
+              setTarget(next.target ?? null); setUseOpening(next.use_opening_voltage ?? true);
+              setMode(next.queue?.scope ?? "single"); setQueuedOnly(next.queue?.queued_only ?? false);
+            }
             initialized = true;
           }
         }
@@ -89,9 +97,15 @@ export default function SpectrumWorkspace({initialTarget = null}: {initialTarget
     if (Object.values(values).some((value) => !value.trim() || !Number.isFinite(Number(value)))) {
       throw new Error("Заполните все числовые поля.");
     }
+    if (mode !== "single" && !target) throw new Error("Выберите стартовый пиксель очереди.");
+    const queue = mode !== "single" && target ? {
+      series_path: target.series_path, start_pixel: target.pixel_id,
+      scope: mode, queued_only: mode === "priority" ? true : queuedOnly
+    } : null;
     return {
       ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, Number(value)])),
-      led_type: ledType, use_opening_voltage: useOpening, target
+      led_type: ledType, use_opening_voltage: useOpening,
+      target: mode === "single" ? target : null, queue
     };
   }
 
@@ -100,11 +114,25 @@ export default function SpectrumWorkspace({initialTarget = null}: {initialTarget
     try {
       if (kind === "stop") setState(await stopSpectrum());
       else if (kind === "start" && preflight) {
-        setState(await startSpectrum({...preflight.params, target: preflight.target, use_opening_voltage: preflight.use_opening_voltage}));
+        const queue = preflight.queue ? {
+          series_path: preflight.queue.series_path, start_pixel: preflight.queue.start_pixel,
+          scope: preflight.queue.scope, queued_only: preflight.queue.queued_only
+        } : null;
+        setState(await startSpectrum({...preflight.params, target: preflight.target, queue, use_opening_voltage: preflight.use_opening_voltage}));
         setPreflight(null);
       } else {
         setPreflight(await preflightSpectrum(payload()));
       }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  }
+
+  async function decision(actionName: string, pixelId?: string) {
+    if (!state?.run_id || !state.decision) return;
+    setBusy(true); setError("");
+    try {
+      setState(await decideSpectrum(state.run_id, state.decision.id, actionName, pixelId));
+      setReplacement("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }
@@ -116,14 +144,27 @@ export default function SpectrumWorkspace({initialTarget = null}: {initialTarget
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
     <Panel>
       <h2>Параметры спектра</h2>
+      <label>Режим <select disabled={busy || Boolean(state?.active)} value={mode} onChange={(event) => {
+        const next = event.target.value as "single" | "substrate" | "priority";
+        setMode(next); setPreflight(null);
+        const candidates = series?.pixels.filter((pixel) => pixel.last_ivl_file && pixel.opening_voltage_V != null && !pixel.last_spectrum_file && (next !== "priority" || pixel.spectrum_priority)) ?? [];
+        if (next !== "single" && candidates.length && !candidates.some((pixel) => pixel.pixel_id === target?.pixel_id)) {
+          setTarget({series_path: series!.path, pixel_id: candidates[0].pixel_id});
+        }
+      }}>
+        <option value="single">Один пиксель / SIM_SPECTRUM</option>
+        <option value="substrate">Подложка последовательно</option>
+        <option value="priority">Очередь отмеченных серии</option>
+      </select></label>
       <label>Пиксель <select disabled={busy || Boolean(state?.active)} value={target?.pixel_id ?? ""} onChange={(event) => {
         setTarget(event.target.value && series ? {series_path: series.path, pixel_id: event.target.value} : null); setPreflight(null);
       }}>
-        <option value="">Отдельный запуск SIM_SPECTRUM</option>
-        {series?.pixels.map((pixel) => <option key={pixel.pixel_id} value={pixel.pixel_id}>{pixel.pixel_id} · {pixel.status}{pixel.opening_voltage_V ? ` · Vоткр ${pixel.opening_voltage_V}` : ""}</option>)}
+        {mode === "single" && <option value="">Отдельный запуск SIM_SPECTRUM</option>}
+        {series?.pixels.filter((pixel) => mode === "single" || (pixel.last_ivl_file && pixel.opening_voltage_V != null && !pixel.last_spectrum_file && (mode !== "priority" || pixel.spectrum_priority) && (!queuedOnly || pixel.spectrum_priority))).map((pixel) => <option key={pixel.pixel_id} value={pixel.pixel_id}>{pixel.pixel_id} · {pixel.status}{pixel.opening_voltage_V ? ` · Vоткр ${pixel.opening_voltage_V}` : ""}</option>)}
       </select></label>
       {!series && <p>Чтобы выбрать реальный идентификатор пикселя, откройте тестовую серию в разделе «Серия».</p>}
       {target && <label className="ivl-checkbox"><input type="checkbox" disabled={busy || Boolean(state?.active)} checked={useOpening} onChange={(event) => { setUseOpening(event.target.checked); setPreflight(null); }} />Начинать с напряжения открытия из журнала</label>}
+      {mode === "substrate" && <label className="ivl-checkbox"><input type="checkbox" disabled={busy || Boolean(state?.active)} checked={queuedOnly} onChange={(event) => { setQueuedOnly(event.target.checked); setPreflight(null); }} />Только отмеченные пиксели выбранной подложки</label>}
       <fieldset className="ivl-fields" disabled={busy || Boolean(state?.active)}>
         {numericFields.map(([key, label, step]) => <label key={key}>{label}<input type="number" step={step} value={state?.active && state.params ? String(state.params[key]) : values[key] ?? ""} onChange={(event) => { setValues({...values, [key]: event.target.value}); setPreflight(null); }} /></label>)}
         <label>Диапазон LED<select value={ledType} onChange={(event) => { setLedType(event.target.value); setPreflight(null); }}>
@@ -135,11 +176,16 @@ export default function SpectrumWorkspace({initialTarget = null}: {initialTarget
         <Button variant="primary" disabled={busy || !connected || !preflight || state?.active} onClick={() => void action("start")}>Начать съёмку</Button>
         <Button variant="danger" disabled={busy || !connected || !state?.active} onClick={() => void action("stop")}>Остановить</Button>
       </div>
-      {preflight && <p>{preflight.note}<br />Диапазон: {preflight.effective_voltage_start}–{preflight.params.voltage_end} В, {preflight.point_count} точек.<br />Папка результатов: {preflight.output_root}</p>}
+      {preflight && <p>{preflight.note}<br />Диапазон первой съёмки: {preflight.effective_voltage_start}–{preflight.params.voltage_end} В, {preflight.point_count} точек.{preflight.queue && <><br />Пикселей в очереди от выбранной позиции: {preflight.queue.total}.</>}<br />Папка результатов: {preflight.output_root}</p>}
     </Panel>
+    {state?.decision?.kind === "next_pixel" && <Panel><h2>Следующий пиксель · {state.decision.pixel_id}</h2><p>{state.decision.message}</p><div className="ivl-actions"><Button variant="primary" disabled={busy || !connected} onClick={() => void decision("measure")}>Пиксель установлен — снять</Button><Button disabled={busy || !connected} onClick={() => void decision("skip")}>Пропустить</Button><Button variant="danger" disabled={busy || !connected} onClick={() => void decision("stop")}>Завершить очередь</Button></div></Panel>}
+    {state?.decision?.kind === "no_contact" && <Panel><h2>Нет контакта · {state.decision.pixel_id}</h2><p>{state.decision.message} Выходы SMU отключены.</p><div className="ivl-actions"><Button variant="primary" disabled={busy || !connected} onClick={() => void decision("retry")}>Повторить после проверки</Button><Button disabled={busy || !connected} onClick={() => void decision("continue")}>Продолжить очередь</Button><Button variant="danger" disabled={busy || !connected} onClick={() => void decision("stop")}>Завершить очередь</Button></div></Panel>}
+    {state?.decision?.kind === "rejected_data" && <Panel><h2>Электрическое ограничение · {state.decision.pixel_id}</h2><p>{state.decision.message} Статус: {state.decision.status}. Выходы SMU отключены.</p><div className="ivl-actions"><Button variant="primary" disabled={busy || !connected} onClick={() => void decision("keep")}>Сохранить диагностический XLSX</Button><Button disabled={busy || !connected} onClick={() => void decision("delete")}>Удалить частичные данные</Button><Button variant="danger" disabled={busy || !connected} onClick={() => void decision("stop")}>Завершить без журнала</Button></div></Panel>}
+    {state?.decision?.kind === "replacement" && <Panel><h2>Замена пикселя · {state.decision.pixel_id}</h2><p>{state.decision.message}</p><label>Новый пиксель <select value={replacement} onChange={(event) => setReplacement(event.target.value)}><option value="">Выберите пиксель</option>{state.decision.replacement_pixels?.map((pixel) => <option value={pixel} key={pixel}>{pixel}</option>)}</select></label><div className="ivl-actions"><Button variant="primary" disabled={busy || !connected || !replacement} onClick={() => void decision("replace", replacement)}>Снять выбранную замену</Button><Button disabled={busy || !connected} onClick={() => void decision("continue")}>Без замены</Button><Button variant="danger" disabled={busy || !connected} onClick={() => void decision("stop")}>Завершить очередь</Button></div></Panel>}
     <Panel>
       <h2>{statusLabels[state?.status ?? "idle"] ?? state?.status} · {state?.pixel_id ?? "SIM_SPECTRUM"} · {state?.point_count ?? 0} точек</h2>
       {state?.optimization && <p>Подбор T_int: точка {state.optimization.point}, итерация {state.optimization.iteration}, {state.optimization.integration_time_s * 1000} мс · {state.optimization.status}</p>}
+      {state?.queue && <div className="ivl-queue-progress"><strong>Очередь: {state.queue.completed} завершено · {state.queue.remaining} осталось · {state.queue.attempts} попыток</strong><span>Старт: {state.queue.start_pixel}. Пропущено оператором: {state.queue.skipped_pixels.length}.</span></div>}
       <SpectrumChart curve={curve} />
       <p>{state?.message}</p>
       {state?.error && <Notice tone="danger" title="Ошибка измерения">{state.error}</Notice>}

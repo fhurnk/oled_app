@@ -369,6 +369,100 @@ class SeriesService:
             params.voltage_start_source = "manual"
         return context
 
+    @staticmethod
+    def _spectrum_eligible(row: Dict[str, Any], queued_only: bool = False) -> bool:
+        opening = row.get("Opening voltage (V)")
+        try:
+            opening_valid = math.isfinite(float(opening))
+        except (TypeError, ValueError):
+            opening_valid = False
+        return bool(
+            row.get("Last IVL file")
+            and opening_valid
+            and not row.get("Last spectrum file")
+            and (not queued_only or bool(row.get("Spectrum priority")))
+        )
+
+    def spectrum_queue_targets(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve a substrate or explicitly marked spectrum queue without writes."""
+        expected = {"series_path", "start_pixel", "scope", "queued_only"}
+        if not isinstance(request, dict) or set(request) != expected:
+            raise SeriesValidationError(
+                "Для очереди спектров нужны серия, стартовый пиксель, область и режим отметок."
+            )
+        if request.get("scope") not in {"substrate", "priority"}:
+            raise SeriesValidationError("Область очереди должна быть substrate или priority.")
+        if not isinstance(request.get("queued_only"), bool):
+            raise SeriesValidationError("Режим отмеченных пикселей должен быть логическим значением.")
+        if request["scope"] == "priority" and not request["queued_only"]:
+            raise SeriesValidationError("Очередь серии всегда использует только отмеченные пиксели.")
+        with self._lock:
+            manager = self._require_active_locked()
+            series_path = str(manager.series_folder.resolve())
+            if request.get("series_path") != series_path:
+                raise SeriesConflictError("Активная серия изменилась. Настройте очередь заново.")
+            rows = manager.journal.list_pixels()
+            start_pixel = _clean_text(request.get("start_pixel"), "Стартовый пиксель", 160, True)
+            selected = next((row for row in rows if row.get("Pixel ID") == start_pixel), None)
+            if selected is None:
+                raise SeriesNotFoundError(f"Пиксель не найден: {start_pixel}")
+            if request["scope"] == "substrate":
+                candidates = [
+                    row for row in rows
+                    if row.get("Quarter number") == selected.get("Quarter number")
+                    and row.get("Substrate number") == selected.get("Substrate number")
+                    and self._spectrum_eligible(row, request["queued_only"])
+                ]
+            else:
+                candidates = [row for row in rows if self._spectrum_eligible(row, True)]
+            pixel_ids = [str(row.get("Pixel ID") or "") for row in candidates]
+            if start_pixel not in pixel_ids:
+                raise SeriesValidationError(
+                    "Стартовый пиксель не входит в доступную спектральную очередь."
+                )
+            candidates = candidates[pixel_ids.index(start_pixel):]
+            targets = [{
+                "series_path": series_path,
+                "pixel_id": str(row.get("Pixel ID") or ""),
+                "pixel_row": row,
+                "quarter_number": int(row.get("Quarter number") or 0),
+                "substrate_number": int(row.get("Substrate number") or 0),
+            } for row in candidates]
+            if not targets:
+                raise SeriesValidationError("Спектральная очередь пуста.")
+            return {
+                "series_path": series_path,
+                "start_pixel": start_pixel,
+                "scope": request["scope"],
+                "queued_only": request["queued_only"],
+                "candidate_count": len(targets),
+                "targets": targets,
+            }
+
+    def spectrum_replacement_targets(self, target, excluded) -> List[Dict[str, Any]]:
+        """List eligible same-quarter replacements, prioritising journal marks."""
+        excluded_ids = {str(value) for value in excluded}
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != target["series_path"]:
+                raise SeriesConflictError("Серия изменилась; выбор замены отменён.")
+            rows = manager.journal.list_pixels()
+            candidates = []
+            for index, row in enumerate(rows):
+                pixel_id = str(row.get("Pixel ID") or "")
+                if (not pixel_id or pixel_id in excluded_ids
+                        or row.get("Quarter number") != target["pixel_row"].get("Quarter number")
+                        or not self._spectrum_eligible(row)):
+                    continue
+                candidates.append((0 if row.get("Spectrum priority") else 1, index, row))
+            return [{
+                "series_path": target["series_path"],
+                "pixel_id": str(row.get("Pixel ID") or ""),
+                "pixel_row": row,
+                "quarter_number": int(row.get("Quarter number") or 0),
+                "substrate_number": int(row.get("Substrate number") or 0),
+            } for _priority, _index, row in sorted(candidates)]
+
     def record_spectrum(self, target, params, result) -> None:
         """Write one simulator spectrum outcome to the compatible series journal."""
         with self._lock:

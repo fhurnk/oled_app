@@ -37,7 +37,10 @@ guarded while IVL is active. Checkpoint 13 adds a backend-owned single-pixel
 simulator spectrum in `oled_v2/spectrum.py` and
 `v2_frontend/src/SpectrumWorkspace.tsx`: manual or journal opening-voltage start,
 compatible T_int optimization previews, current checks, safe shutdown, raw
-CSV/XLSX and series journaling. Spectrum queues and stability are still pending.
+CSV/XLSX and series journaling. Checkpoint 14 extends it with substrate and
+marked-pixel queues, confirmation before every pixel, recoverable `NO_CONTACT`,
+keep/delete decisions for rejected data and same-quarter replacement. Stability
+is still pending.
 Use `--ivl-smoke` and `--spectrum-smoke` to verify these slices in source and
 onedir builds.
 Current progress is in

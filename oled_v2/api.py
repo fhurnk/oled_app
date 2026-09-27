@@ -159,7 +159,7 @@ def create_app(
             "series": series_service.app_summary(),
             "migration": {
                 "stage": 5,
-                "status": "stage_5_single_pixel_spectrum_in_progress",
+                "status": "stage_5_spectrum_queue_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
@@ -351,6 +351,16 @@ def create_app(
     @app.post("/api/spectrum/stop")
     async def spectrum_stop(_client_id: str = Depends(require_controller)) -> dict:
         return spectrum_controller.stop()
+
+    @app.post("/api/spectrum/decision")
+    async def spectrum_decision(payload: dict = Body(...),
+                                _client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return spectrum_controller.decide(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/poc/state")
     async def poc_state(_client_id: str = Depends(require_controller)) -> dict:
