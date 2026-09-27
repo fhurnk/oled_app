@@ -45,6 +45,10 @@ arrives in checkpoint 15 through `oled_v2/stability.py` and
 setpoint, IVL-derived or manual start, compatible files, safe shutdown and
 series journaling. Use `--ivl-smoke`, `--spectrum-smoke` and
 `--stability-smoke` to verify these slices in source and onedir builds.
+Checkpoint 16 starts Stage 6 in `oled_v2/camera.py` and
+`v2_frontend/src/CameraWorkspace.tsx`: the backend owns the Raspberry Pi
+camera connection, service status, remote-file list and cancellable LiveView;
+`--camera-smoke` verifies this lifecycle without physical hardware.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -69,6 +73,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 5 spectrum workspace: `v2_frontend/src/SpectrumWorkspace.tsx`
 - v2 Stage 5 stability controller: `oled_v2/stability.py`
 - v2 Stage 5 stability workspace: `v2_frontend/src/StabilityWorkspace.tsx`
+- v2 Stage 6 free-camera controller: `oled_v2/camera.py`
+- v2 Stage 6 free-camera workspace: `v2_frontend/src/CameraWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

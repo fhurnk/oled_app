@@ -448,6 +448,74 @@ def stability_smoke() -> int:
     return 0
 
 
+def camera_smoke() -> int:
+    """Exercise the backend-owned camera session and cancellable frame stream."""
+    import threading
+
+    from oled_app.camera.client import RemoteFile
+    from .camera import CameraController
+
+    class SmokeCameraClient:
+        def __init__(self, base_url: str, timeout_s: float, stream_timeout_s: float):
+            self.base_url = base_url
+            self.stop_calls = 0
+
+        def health(self):
+            return {"status": "ok", "service": "smoke-camera"}
+
+        def initialize(self):
+            return {"success": True}
+
+        def status(self):
+            return {"model": "Smoke Canon"}
+
+        def capabilities(self):
+            return {"video_settings": {"resolution": ["640x480"]}}
+
+        def list_files(self):
+            return [RemoteFile("smoke-1", "smoke.jpg", "photo", 16)]
+
+        def start_liveview(self, _settings):
+            return {"success": True}
+
+        def iter_liveview_frames(self, stop_event: threading.Event, on_frame):
+            on_frame(b"\xff\xd8camera-smoke\xff\xd9")
+            stop_event.wait(3.0)
+
+        def close_liveview_stream(self):
+            return None
+
+        def stop_liveview(self):
+            self.stop_calls += 1
+            return {"success": True}
+
+    controller = CameraController(client_factory=SmokeCameraClient)
+    try:
+        connected = controller.connect("smoke-camera.local", 8765)
+        controller.start_liveview()
+        deadline = time.monotonic() + 3.0
+        while controller.snapshot()["frame_sequence"] == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        streamed = controller.snapshot()
+        if (not connected["connected"] or not connected["initialized"]
+                or len(connected["files"]) != 1 or streamed["frame_sequence"] != 1
+                or not controller.frame().startswith(b"\xff\xd8")):
+            raise RuntimeError(f"Camera smoke failed: {streamed}")
+        stopped = controller.stop_liveview()
+        if stopped["liveview_active"]:
+            raise RuntimeError("Camera smoke did not stop LiveView.")
+        console_write(json.dumps({
+            "camera_connected": True,
+            "initialized": True,
+            "remote_files": len(connected["files"]),
+            "frame_sequence": streamed["frame_sequence"],
+            "liveview_stopped": True,
+        }, ensure_ascii=False))
+    finally:
+        controller.shutdown()
+    return 0
+
+
 def series_smoke() -> int:
     """Create, queue, close, and reopen a compatible temporary series."""
 
@@ -591,6 +659,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Run a simulator spectrum and verify T_int, CSV/XLSX and journal.")
     parser.add_argument("--stability-smoke", action="store_true",
                         help="Run simulator stability and verify live setpoint, XLSX and journal.")
+    parser.add_argument("--camera-smoke", action="store_true",
+                        help="Verify the v2 camera session, remote files and LiveView lifecycle.")
     parser.add_argument(
         "--series-smoke",
         action="store_true",
@@ -620,6 +690,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return spectrum_smoke()
     if args.stability_smoke:
         return stability_smoke()
+    if args.camera_smoke:
+        return camera_smoke()
     if args.series_smoke:
         return series_smoke()
     try:

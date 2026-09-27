@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from oled_app.constants import APP_VERSION
+from oled_app.camera.client import CameraClientError
 from oled_app.settings import load_app_settings
 
 from .config import API_SCHEMA_VERSION, SessionConfig
+from .camera import CameraController
 from .logging_setup import log_directory
 from .poc import PocBusyError, PocController
 from .ivl import IvlController
@@ -43,7 +45,7 @@ SECURITY_HEADERS = {
         "default-src 'self'; "
         "script-src 'self'; "
         "style-src 'self'; "
-        "img-src 'self' data:; "
+        "img-src 'self' data: blob:; "
         "connect-src 'self' ws:; "
         "font-src 'self'; "
         "object-src 'none'; "
@@ -76,6 +78,12 @@ def create_app(
     ivl_controller = IvlController(series_service=series_service)
     spectrum_controller = SpectrumController(series_service=series_service)
     stability_controller = StabilityController(series_service=series_service)
+    camera_defaults = load_app_settings().get("camera", {})
+    camera_controller = CameraController(
+        logger=logger,
+        default_host=camera_defaults.get("host", "192.168.4.1"),
+        default_port=camera_defaults.get("port", 8765),
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -87,6 +95,7 @@ def create_app(
             await asyncio.to_thread(ivl_controller.shutdown)
             await asyncio.to_thread(spectrum_controller.shutdown)
             await asyncio.to_thread(stability_controller.shutdown)
+            await asyncio.to_thread(camera_controller.shutdown)
             await asyncio.to_thread(poc_controller.shutdown)
             app.state.ready = False
 
@@ -103,6 +112,7 @@ def create_app(
     app.state.ivl_controller = ivl_controller
     app.state.spectrum_controller = spectrum_controller
     app.state.stability_controller = stability_controller
+    app.state.camera_controller = camera_controller
     app.state.poc_controller = poc_controller
     app.state.series_service = series_service
     app.state.started_at = _utc_now()
@@ -141,6 +151,8 @@ def create_app(
     async def app_state(_client_id: str = Depends(require_controller)) -> dict:
         settings = load_app_settings()
         hardware = poc_controller.hardware_summary(settings)
+        if camera_controller.snapshot()["connected"]:
+            hardware["camera"] = "ready"
         return {
             "schema_version": API_SCHEMA_VERSION,
             "session_id": config.session_id,
@@ -162,11 +174,84 @@ def create_app(
             "hardware": hardware,
             "series": series_service.app_summary(),
             "migration": {
-                "stage": 5,
-                "status": "stage_5_stability_in_progress",
+                "stage": 6,
+                "status": "stage_6_free_camera_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
+
+    def camera_http_error(exc: Exception) -> HTTPException:
+        if isinstance(exc, ValueError):
+            code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        elif isinstance(exc, CameraClientError):
+            code = status.HTTP_502_BAD_GATEWAY
+        elif isinstance(exc, RuntimeError):
+            code = status.HTTP_409_CONFLICT
+        else:
+            code = status.HTTP_502_BAD_GATEWAY
+        return HTTPException(status_code=code, detail=str(exc))
+
+    @app.get("/api/camera/state")
+    async def camera_state(_client_id: str = Depends(require_controller)) -> dict:
+        return camera_controller.snapshot()
+
+    @app.post("/api/camera/connect")
+    async def camera_connect(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        settings = load_app_settings().get("camera", {})
+        try:
+            return await asyncio.to_thread(
+                camera_controller.connect,
+                values.get("host", settings.get("host", "192.168.4.1")),
+                values.get("port", settings.get("port", 8765)),
+                bool(values.get("initialize", True)),
+                float(settings.get("request_timeout_s", 8.0)),
+                float(settings.get("stream_timeout_s", 12.0)),
+            )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/refresh")
+    async def camera_refresh(_client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return await asyncio.to_thread(camera_controller.refresh)
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/liveview/start")
+    async def camera_liveview_start(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            return await asyncio.to_thread(
+                camera_controller.start_liveview,
+                (payload or {}).get("video_settings") or {},
+            )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/liveview/stop")
+    async def camera_liveview_stop(_client_id: str = Depends(require_controller)) -> dict:
+        try:
+            return await asyncio.to_thread(camera_controller.stop_liveview)
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.get("/api/camera/frame")
+    async def camera_frame(_client_id: str = Depends(require_controller)) -> Response:
+        try:
+            frame = camera_controller.frame()
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+        return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/camera/disconnect")
+    async def camera_disconnect(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(camera_controller.disconnect)
 
     def series_http_error(exc: SeriesServiceError) -> HTTPException:
         if isinstance(exc, SeriesNotFoundError):

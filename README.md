@@ -41,6 +41,12 @@ CSV/XLSX и записи прежнего журнала. Отдельный `SI
 `SIM_STABILITY` сохраняются в каталогах `simulator_ivl`, `simulator_spectrum` и
 `simulator_stability` внутри `%LOCALAPPDATA%\OLED Measurement App`.
 
+Stage 6 начат со свободной камеры: пункт `Камера` подключает и инициализирует
+существующий Raspberry Pi HTTP-сервис, показывает его состояние, удалённые
+файлы и LiveView. Съёмка, загрузка, параметры качества/экспозиции и камера
+серии будут перенесены следующими checkpoint-ами; реальная Canon ещё не
+проходила аппаратную приёмку v2.
+
 ### Запуск Без Visual Studio
 
 Откройте `dist\OLED Measurement App 2 Alpha\OLED Measurement App 2 Alpha.exe`.
@@ -83,6 +89,7 @@ Python и Node.js для запуска не требуется. Нужен Wind
 .\env\Scripts\python.exe .\oled_v2_app.py --ivl-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --spectrum-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --stability-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py --camera-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py
 ```
 
@@ -217,8 +224,8 @@ Raw CSV и итоговый XLSX отдельно сохраняют выбра�
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
-- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 ВАЯХ/спектры/стабильность и защита desktop-сеанса v2.
-- `v2_frontend/` - исходники React/Vite, live-графики, рабочие `SeriesWorkspace.tsx`, `IvlWorkspace.tsx`, `SpectrumWorkspace.tsx` и `src/design-system/`; готовые assets входят в `oled_v2/static/`.
+- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 ВАЯХ/спектры/стабильность, контроллер свободной камеры Stage 6 и защита desktop-сеанса v2.
+- `v2_frontend/` - исходники React/Vite, live-графики, рабочие `SeriesWorkspace.tsx`, `IvlWorkspace.tsx`, `SpectrumWorkspace.tsx`, `StabilityWorkspace.tsx`, `CameraWorkspace.tsx` и `src/design-system/`; готовые assets входят в `oled_v2/static/`.
 - `requirements-v2.txt` - дополнительные зависимости v2 и сборщика.
 - `scripts/build_v2_frontend.ps1`, `scripts/build_v2_alpha.ps1` - production frontend и PyInstaller `onedir`.
 - `packaging/oled_v2_alpha.spec` - спецификация тестового desktop-дистрибутива.

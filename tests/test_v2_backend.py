@@ -103,8 +103,13 @@ class V2LoopbackBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["application"]["version"], APP_VERSION)
         self.assertEqual(payload["backend"]["bound_host"], "127.0.0.1")
-        self.assertEqual(payload["migration"]["status"], "stage_5_stability_in_progress")
+        self.assertEqual(payload["migration"]["status"], "stage_6_free_camera_in_progress")
         self.assertTrue(payload["migration"]["tkinter_default_preserved"])
+
+        with self.request("/api/camera/state", headers) as response:
+            camera = json.loads(response.read().decode("utf-8"))
+        self.assertFalse(camera["connected"])
+        self.assertEqual(camera["frame_sequence"], 0)
 
         with self.assertRaises(urllib.error.HTTPError) as raised:
             self.request(
@@ -123,6 +128,7 @@ class V2LoopbackBackendTests(unittest.TestCase):
         self.assertIn("OLED v2 test", body)
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+        self.assertIn("img-src 'self' data: blob:", response.headers["Content-Security-Policy"])
 
     def test_series_api_creates_updates_queue_and_closes_series(self) -> None:
         headers = {

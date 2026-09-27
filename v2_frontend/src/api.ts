@@ -481,3 +481,54 @@ export const preflightStability = (params: StabilityInput) => requestJson<Stabil
 export const startStability = (params: StabilityInput) => requestJson<StabilityState>("/api/stability/start", {method: "POST", body: JSON.stringify(params)});
 export const setStabilitySetpoint = (run_id: string, value: number) => requestJson<StabilityState>("/api/stability/setpoint", {method: "POST", body: JSON.stringify({run_id, value})});
 export const stopStability = () => requestJson<StabilityState>("/api/stability/stop", {method: "POST"});
+
+export type CameraRemoteFile = {
+  file_id: string;
+  name: string;
+  kind: string;
+  size: number;
+  created_at: string;
+  sha256: string;
+};
+export type CameraState = {
+  connected: boolean;
+  base_url: string | null;
+  host: string;
+  port: number;
+  initialized: boolean;
+  health: Record<string, unknown> | null;
+  camera_status: Record<string, unknown> | null;
+  capabilities: Record<string, unknown> | null;
+  files: CameraRemoteFile[];
+  liveview_active: boolean;
+  frame_sequence: number;
+  frame_size: number;
+  frame_received_at: string | null;
+  message: string;
+  error: string | null;
+  updated_at: string;
+};
+export const fetchCameraState = (signal?: AbortSignal) =>
+  requestJson<CameraState>("/api/camera/state", {}, signal);
+export const connectCamera = (host: string, port: number, initialize = true) =>
+  requestJson<CameraState>("/api/camera/connect", {
+    method: "POST", body: JSON.stringify({host, port, initialize})
+  });
+export const refreshCamera = () =>
+  requestJson<CameraState>("/api/camera/refresh", {method: "POST"});
+export const startCameraLiveview = () =>
+  requestJson<CameraState>("/api/camera/liveview/start", {method: "POST", body: JSON.stringify({})});
+export const stopCameraLiveview = () =>
+  requestJson<CameraState>("/api/camera/liveview/stop", {method: "POST"});
+export const disconnectCamera = () =>
+  requestJson<CameraState>("/api/camera/disconnect", {method: "POST"});
+export async function fetchCameraFrame(): Promise<Blob> {
+  const response = await fetch(`/api/camera/frame?sequence=${Date.now()}`, {
+    cache: "no-store", headers: desktopHeaders()
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as {detail?: string} | null;
+    throw new Error(payload?.detail ?? `Кадр LiveView недоступен: HTTP ${response.status}.`);
+  }
+  return response.blob();
+}

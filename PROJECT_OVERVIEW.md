@@ -17,7 +17,9 @@ Stage 5: ВАЯХ поддерживает одиночный пиксель и 
 отмеченных пикселей с операторскими решениями и восстановлением прогресса.
 Стабильность поддерживает выбранный пиксель или `SIM_STABILITY`, токовый и
 напряженческий режимы, изменение уставки, live-график, совместимые файлы и
-журнал. Автономный `onedir` запускается без
+журнал. Stage 6 начат со свободного режима камеры: backend подключает
+существующий Raspberry Pi-сервис, получает состояние, список файлов и
+отменяемый LiveView, а frontend показывает последний JPEG-кадр. Автономный `onedir` запускается без
 Visual Studio, Python и Node.js; WebView2 Runtime нужен на конечном ПК.
 
 ## Как Устроено Приложение
@@ -63,6 +65,9 @@ Visual Studio, Python и Node.js; WebView2 Runtime нужен на конечн�
   `v2_frontend/src/StabilityWorkspace.tsx`: backend хранит операцию и live-точки,
   принимает новую уставку без перезапуска, подтверждает shutdown и записывает
   совместимый результат выбранного пикселя в журнал.
+- Первый срез Stage 6 находится в `oled_v2/camera.py` и
+  `v2_frontend/src/CameraWorkspace.tsx`: один backend-клиент управляет
+  подключением, инициализацией, списком файлов и жизненным циклом LiveView.
 - общие константы, настройки и утилиты подготовлены в `oled_app/constants.py`, `oled_app/settings.py` и `oled_app/utils.py`.
 - создание серии, Excel-журнал, пути измерений, статусы пикселей и геометрия карты подготовлены в `oled_app/series/`.
 - проверка оборудования, авто-COM Ossila, встроенный симулятор, helpers SMU и поиск спектрометров подготовлены в `oled_app/hardware/`.
@@ -158,6 +163,7 @@ oled_app_v2_5_package/
       origin_report.py
   oled_v2/
     api.py
+    camera.py
     config.py
     launcher.py
     logging_setup.py
@@ -175,6 +181,8 @@ oled_app_v2_5_package/
       SeriesWorkspace.tsx
       IvlWorkspace.tsx
       SpectrumWorkspace.tsx
+      StabilityWorkspace.tsx
+      CameraWorkspace.tsx
       api.ts
       design-system/
         chartTheme.ts

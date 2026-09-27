@@ -5,6 +5,7 @@ import IvlWorkspace from "./IvlWorkspace";
 import SeriesWorkspace from "./SeriesWorkspace";
 import SpectrumWorkspace from "./SpectrumWorkspace";
 import StabilityWorkspace from "./StabilityWorkspace";
+import CameraWorkspace from "./CameraWorkspace";
 import {
   Button,
   HardwarePill,
@@ -30,7 +31,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type StreamState = "connecting" | "connected" | "disconnected";
-type ActiveView = "overview" | "series" | "ivl" | "spectrum" | "stability";
+type ActiveView = "overview" | "series" | "ivl" | "spectrum" | "stability" | "camera";
 
 const navigation = [
   ["Обзор", "overview", true],
@@ -38,7 +39,7 @@ const navigation = [
   ["ВАЯХ", "ivl", true],
   ["Спектры", "spectrum", true],
   ["Стабильность", "stability", true],
-  ["Камера", "camera", false],
+  ["Камера", "camera", true],
   ["Отчёты", "reports", false]
 ] as const;
 
@@ -266,7 +267,7 @@ function App() {
               disabled={!enabled}
               key={key}
               onClick={() => {
-                if (key === "overview" || key === "series" || key === "ivl" || key === "spectrum" || key === "stability") {
+                if (key === "overview" || key === "series" || key === "ivl" || key === "spectrum" || key === "stability" || key === "camera") {
                   setActiveView(key);
                 }
               }}
@@ -291,7 +292,7 @@ function App() {
             Диагностика
             <small>скоро</small>
           </button>
-          <div className="build-label">v2.0.0 alpha · этап 5</div>
+          <div className="build-label">v2.0.0 alpha · этап 6</div>
         </div>
       </aside>
 
@@ -299,13 +300,13 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : "Серии OLED"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера · свободный режим" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Очередь спектров · подбор T_int, CSV, Excel и журнал" : activeView === "stability" ? "Удержание тока или напряжения · динамическая уставка и журнал" : "Создание, открытие и совместимый журнал измерений"}
+                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Очередь спектров · подбор T_int, CSV, Excel и журнал" : activeView === "stability" ? "Удержание тока или напряжения · динамическая уставка и журнал" : activeView === "camera" ? "Raspberry Pi service · LiveView и удалённые файлы" : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -322,6 +323,8 @@ function App() {
           <SpectrumWorkspace initialTarget={spectrumTarget} />
         ) : activeView === "stability" ? (
           <StabilityWorkspace initialTarget={stabilityTarget} />
+        ) : activeView === "camera" ? (
+          <CameraWorkspace onConnectionChanged={refreshAppState} />
         ) : activeView === "series" ? (
             <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setStabilityTarget(target); setActiveView("stability"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (
