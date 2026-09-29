@@ -459,6 +459,7 @@ def camera_smoke() -> int:
         def __init__(self, base_url: str, timeout_s: float, stream_timeout_s: float):
             self.base_url = base_url
             self.stop_calls = 0
+            self.recording_active = False
             self.files = [RemoteFile("smoke-1", "smoke.jpg", "photo", 16)]
 
         def health(self):
@@ -468,7 +469,7 @@ def camera_smoke() -> int:
             return {"success": True}
 
         def status(self):
-            return {"model": "Smoke Canon"}
+            return {"model": "Smoke Canon", "recording_active": self.recording_active}
 
         def capabilities(self):
             return {
@@ -477,7 +478,11 @@ def camera_smoke() -> int:
                     "choices": ["Fine JPEG", "Normal JPEG"],
                 }],
                 "exposure_controls": [],
-                "video_settings": {"resolution": ["640x480"]},
+                "video_quality_controls": [{
+                    "path": "/moviesize", "label": "Видео", "current": "1080p",
+                    "choices": ["1080p", "720p"],
+                }],
+                "video_fps_controls": [],
             }
 
         def list_files(self):
@@ -496,6 +501,16 @@ def camera_smoke() -> int:
         def stop_liveview(self):
             self.stop_calls += 1
             return {"success": True}
+
+        def start_recording(self, _settings, _crop):
+            self.recording_active = True
+            return self.status()
+
+        def stop_recording(self):
+            self.recording_active = False
+            remote = RemoteFile("video-1", "camera-smoke.mp4", "video", 16)
+            self.files.append(remote)
+            return remote
 
         def save_liveview_snapshot(self, file_name, crop):
             remote = RemoteFile("captured-1", f"{file_name or 'capture'}.jpg", "snapshot", 16)
@@ -539,6 +554,20 @@ def camera_smoke() -> int:
         if (not Path(str(transfer.get("local_file") or "")).is_file()
                 or transfer.get("remote_deleted") is not True):
             raise RuntimeError(f"Camera capture smoke failed: {captured}")
+        recording = controller.start_recording(
+            {"/moviesize": "720p"},
+            {"width_percent": 80, "height_percent": 70},
+            False,
+        )
+        if not recording["recording_active"]:
+            raise RuntimeError(f"Camera video smoke did not start: {recording}")
+        video = controller.stop_recording()
+        video_transfer = video.get("last_transfer") or {}
+        if (video["recording_active"]
+                or video_transfer.get("action") != "video"
+                or not Path(str(video_transfer.get("local_file") or "")).is_file()
+                or video_transfer.get("remote_deleted") is not True):
+            raise RuntimeError(f"Camera video smoke failed: {video}")
         stopped = controller.stop_liveview()
         if stopped["liveview_active"]:
             raise RuntimeError("Camera smoke did not stop LiveView.")
@@ -549,6 +578,7 @@ def camera_smoke() -> int:
             "frame_sequence": streamed["frame_sequence"],
             "capture_verified": True,
             "remote_cleanup_verified": True,
+            "video_verified": True,
             "liveview_stopped": True,
         }, ensure_ascii=False))
     finally:

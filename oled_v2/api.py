@@ -93,6 +93,7 @@ def create_app(
             **dict(camera_defaults.get("photo_quality_settings") or {}),
             **dict(camera_defaults.get("photo_exposure_settings") or {}),
         },
+        default_video_settings=dict(camera_defaults.get("video_camera_settings") or {}),
     )
     camera_operation_gate = asyncio.Lock()
 
@@ -243,7 +244,7 @@ def create_app(
             async with camera_operation_gate:
                 return await asyncio.to_thread(
                     camera_controller.start_liveview,
-                    (payload or {}).get("video_settings") or {},
+                    (payload or {}).get("video_settings"),
                 )
         except Exception as exc:
             raise camera_http_error(exc) from exc
@@ -282,6 +283,7 @@ def create_app(
                     values.get("photo_settings"),
                     values.get("crop"),
                     values.get("keep_remote_files"),
+                    values.get("video_settings"),
                 )
                 settings = load_app_settings()
                 camera_settings = dict(settings.get("camera") or {})
@@ -304,6 +306,7 @@ def create_app(
                         path: value for path, value in preferences["photo_settings"].items()
                         if path not in quality_paths
                     },
+                    "video_camera_settings": dict(preferences["video_settings"]),
                 })
                 settings["camera"] = camera_settings
                 await asyncio.to_thread(save_app_settings, settings)
@@ -327,6 +330,31 @@ def create_app(
                     values.get("crop"),
                     values.get("keep_remote_files"),
                 )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/video/start")
+    async def camera_video_start(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(
+                    camera_controller.start_recording,
+                    values.get("video_settings"),
+                    values.get("crop"),
+                    values.get("keep_remote_files"),
+                )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/video/stop")
+    async def camera_video_stop(_client_id: str = Depends(require_controller)) -> dict:
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(camera_controller.stop_recording)
         except Exception as exc:
             raise camera_http_error(exc) from exc
 

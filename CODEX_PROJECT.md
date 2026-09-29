@@ -51,7 +51,10 @@ camera connection, service status, remote-file list and cancellable LiveView;
 `--camera-smoke` verifies this lifecycle without physical hardware. Checkpoint
 17 adds dynamic JPEG/exposure controls, centered crop preferences, preview and
 full-photo capture, verified download and explicit or post-download remote
-deletion. Video and series-bound guided camera workflows remain pending.
+deletion. Checkpoint 18 adds dynamic Canon video controls, backend-owned MP4
+recording, live preview during recording, verified download, optional remote
+cleanup and automatic finalization before disconnect. The series-bound guided
+camera workflow remains pending.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.

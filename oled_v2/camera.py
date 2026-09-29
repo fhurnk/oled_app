@@ -33,6 +33,7 @@ class CameraController:
         default_keep_remote: bool = True,
         default_crop: Optional[dict[str, Any]] = None,
         default_photo_settings: Optional[dict[str, str]] = None,
+        default_video_settings: Optional[dict[str, str]] = None,
     ) -> None:
         try:
             initial_port = int(default_port)
@@ -62,12 +63,15 @@ class CameraController:
             "capabilities": None,
             "files": [],
             "liveview_active": False,
+            "recording_active": False,
+            "recording_started_at": None,
             "frame_sequence": 0,
             "frame_size": 0,
             "frame_received_at": None,
             "preferences": {
                 "crop": initial_crop,
                 "photo_settings": dict(default_photo_settings or {}),
+                "video_settings": dict(default_video_settings or {}),
                 "keep_remote_files": bool(default_keep_remote),
                 "download_dir": str(Path(default_download_dir).expanduser()),
             },
@@ -88,6 +92,7 @@ class CameraController:
                 **self._state["preferences"],
                 "crop": dict(self._state["preferences"]["crop"]),
                 "photo_settings": dict(self._state["preferences"]["photo_settings"]),
+                "video_settings": dict(self._state["preferences"]["video_settings"]),
             }
             state["last_transfer"] = dict(self._state["last_transfer"] or {}) or None
             return state
@@ -144,6 +149,10 @@ class CameraController:
                 capabilities or {},
                 preferences["photo_settings"],
             )
+            preferences["video_settings"] = self._resolve_video_settings(
+                capabilities or {},
+                preferences["video_settings"],
+            )
             self._state.update({
                 "connected": True,
                 "base_url": base_url,
@@ -154,6 +163,8 @@ class CameraController:
                 "camera_status": camera_status,
                 "capabilities": capabilities,
                 "files": files,
+                "recording_active": bool((camera_status or {}).get("recording_active")),
+                "recording_started_at": None,
                 "preferences": preferences,
                 "message": "Сервис камеры подключён.",
                 "error": None,
@@ -177,12 +188,21 @@ class CameraController:
                 capabilities or {},
                 preferences["photo_settings"],
             )
+            preferences["video_settings"] = self._resolve_video_settings(
+                capabilities or {},
+                preferences["video_settings"],
+            )
+            recording_active = bool((camera_status or {}).get("recording_active"))
             self._state.update({
                 "health": health,
                 "camera_status": camera_status,
                 "capabilities": capabilities,
                 "files": files,
                 "preferences": preferences,
+                "recording_active": recording_active,
+                "recording_started_at": (
+                    self._state["recording_started_at"] if recording_active else None
+                ),
                 "message": "Состояние камеры обновлено.",
                 "error": None,
                 "updated_at": _utc_now(),
@@ -194,18 +214,23 @@ class CameraController:
         photo_settings: Optional[dict[str, str]] = None,
         crop: Optional[dict[str, Any]] = None,
         keep_remote_files: Optional[bool] = None,
+        video_settings: Optional[dict[str, str]] = None,
     ) -> dict[str, Any]:
         existing = self.snapshot()["preferences"]
         selected = self._validate_photo_settings(
             photo_settings if photo_settings is not None else existing["photo_settings"]
         )
         normalized_crop = normalize_center_crop(crop or existing["crop"])
+        selected_video = self._validate_video_settings(
+            video_settings if video_settings is not None else existing["video_settings"]
+        )
         with self._lock:
             current = self._state["preferences"]
             self._state["preferences"] = {
                 **current,
                 "crop": normalized_crop,
                 "photo_settings": selected,
+                "video_settings": selected_video,
                 "keep_remote_files": (
                     current["keep_remote_files"]
                     if keep_remote_files is None
@@ -231,6 +256,8 @@ class CameraController:
             raise ValueError("Поддерживаются только preview-кадр и полноразмерное фото.")
         client = self._require_client()
         current = self.snapshot()
+        if current["recording_active"]:
+            raise RuntimeError("Сначала остановите запись видео.")
         preferences = current["preferences"]
         selected_settings = self._validate_photo_settings(
             photo_settings if photo_settings is not None else preferences["photo_settings"]
@@ -353,20 +380,146 @@ class CameraController:
             })
         return self.snapshot()
 
+    def start_recording(
+        self,
+        video_settings: Optional[dict[str, str]] = None,
+        crop: Optional[dict[str, Any]] = None,
+        keep_remote_files: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        client = self._require_client()
+        current = self.snapshot()
+        if current["recording_active"]:
+            return current
+        preferences = current["preferences"]
+        selected_settings = self._validate_video_settings(
+            video_settings if video_settings is not None else preferences["video_settings"]
+        )
+        selected_crop = normalize_center_crop(crop or preferences["crop"])
+        keep_remote = (
+            bool(preferences["keep_remote_files"])
+            if keep_remote_files is None
+            else bool(keep_remote_files)
+        )
+        try:
+            camera_status = client.start_recording(selected_settings, selected_crop)
+        except Exception as exc:
+            self._set_error("Не удалось запустить запись видео.", exc)
+            raise
+
+        with self._lock:
+            updated_preferences = dict(self._state["preferences"])
+            updated_preferences.update({
+                "crop": selected_crop,
+                "video_settings": selected_settings,
+                "keep_remote_files": keep_remote,
+            })
+            self._state.update({
+                "camera_status": camera_status,
+                "recording_active": True,
+                "recording_started_at": _utc_now(),
+                "preferences": updated_preferences,
+                "message": "Запись видео началась.",
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        if not current["liveview_active"]:
+            self._start_stream_reader(client, reset_frame=True)
+        return self.snapshot()
+
+    def stop_recording(self) -> dict[str, Any]:
+        client = self._require_client()
+        current = self.snapshot()
+        if not current["recording_active"]:
+            raise RuntimeError("Запись видео не запущена.")
+        preferences = current["preferences"]
+        try:
+            remote = client.stop_recording()
+        except Exception as exc:
+            self._set_error("Не удалось корректно завершить запись видео.", exc)
+            raise
+
+        with self._lock:
+            self._state.update({
+                "recording_active": False,
+                "recording_started_at": None,
+                "message": "Видео завершено; выполняется проверенное скачивание.",
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        try:
+            local = client.download_file(remote, preferences["download_dir"])
+            deleted = False
+            delete_error = ""
+            if not preferences["keep_remote_files"]:
+                try:
+                    client.delete_file(remote)
+                    deleted = True
+                except Exception as exc:
+                    delete_error = str(exc)
+            files = [asdict(item) for item in client.list_files()]
+            camera_status = client.status()
+        except Exception as exc:
+            try:
+                files = [asdict(item) for item in client.list_files()]
+                camera_status = client.status()
+            except Exception:
+                files = current["files"]
+                camera_status = current["camera_status"]
+            with self._lock:
+                self._state.update({
+                    "files": files,
+                    "camera_status": camera_status,
+                    "message": "Видео завершено на Raspberry Pi, но скачать его не удалось.",
+                    "error": str(exc),
+                    "updated_at": _utc_now(),
+                })
+            raise
+
+        transfer = {
+            "action": "video",
+            "remote": asdict(remote),
+            "local_file": str(local),
+            "remote_deleted": deleted,
+            "delete_error": delete_error,
+            "completed_at": _utc_now(),
+        }
+        with self._lock:
+            self._state.update({
+                "files": files,
+                "camera_status": camera_status,
+                "last_transfer": transfer,
+                "message": "Видео корректно завершено, скачано и проверено.",
+                "error": delete_error or None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
+
     def start_liveview(self, video_settings: Optional[dict[str, str]] = None) -> dict[str, Any]:
         client = self._require_client()
+        current = self.snapshot()
         with self._lock:
             if self._state["liveview_active"]:
                 return self.snapshot()
-        client.start_liveview(video_settings or {})
+        selected_settings = self._validate_video_settings(
+            video_settings if video_settings is not None else current["preferences"]["video_settings"]
+        )
+        client.start_liveview(selected_settings)
+        self._start_stream_reader(client, reset_frame=True)
+        return self.snapshot()
+
+    def _start_stream_reader(self, client: CameraClient, reset_frame: bool) -> None:
         with self._lock:
+            if self._stream_thread is not None and self._stream_thread.is_alive():
+                self._state["liveview_active"] = True
+                return
             self._stream_stop = threading.Event()
-            self._latest_frame = None
+            if reset_frame:
+                self._latest_frame = None
             self._state.update({
                 "liveview_active": True,
-                "frame_sequence": 0,
-                "frame_size": 0,
-                "frame_received_at": None,
+                "frame_sequence": 0 if reset_frame else self._state["frame_sequence"],
+                "frame_size": 0 if reset_frame else self._state["frame_size"],
+                "frame_received_at": None if reset_frame else self._state["frame_received_at"],
                 "message": "LiveView запущен; ожидаем первый кадр.",
                 "error": None,
                 "updated_at": _utc_now(),
@@ -379,7 +532,6 @@ class CameraController:
             )
             self._stream_thread = thread
             thread.start()
-        return self.snapshot()
 
     def frame(self) -> bytes:
         with self._lock:
@@ -388,6 +540,8 @@ class CameraController:
             return bytes(self._latest_frame)
 
     def stop_liveview(self) -> dict[str, Any]:
+        if self.snapshot()["recording_active"]:
+            raise RuntimeError("Сначала остановите запись видео.")
         with self._lock:
             client = self._client
             thread = self._stream_thread
@@ -418,6 +572,8 @@ class CameraController:
         return self.snapshot()
 
     def disconnect(self) -> dict[str, Any]:
+        if self.snapshot()["recording_active"]:
+            self.stop_recording()
         try:
             self.stop_liveview()
         except Exception:
@@ -434,6 +590,8 @@ class CameraController:
                 "capabilities": None,
                 "files": [],
                 "liveview_active": False,
+                "recording_active": False,
+                "recording_started_at": None,
                 "frame_sequence": 0,
                 "frame_size": 0,
                 "frame_received_at": None,
@@ -500,6 +658,27 @@ class CameraController:
             selected[str(path)] = value
         return selected
 
+    def _validate_video_settings(self, requested: dict[str, str]) -> dict[str, str]:
+        with self._lock:
+            capabilities = self._state.get("capabilities") or {}
+        controls = {
+            str(item.get("path")): item
+            for group in ("video_quality_controls", "video_fps_controls")
+            for item in capabilities.get(group, [])
+            if isinstance(item, dict) and item.get("path")
+        }
+        selected: dict[str, str] = {}
+        for path, raw_value in requested.items():
+            control = controls.get(str(path))
+            value = str(raw_value)
+            if control is None:
+                raise ValueError(f"Камера не поддерживает видеопараметр {path}.")
+            choices = [str(item) for item in control.get("choices") or []]
+            if value not in choices:
+                raise ValueError(f"Недопустимое значение видеопараметра {path}: {value}.")
+            selected[str(path)] = value
+        return selected
+
     @staticmethod
     def _resolve_photo_settings(
         capabilities: dict[str, Any],
@@ -507,6 +686,24 @@ class CameraController:
     ) -> dict[str, str]:
         selected: dict[str, str] = {}
         for group in ("photo_controls", "exposure_controls"):
+            for control in capabilities.get(group, []):
+                if not isinstance(control, dict):
+                    continue
+                path = str(control.get("path") or "")
+                choices = [str(item) for item in control.get("choices") or []]
+                if not path or not choices:
+                    continue
+                value = str(saved.get(path) or control.get("current") or choices[0])
+                selected[path] = value if value in choices else str(control.get("current") or choices[0])
+        return selected
+
+    @staticmethod
+    def _resolve_video_settings(
+        capabilities: dict[str, Any],
+        saved: dict[str, str],
+    ) -> dict[str, str]:
+        selected: dict[str, str] = {}
+        for group in ("video_quality_controls", "video_fps_controls"):
             for control in capabilities.get(group, []):
                 if not isinstance(control, dict):
                     continue

@@ -501,17 +501,20 @@ export type CameraState = {
   capabilities: Record<string, unknown> | null;
   files: CameraRemoteFile[];
   liveview_active: boolean;
+  recording_active: boolean;
+  recording_started_at: string | null;
   frame_sequence: number;
   frame_size: number;
   frame_received_at: string | null;
   preferences: {
     crop: {width_percent: number; height_percent: number};
     photo_settings: Record<string, string>;
+    video_settings: Record<string, string>;
     keep_remote_files: boolean;
     download_dir: string;
   };
   last_transfer: {
-    action: "snapshot" | "photo" | "download";
+    action: "snapshot" | "photo" | "video" | "download";
     remote: CameraRemoteFile;
     local_file: string;
     remote_deleted: boolean;
@@ -530,19 +533,25 @@ export const connectCamera = (host: string, port: number, initialize = true) =>
   });
 export const refreshCamera = () =>
   requestJson<CameraState>("/api/camera/refresh", {method: "POST"});
-export const startCameraLiveview = () =>
-  requestJson<CameraState>("/api/camera/liveview/start", {method: "POST", body: JSON.stringify({})});
+export const startCameraLiveview = (videoSettings: Record<string, string>) =>
+  requestJson<CameraState>("/api/camera/liveview/start", {
+    method: "POST", body: JSON.stringify({video_settings: videoSettings})
+  });
 export const stopCameraLiveview = () =>
   requestJson<CameraState>("/api/camera/liveview/stop", {method: "POST"});
 export const disconnectCamera = () =>
   requestJson<CameraState>("/api/camera/disconnect", {method: "POST"});
 export const updateCameraPreferences = (
   photoSettings: Record<string, string>,
+  videoSettings: Record<string, string>,
   crop: {width_percent: number; height_percent: number},
   keepRemoteFiles: boolean
 ) => requestJson<CameraState>("/api/camera/preferences", {
   method: "PUT",
-  body: JSON.stringify({photo_settings: photoSettings, crop, keep_remote_files: keepRemoteFiles})
+  body: JSON.stringify({
+    photo_settings: photoSettings, video_settings: videoSettings,
+    crop, keep_remote_files: keepRemoteFiles
+  })
 });
 export const captureCameraFile = (
   kind: "snapshot" | "photo",
@@ -561,6 +570,18 @@ export const downloadCameraFile = (fileId: string) =>
   requestJson<CameraState>(`/api/camera/files/${encodeURIComponent(fileId)}/download`, {method: "POST"});
 export const deleteCameraFile = (fileId: string) =>
   requestJson<CameraState>(`/api/camera/files/${encodeURIComponent(fileId)}`, {method: "DELETE"});
+export const startCameraRecording = (
+  videoSettings: Record<string, string>,
+  crop: {width_percent: number; height_percent: number},
+  keepRemoteFiles: boolean
+) => requestJson<CameraState>("/api/camera/video/start", {
+  method: "POST",
+  body: JSON.stringify({
+    video_settings: videoSettings, crop, keep_remote_files: keepRemoteFiles
+  })
+});
+export const stopCameraRecording = () =>
+  requestJson<CameraState>("/api/camera/video/stop", {method: "POST"});
 export async function fetchCameraFrame(): Promise<Blob> {
   const response = await fetch(`/api/camera/frame?sequence=${Date.now()}`, {
     cache: "no-store", headers: desktopHeaders()

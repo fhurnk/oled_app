@@ -20,6 +20,7 @@ class FakeCameraClient:
         self.initialize_calls = 0
         self.start_calls = 0
         self.stop_calls = 0
+        self.recording_active = False
         self.stream_closed = threading.Event()
         self.files = [RemoteFile("file-1", "preview.jpg", "photo", 321, "2026-09-28T10:00:00Z", "abc")]
         self.__class__.instances.append(self)
@@ -32,7 +33,11 @@ class FakeCameraClient:
         return {"success": True}
 
     def status(self):
-        return {"model": "Fake Canon", "liveview_active": self.start_calls > self.stop_calls}
+        return {
+            "model": "Fake Canon",
+            "liveview_active": self.start_calls > self.stop_calls or self.recording_active,
+            "recording_active": self.recording_active,
+        }
 
     def capabilities(self):
         return {
@@ -44,7 +49,14 @@ class FakeCameraClient:
                 "path": "/main/imgsettings/iso", "label": "ISO",
                 "current": "100", "choices": ["100", "200"],
             }],
-            "video_settings": {"resolution": ["640x480"]},
+            "video_quality_controls": [{
+                "path": "/main/moviesettings/moviesize", "label": "Качество видео",
+                "current": "1920x1080", "choices": ["1920x1080", "1280x720"],
+            }],
+            "video_fps_controls": [{
+                "path": "/main/moviesettings/fps", "label": "FPS",
+                "current": "25", "choices": ["25", "50"],
+            }],
         }
 
     def list_files(self):
@@ -64,6 +76,20 @@ class FakeCameraClient:
     def stop_liveview(self):
         self.stop_calls += 1
         return {"success": True}
+
+    def start_recording(self, video_settings, crop):
+        self.last_video_settings = video_settings
+        self.last_video_crop = crop
+        self.recording_active = True
+        if self.start_calls <= self.stop_calls:
+            self.start_calls += 1
+        return self.status()
+
+    def stop_recording(self):
+        self.recording_active = False
+        remote = RemoteFile("video-2", "recording.mp4", "video", 16)
+        self.files.append(remote)
+        return remote
 
     def save_liveview_snapshot(self, file_name, crop):
         remote = RemoteFile("snapshot-2", f"{file_name or 'snapshot'}.jpg", "snapshot", 16)
@@ -117,6 +143,7 @@ class V2CameraControllerTests(unittest.TestCase):
         self.assertEqual(state["camera_status"]["model"], "Fake Canon")
         self.assertEqual(state["files"][0]["name"], "preview.jpg")
         self.assertEqual(state["preferences"]["photo_settings"]["/main/imgsettings/iso"], "100")
+        self.assertEqual(state["preferences"]["video_settings"]["/main/moviesettings/fps"], "25")
         self.assertEqual(FakeCameraClient.instances[-1].initialize_calls, 1)
 
     def test_liveview_exposes_latest_frame_and_stops_stream(self) -> None:
@@ -167,14 +194,21 @@ class V2CameraControllerTests(unittest.TestCase):
             {"/main/imgsettings/imageformat": "Medium JPEG", "/main/imgsettings/iso": "200"},
             {"width_percent": 75, "height_percent": 60},
             False,
+            {"/main/moviesettings/moviesize": "1280x720", "/main/moviesettings/fps": "50"},
         )
 
         self.assertEqual(state["preferences"]["crop"], {"width_percent": 75.0, "height_percent": 60.0})
         self.assertFalse(state["preferences"]["keep_remote_files"])
+        self.assertEqual(state["preferences"]["video_settings"]["/main/moviesettings/fps"], "50")
         with self.assertRaisesRegex(ValueError, "Недопустимое значение"):
             self.controller.update_preferences(
                 {"/main/imgsettings/iso": "64000"},
                 {"width_percent": 100, "height_percent": 100},
+            )
+        with self.assertRaisesRegex(ValueError, "Недопустимое значение видеопараметра"):
+            self.controller.update_preferences(
+                {}, {"width_percent": 100, "height_percent": 100}, True,
+                {"/main/moviesettings/fps": "120"},
             )
 
     def test_snapshot_is_verified_and_remote_copy_can_be_deleted(self) -> None:
@@ -215,6 +249,45 @@ class V2CameraControllerTests(unittest.TestCase):
 
         deleted = self.controller.delete("file-1")
         self.assertEqual(deleted["files"], [])
+
+    def test_video_starts_stream_then_finalizes_download_and_remote_cleanup(self) -> None:
+        self.controller.connect("camera.local", 8765)
+
+        started = self.controller.start_recording(
+            {"/main/moviesettings/moviesize": "1280x720", "/main/moviesettings/fps": "50"},
+            {"width_percent": 75, "height_percent": 60},
+            False,
+        )
+        deadline = time.monotonic() + 2.0
+        while self.controller.snapshot()["frame_sequence"] == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        client = FakeCameraClient.instances[-1]
+        self.assertTrue(started["recording_active"])
+        self.assertTrue(self.controller.snapshot()["liveview_active"])
+        self.assertEqual(client.last_video_settings["/main/moviesettings/fps"], "50")
+        self.assertEqual(client.last_video_crop, {"width_percent": 75.0, "height_percent": 60.0})
+        with self.assertRaisesRegex(RuntimeError, "остановите запись"):
+            self.controller.capture("photo")
+        with self.assertRaisesRegex(RuntimeError, "остановите запись"):
+            self.controller.stop_liveview()
+
+        stopped = self.controller.stop_recording()
+
+        self.assertFalse(stopped["recording_active"])
+        self.assertTrue(Path(stopped["last_transfer"]["local_file"]).is_file())
+        self.assertEqual(stopped["last_transfer"]["action"], "video")
+        self.assertTrue(stopped["last_transfer"]["remote_deleted"])
+        self.assertNotIn("video-2", [item["file_id"] for item in stopped["files"]])
+
+    def test_disconnect_finalizes_active_recording_before_clearing_session(self) -> None:
+        self.controller.connect("camera.local", 8765)
+        self.controller.start_recording()
+
+        state = self.controller.disconnect()
+
+        self.assertFalse(state["connected"])
+        self.assertFalse(state["recording_active"])
+        self.assertTrue(Path(state["last_transfer"]["local_file"]).is_file())
 
 
 if __name__ == "__main__":

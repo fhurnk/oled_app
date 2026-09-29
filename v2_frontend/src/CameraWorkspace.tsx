@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   type CameraState,
@@ -10,7 +10,9 @@ import {
   fetchCameraFrame,
   fetchCameraState,
   refreshCamera,
+  startCameraRecording,
   startCameraLiveview,
+  stopCameraRecording,
   stopCameraLiveview,
   updateCameraPreferences
 } from "./api";
@@ -29,6 +31,18 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
 }
 
+function formatDuration(startedAt: string | null | undefined): string {
+  if (!startedAt) return "00:00";
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return [hours, minutes, rest]
+    .filter((_value, index) => hours > 0 || index > 0)
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
+}
+
 export default function CameraWorkspace({ onConnectionChanged }: {onConnectionChanged?: () => void}) {
   const [state, setState] = useState<CameraState | null>(null);
   const [host, setHost] = useState("192.168.4.1");
@@ -37,6 +51,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
   const [error, setError] = useState("");
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
   const [photoSettings, setPhotoSettings] = useState<Record<string, string>>({});
+  const [videoSettings, setVideoSettings] = useState<Record<string, string>>({});
   const [cropWidth, setCropWidth] = useState("100");
   const [cropHeight, setCropHeight] = useState("100");
   const [keepRemote, setKeepRemote] = useState(true);
@@ -75,6 +90,20 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
         }
       });
       setPhotoSettings(selected);
+      const videoControls = [
+        ...((next.capabilities?.video_quality_controls as Array<Record<string, unknown>> | undefined) ?? []),
+        ...((next.capabilities?.video_fps_controls as Array<Record<string, unknown>> | undefined) ?? [])
+      ];
+      const selectedVideo: Record<string, string> = {};
+      videoControls.forEach((control) => {
+        const path = String(control.path ?? "");
+        const choices = Array.isArray(control.choices) ? control.choices.map(String) : [];
+        const saved = next.preferences.video_settings[path];
+        if (path && choices.length) {
+          selectedVideo[path] = choices.includes(saved) ? saved : String(control.current ?? choices[0]);
+        }
+      });
+      setVideoSettings(selectedVideo);
       setCropWidth(String(next.preferences.crop.width_percent));
       setCropHeight(String(next.preferences.crop.height_percent));
       setKeepRemote(next.preferences.keep_remote_files);
@@ -135,17 +164,26 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
   const health = state?.health ?? {};
   const qualityControls = (state?.capabilities?.photo_controls as Array<Record<string, unknown>> | undefined) ?? [];
   const exposureControls = (state?.capabilities?.exposure_controls as Array<Record<string, unknown>> | undefined) ?? [];
+  const videoControls = [
+    ...((state?.capabilities?.video_quality_controls as Array<Record<string, unknown>> | undefined) ?? []),
+    ...((state?.capabilities?.video_fps_controls as Array<Record<string, unknown>> | undefined) ?? [])
+  ];
   const crop = {width_percent: Number(cropWidth), height_percent: Number(cropHeight)};
   const transfer = state?.last_transfer;
 
-  const renderControls = (controls: Array<Record<string, unknown>>, emptyText: string) => (
+  const renderControls = (
+    controls: Array<Record<string, unknown>>,
+    emptyText: string,
+    selected: Record<string, string>,
+    setSelected: Dispatch<SetStateAction<Record<string, string>>>
+  ) => (
     controls.length ? controls.map((control) => {
       const path = String(control.path ?? "");
       const choices = Array.isArray(control.choices) ? control.choices.map(String) : [];
       return (
         <label className="field" key={path}>
           <span className="field__label">{String(control.label ?? path)}</span>
-          <select className="select-input" disabled={busy} value={photoSettings[path] ?? String(control.current ?? choices[0] ?? "")} onChange={(event) => setPhotoSettings((current) => ({...current, [path]: event.target.value}))}>
+          <select className="select-input" disabled={busy || state?.recording_active} value={selected[path] ?? String(control.current ?? choices[0] ?? "")} onChange={(event) => setSelected((current) => ({...current, [path]: event.target.value}))}>
             {choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
           </select>
         </label>
@@ -199,8 +237,8 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
               <h2>Предпросмотр камеры</h2>
             </div>
             <div className="camera-actions">
-              <Button disabled={busy || !state?.connected || state?.liveview_active} onClick={() => void run(startCameraLiveview)} variant="primary">Запустить</Button>
-              <Button disabled={busy || !state?.liveview_active} onClick={() => void run(stopCameraLiveview)} variant="danger">Остановить</Button>
+              <Button disabled={busy || !state?.connected || state?.liveview_active || state?.recording_active} onClick={() => void run(() => startCameraLiveview(videoSettings))} variant="primary">Запустить</Button>
+              <Button disabled={busy || !state?.liveview_active || state?.recording_active} onClick={() => void run(stopCameraLiveview)} variant="danger">Остановить</Button>
             </div>
           </div>
           <div className="camera-preview">
@@ -214,14 +252,21 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
           <div className="camera-capture-row">
             <label className="field">
               <span className="field__label">Имя файла, необязательно</span>
-              <input className="text-input" disabled={busy || !state?.connected} value={captureName} onChange={(event) => setCaptureName(event.target.value)} placeholder="например, sample_before" />
+              <input className="text-input" disabled={busy || !state?.connected || state?.recording_active} value={captureName} onChange={(event) => setCaptureName(event.target.value)} placeholder="например, sample_before" />
             </label>
             <div className="camera-actions">
-              <Button disabled={busy || !state?.liveview_active} onClick={() => void run(() => captureCameraFile("snapshot", captureName, photoSettings, crop, keepRemote))}>Сохранить preview</Button>
-              <Button disabled={busy || !state?.connected} onClick={() => void run(() => captureCameraFile("photo", captureName, photoSettings, crop, keepRemote))} variant="primary">Сделать фото</Button>
+              <Button disabled={busy || !state?.liveview_active || state?.recording_active} onClick={() => void run(() => captureCameraFile("snapshot", captureName, photoSettings, crop, keepRemote))}>Сохранить preview</Button>
+              <Button disabled={busy || !state?.connected || state?.recording_active} onClick={() => void run(() => captureCameraFile("photo", captureName, photoSettings, crop, keepRemote))} variant="primary">Сделать фото</Button>
             </div>
           </div>
-          {transfer && <div className="camera-transfer"><strong>Проверенное скачивание завершено</strong><span title={transfer.local_file}>{transfer.local_file}</span>{transfer.remote_deleted && <small>Исходник удалён с Raspberry Pi.</small>}{transfer.delete_error && <small>Исходник не удалён: {transfer.delete_error}</small>}</div>}
+          <div className={`camera-recording ${state?.recording_active ? "camera-recording--active" : ""}`}>
+            <div><span className="camera-recording__dot" /><strong>{state?.recording_active ? `Запись · ${formatDuration(state.recording_started_at)}` : "Видеозапись остановлена"}</strong><small>MP4 формируется на Raspberry Pi из того же потока, что и LiveView.</small></div>
+            <div className="camera-actions">
+              <Button disabled={busy || !state?.connected || state?.recording_active} onClick={() => void run(() => startCameraRecording(videoSettings, crop, keepRemote))} variant="primary">Начать видео</Button>
+              <Button disabled={busy || !state?.recording_active} onClick={() => void run(stopCameraRecording)} variant="danger">Завершить и скачать</Button>
+            </div>
+          </div>
+          {transfer && <div className="camera-transfer"><strong>{transfer.action === "video" ? "Видео корректно завершено и проверено" : "Проверенное скачивание завершено"}</strong><span title={transfer.local_file}>{transfer.local_file}</span>{transfer.remote_deleted && <small>Исходник удалён с Raspberry Pi.</small>}{transfer.delete_error && <small>Исходник не удалён: {transfer.delete_error}</small>}</div>}
         </article>
 
         <aside className="panel camera-status-panel">
@@ -231,6 +276,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
             <div><dt>Сервис</dt><dd>{field(health.status, state?.connected ? "online" : "—")}</dd></div>
             <div><dt>Инициализация</dt><dd>{state?.initialized ? "готова" : "нет"}</dd></div>
             <div><dt>LiveView</dt><dd>{state?.liveview_active ? "активен" : "остановлен"}</dd></div>
+            <div><dt>Видеозапись</dt><dd>{state?.recording_active ? formatDuration(state.recording_started_at) : "остановлена"}</dd></div>
             <div><dt>Модель</dt><dd>{field(cameraStatus.camera_model ?? cameraStatus.model)}</dd></div>
             <div><dt>Удалённых файлов</dt><dd>{state?.files.length ?? 0}</dd></div>
           </dl>
@@ -240,19 +286,20 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
       <article className="panel camera-settings-panel">
         <div className="panel__header">
           <div><p className="panel__eyebrow">Параметры съёмки</p><h2>JPEG, экспозиция и центральный кроп</h2><p className="panel__subtitle">Показываются только значения, разрешённые подключённой камерой.</p></div>
-          <Button disabled={busy || !state?.connected} onClick={() => void run(() => updateCameraPreferences(photoSettings, crop, keepRemote))} variant="primary">Сохранить параметры</Button>
+          <Button disabled={busy || !state?.connected || state?.recording_active} onClick={() => void run(() => updateCameraPreferences(photoSettings, videoSettings, crop, keepRemote))} variant="primary">Сохранить параметры</Button>
         </div>
         <div className="camera-settings-grid">
-          <section><h3>Качество JPEG</h3>{renderControls(qualityControls, "Камера не сообщила переключаемые JPEG-параметры.")}</section>
-          <section><h3>Экспозиция</h3>{renderControls(exposureControls, "Нет доступных параметров. Для Canon обычно требуется режим M.")}</section>
+          <section><h3>Качество JPEG</h3>{renderControls(qualityControls, "Камера не сообщила переключаемые JPEG-параметры.", photoSettings, setPhotoSettings)}</section>
+          <section><h3>Экспозиция</h3>{renderControls(exposureControls, "Нет доступных параметров. Для Canon обычно требуется режим M.", photoSettings, setPhotoSettings)}</section>
+          <section><h3>Видео Canon</h3>{renderControls(videoControls, "Камера сама задаёт качество и FPS; доступны текущие параметры потока.", videoSettings, setVideoSettings)}</section>
           <section>
             <h3>Центральный кроп</h3>
             <div className="camera-crop-fields">
-              <label className="field"><span className="field__label">Ширина, %</span><input className="text-input" disabled={busy} type="number" min="1" max="100" step="1" value={cropWidth} onChange={(event) => setCropWidth(event.target.value)} /></label>
-              <label className="field"><span className="field__label">Высота, %</span><input className="text-input" disabled={busy} type="number" min="1" max="100" step="1" value={cropHeight} onChange={(event) => setCropHeight(event.target.value)} /></label>
+              <label className="field"><span className="field__label">Ширина, %</span><input className="text-input" disabled={busy || state?.recording_active} type="number" min="1" max="100" step="1" value={cropWidth} onChange={(event) => setCropWidth(event.target.value)} /></label>
+              <label className="field"><span className="field__label">Высота, %</span><input className="text-input" disabled={busy || state?.recording_active} type="number" min="1" max="100" step="1" value={cropHeight} onChange={(event) => setCropHeight(event.target.value)} /></label>
             </div>
-            <Button compact disabled={busy} onClick={() => {setCropWidth("100"); setCropHeight("100");}}>Сбросить 100 × 100%</Button>
-            <label className="camera-checkbox"><input checked={keepRemote} disabled={busy} type="checkbox" onChange={(event) => setKeepRemote(event.target.checked)} /><span>Оставлять исходник на Raspberry Pi после скачивания</span></label>
+            <Button compact disabled={busy || state?.recording_active} onClick={() => {setCropWidth("100"); setCropHeight("100");}}>Сбросить 100 × 100%</Button>
+            <label className="camera-checkbox"><input checked={keepRemote} disabled={busy || state?.recording_active} type="checkbox" onChange={(event) => setKeepRemote(event.target.checked)} /><span>Оставлять исходник на Raspberry Pi после скачивания</span></label>
             <p className="camera-download-dir" title={state?.preferences.download_dir}>Локальная папка: {state?.preferences.download_dir ?? "—"}</p>
           </section>
         </div>
@@ -273,7 +320,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
             </tbody>
           </table>
         </div>
-        <p className="camera-scope-note">Скачивание проходит через временный `.part` и проверку размера/SHA-256. Режим камеры серии и видео будут перенесены следующими checkpoint-ами Stage 6.</p>
+        <p className="camera-scope-note">Фото и завершённый MP4 скачиваются через временный `.part` с проверкой размера/SHA-256. Режим камеры серии будет перенесён следующим checkpoint Stage 6.</p>
       </article>
     </div>
   );
