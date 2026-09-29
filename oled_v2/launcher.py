@@ -449,7 +449,7 @@ def stability_smoke() -> int:
 
 
 def camera_smoke() -> int:
-    """Exercise the backend-owned camera session and cancellable frame stream."""
+    """Exercise camera connection, controls, capture, verified download and stream."""
     import threading
 
     from oled_app.camera.client import RemoteFile
@@ -459,6 +459,7 @@ def camera_smoke() -> int:
         def __init__(self, base_url: str, timeout_s: float, stream_timeout_s: float):
             self.base_url = base_url
             self.stop_calls = 0
+            self.files = [RemoteFile("smoke-1", "smoke.jpg", "photo", 16)]
 
         def health(self):
             return {"status": "ok", "service": "smoke-camera"}
@@ -470,10 +471,17 @@ def camera_smoke() -> int:
             return {"model": "Smoke Canon"}
 
         def capabilities(self):
-            return {"video_settings": {"resolution": ["640x480"]}}
+            return {
+                "photo_controls": [{
+                    "path": "/imageformat", "label": "JPEG", "current": "Fine JPEG",
+                    "choices": ["Fine JPEG", "Normal JPEG"],
+                }],
+                "exposure_controls": [],
+                "video_settings": {"resolution": ["640x480"]},
+            }
 
         def list_files(self):
-            return [RemoteFile("smoke-1", "smoke.jpg", "photo", 16)]
+            return list(self.files)
 
         def start_liveview(self, _settings):
             return {"success": True}
@@ -489,7 +497,27 @@ def camera_smoke() -> int:
             self.stop_calls += 1
             return {"success": True}
 
-    controller = CameraController(client_factory=SmokeCameraClient)
+        def save_liveview_snapshot(self, file_name, crop):
+            remote = RemoteFile("captured-1", f"{file_name or 'capture'}.jpg", "snapshot", 16)
+            self.files.append(remote)
+            return remote
+
+        def download_file(self, remote, output_dir, preferred_name=""):
+            target = Path(output_dir) / (preferred_name or remote.name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"verified-content")
+            return target
+
+        def delete_file(self, remote):
+            file_id = remote.file_id if isinstance(remote, RemoteFile) else str(remote)
+            self.files = [item for item in self.files if item.file_id != file_id]
+            return {"success": True}
+
+    download_root = tempfile.TemporaryDirectory(prefix="oled-v2-camera-smoke-")
+    controller = CameraController(
+        client_factory=SmokeCameraClient,
+        default_download_dir=download_root.name,
+    )
     try:
         connected = controller.connect("smoke-camera.local", 8765)
         controller.start_liveview()
@@ -501,6 +529,16 @@ def camera_smoke() -> int:
                 or len(connected["files"]) != 1 or streamed["frame_sequence"] != 1
                 or not controller.frame().startswith(b"\xff\xd8")):
             raise RuntimeError(f"Camera smoke failed: {streamed}")
+        controller.update_preferences(
+            {"/imageformat": "Normal JPEG"},
+            {"width_percent": 80, "height_percent": 70},
+            False,
+        )
+        captured = controller.capture("snapshot", "camera-smoke")
+        transfer = captured.get("last_transfer") or {}
+        if (not Path(str(transfer.get("local_file") or "")).is_file()
+                or transfer.get("remote_deleted") is not True):
+            raise RuntimeError(f"Camera capture smoke failed: {captured}")
         stopped = controller.stop_liveview()
         if stopped["liveview_active"]:
             raise RuntimeError("Camera smoke did not stop LiveView.")
@@ -509,10 +547,13 @@ def camera_smoke() -> int:
             "initialized": True,
             "remote_files": len(connected["files"]),
             "frame_sequence": streamed["frame_sequence"],
+            "capture_verified": True,
+            "remote_cleanup_verified": True,
             "liveview_stopped": True,
         }, ensure_ascii=False))
     finally:
         controller.shutdown()
+        download_root.cleanup()
     return 0
 
 

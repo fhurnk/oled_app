@@ -48,7 +48,10 @@ series journaling. Use `--ivl-smoke`, `--spectrum-smoke` and
 Checkpoint 16 starts Stage 6 in `oled_v2/camera.py` and
 `v2_frontend/src/CameraWorkspace.tsx`: the backend owns the Raspberry Pi
 camera connection, service status, remote-file list and cancellable LiveView;
-`--camera-smoke` verifies this lifecycle without physical hardware.
+`--camera-smoke` verifies this lifecycle without physical hardware. Checkpoint
+17 adds dynamic JPEG/exposure controls, centered crop preferences, preview and
+full-photo capture, verified download and explicit or post-download remote
+deletion. Video and series-bound guided camera workflows remain pending.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.

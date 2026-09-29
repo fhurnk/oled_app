@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from oled_app.constants import APP_VERSION
 from oled_app.camera.client import CameraClientError
-from oled_app.settings import load_app_settings
+from oled_app.settings import load_app_settings, save_app_settings
 
 from .config import API_SCHEMA_VERSION, SessionConfig
 from .camera import CameraController
@@ -83,7 +83,18 @@ def create_app(
         logger=logger,
         default_host=camera_defaults.get("host", "192.168.4.1"),
         default_port=camera_defaults.get("port", 8765),
+        default_download_dir=camera_defaults.get("download_dir", "camera_downloads"),
+        default_keep_remote=camera_defaults.get("keep_remote_files_after_download", True),
+        default_crop={
+            "width_percent": camera_defaults.get("crop_width_percent", 100.0),
+            "height_percent": camera_defaults.get("crop_height_percent", 100.0),
+        },
+        default_photo_settings={
+            **dict(camera_defaults.get("photo_quality_settings") or {}),
+            **dict(camera_defaults.get("photo_exposure_settings") or {}),
+        },
     )
+    camera_operation_gate = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -203,21 +214,23 @@ def create_app(
         values = payload or {}
         settings = load_app_settings().get("camera", {})
         try:
-            return await asyncio.to_thread(
-                camera_controller.connect,
-                values.get("host", settings.get("host", "192.168.4.1")),
-                values.get("port", settings.get("port", 8765)),
-                bool(values.get("initialize", True)),
-                float(settings.get("request_timeout_s", 8.0)),
-                float(settings.get("stream_timeout_s", 12.0)),
-            )
+            async with camera_operation_gate:
+                return await asyncio.to_thread(
+                    camera_controller.connect,
+                    values.get("host", settings.get("host", "192.168.4.1")),
+                    values.get("port", settings.get("port", 8765)),
+                    bool(values.get("initialize", True)),
+                    float(settings.get("request_timeout_s", 8.0)),
+                    float(settings.get("stream_timeout_s", 12.0)),
+                )
         except Exception as exc:
             raise camera_http_error(exc) from exc
 
     @app.post("/api/camera/refresh")
     async def camera_refresh(_client_id: str = Depends(require_controller)) -> dict:
         try:
-            return await asyncio.to_thread(camera_controller.refresh)
+            async with camera_operation_gate:
+                return await asyncio.to_thread(camera_controller.refresh)
         except Exception as exc:
             raise camera_http_error(exc) from exc
 
@@ -227,17 +240,19 @@ def create_app(
         _client_id: str = Depends(require_controller),
     ) -> dict:
         try:
-            return await asyncio.to_thread(
-                camera_controller.start_liveview,
-                (payload or {}).get("video_settings") or {},
-            )
+            async with camera_operation_gate:
+                return await asyncio.to_thread(
+                    camera_controller.start_liveview,
+                    (payload or {}).get("video_settings") or {},
+                )
         except Exception as exc:
             raise camera_http_error(exc) from exc
 
     @app.post("/api/camera/liveview/stop")
     async def camera_liveview_stop(_client_id: str = Depends(require_controller)) -> dict:
         try:
-            return await asyncio.to_thread(camera_controller.stop_liveview)
+            async with camera_operation_gate:
+                return await asyncio.to_thread(camera_controller.stop_liveview)
         except Exception as exc:
             raise camera_http_error(exc) from exc
 
@@ -251,7 +266,91 @@ def create_app(
 
     @app.post("/api/camera/disconnect")
     async def camera_disconnect(_client_id: str = Depends(require_controller)) -> dict:
-        return await asyncio.to_thread(camera_controller.disconnect)
+        async with camera_operation_gate:
+            return await asyncio.to_thread(camera_controller.disconnect)
+
+    @app.put("/api/camera/preferences")
+    async def camera_preferences(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            async with camera_operation_gate:
+                state = await asyncio.to_thread(
+                    camera_controller.update_preferences,
+                    values.get("photo_settings"),
+                    values.get("crop"),
+                    values.get("keep_remote_files"),
+                )
+                settings = load_app_settings()
+                camera_settings = dict(settings.get("camera") or {})
+                preferences = state["preferences"]
+                controls = state.get("capabilities") or {}
+                quality_paths = {
+                    str(item.get("path"))
+                    for item in controls.get("photo_controls", [])
+                    if isinstance(item, dict)
+                }
+                camera_settings.update({
+                    "crop_width_percent": preferences["crop"]["width_percent"],
+                    "crop_height_percent": preferences["crop"]["height_percent"],
+                    "keep_remote_files_after_download": preferences["keep_remote_files"],
+                    "photo_quality_settings": {
+                        path: value for path, value in preferences["photo_settings"].items()
+                        if path in quality_paths
+                    },
+                    "photo_exposure_settings": {
+                        path: value for path, value in preferences["photo_settings"].items()
+                        if path not in quality_paths
+                    },
+                })
+                settings["camera"] = camera_settings
+                await asyncio.to_thread(save_app_settings, settings)
+                return state
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/capture")
+    async def camera_capture(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(
+                    camera_controller.capture,
+                    str(values.get("kind") or "photo"),
+                    str(values.get("file_name") or ""),
+                    values.get("photo_settings"),
+                    values.get("crop"),
+                    values.get("keep_remote_files"),
+                )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/files/{file_id}/download")
+    async def camera_download(
+        file_id: str,
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(camera_controller.download, file_id)
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.delete("/api/camera/files/{file_id}")
+    async def camera_delete(
+        file_id: str,
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(camera_controller.delete, file_id)
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
 
     def series_http_error(exc: SeriesServiceError) -> HTTPException:
         if isinstance(exc, SeriesNotFoundError):

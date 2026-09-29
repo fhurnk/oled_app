@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+from pathlib import Path
 import threading
 from typing import Any, Callable, Optional
 
-from oled_app.camera.client import CameraClient, build_camera_service_url
+from oled_app.camera.client import (
+    CameraClient,
+    RemoteFile,
+    build_camera_service_url,
+    normalize_center_crop,
+)
 
 
 def _utc_now() -> str:
@@ -23,6 +29,10 @@ class CameraController:
         logger=None,
         default_host: str = "192.168.4.1",
         default_port: int = 8765,
+        default_download_dir: Path | str = "camera_downloads",
+        default_keep_remote: bool = True,
+        default_crop: Optional[dict[str, Any]] = None,
+        default_photo_settings: Optional[dict[str, str]] = None,
     ) -> None:
         try:
             initial_port = int(default_port)
@@ -37,6 +47,10 @@ class CameraController:
         self._stream_thread: Optional[threading.Thread] = None
         self._stream_stop = threading.Event()
         self._latest_frame: Optional[bytes] = None
+        try:
+            initial_crop = normalize_center_crop(default_crop)
+        except ValueError:
+            initial_crop = normalize_center_crop()
         self._state: dict[str, Any] = {
             "connected": False,
             "base_url": None,
@@ -51,6 +65,13 @@ class CameraController:
             "frame_sequence": 0,
             "frame_size": 0,
             "frame_received_at": None,
+            "preferences": {
+                "crop": initial_crop,
+                "photo_settings": dict(default_photo_settings or {}),
+                "keep_remote_files": bool(default_keep_remote),
+                "download_dir": str(Path(default_download_dir).expanduser()),
+            },
+            "last_transfer": None,
             "message": "Камера не подключена.",
             "error": None,
             "updated_at": _utc_now(),
@@ -63,6 +84,12 @@ class CameraController:
             state["health"] = dict(self._state["health"] or {}) or None
             state["camera_status"] = dict(self._state["camera_status"] or {}) or None
             state["capabilities"] = dict(self._state["capabilities"] or {}) or None
+            state["preferences"] = {
+                **self._state["preferences"],
+                "crop": dict(self._state["preferences"]["crop"]),
+                "photo_settings": dict(self._state["preferences"]["photo_settings"]),
+            }
+            state["last_transfer"] = dict(self._state["last_transfer"] or {}) or None
             return state
 
     def connect(
@@ -112,6 +139,11 @@ class CameraController:
 
         with self._lock:
             self._client = client
+            preferences = dict(self._state["preferences"])
+            preferences["photo_settings"] = self._resolve_photo_settings(
+                capabilities or {},
+                preferences["photo_settings"],
+            )
             self._state.update({
                 "connected": True,
                 "base_url": base_url,
@@ -122,6 +154,7 @@ class CameraController:
                 "camera_status": camera_status,
                 "capabilities": capabilities,
                 "files": files,
+                "preferences": preferences,
                 "message": "Сервис камеры подключён.",
                 "error": None,
                 "updated_at": _utc_now(),
@@ -133,16 +166,188 @@ class CameraController:
         try:
             health = client.health()
             camera_status = client.status()
+            capabilities = client.capabilities() if self.snapshot()["initialized"] else None
             files = [asdict(item) for item in client.list_files()]
         except Exception as exc:
             self._set_error("Не удалось обновить состояние камеры.", exc)
             raise
         with self._lock:
+            preferences = dict(self._state["preferences"])
+            preferences["photo_settings"] = self._resolve_photo_settings(
+                capabilities or {},
+                preferences["photo_settings"],
+            )
             self._state.update({
                 "health": health,
                 "camera_status": camera_status,
+                "capabilities": capabilities,
                 "files": files,
+                "preferences": preferences,
                 "message": "Состояние камеры обновлено.",
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
+
+    def update_preferences(
+        self,
+        photo_settings: Optional[dict[str, str]] = None,
+        crop: Optional[dict[str, Any]] = None,
+        keep_remote_files: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        existing = self.snapshot()["preferences"]
+        selected = self._validate_photo_settings(
+            photo_settings if photo_settings is not None else existing["photo_settings"]
+        )
+        normalized_crop = normalize_center_crop(crop or existing["crop"])
+        with self._lock:
+            current = self._state["preferences"]
+            self._state["preferences"] = {
+                **current,
+                "crop": normalized_crop,
+                "photo_settings": selected,
+                "keep_remote_files": (
+                    current["keep_remote_files"]
+                    if keep_remote_files is None
+                    else bool(keep_remote_files)
+                ),
+            }
+            self._state.update({
+                "message": "Параметры камеры сохранены.",
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
+
+    def capture(
+        self,
+        kind: str,
+        file_name: str = "",
+        photo_settings: Optional[dict[str, str]] = None,
+        crop: Optional[dict[str, Any]] = None,
+        keep_remote_files: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        if kind not in {"snapshot", "photo"}:
+            raise ValueError("Поддерживаются только preview-кадр и полноразмерное фото.")
+        client = self._require_client()
+        current = self.snapshot()
+        preferences = current["preferences"]
+        selected_settings = self._validate_photo_settings(
+            photo_settings if photo_settings is not None else preferences["photo_settings"]
+        )
+        selected_crop = normalize_center_crop(crop or preferences["crop"])
+        keep_remote = (
+            bool(preferences["keep_remote_files"])
+            if keep_remote_files is None
+            else bool(keep_remote_files)
+        )
+        if kind == "snapshot" and not current["liveview_active"]:
+            raise RuntimeError("Сначала запустите LiveView для сохранения preview-кадра.")
+
+        restart_liveview = kind == "photo" and current["liveview_active"]
+        if restart_liveview:
+            self.stop_liveview()
+        restart_error = ""
+        try:
+            remote = (
+                client.save_liveview_snapshot(str(file_name or "").strip(), selected_crop)
+                if kind == "snapshot"
+                else client.capture_photo(
+                    selected_settings,
+                    str(file_name or "").strip(),
+                    selected_crop,
+                )
+            )
+            local = client.download_file(remote, preferences["download_dir"])
+            deleted = False
+            delete_error = ""
+            if not keep_remote:
+                try:
+                    client.delete_file(remote)
+                    deleted = True
+                except Exception as exc:
+                    delete_error = str(exc)
+            try:
+                files = [asdict(item) for item in client.list_files()]
+            except Exception:
+                files = current["files"]
+            try:
+                camera_status = client.status()
+            except Exception:
+                camera_status = current["camera_status"]
+        except Exception as exc:
+            self._set_error("Не удалось создать или скачать файл камеры.", exc)
+            raise
+        finally:
+            if restart_liveview:
+                try:
+                    self.start_liveview()
+                except Exception as exc:
+                    restart_error = str(exc)
+                    self._set_error("Фото сохранено, но LiveView не удалось возобновить.", exc)
+
+        transfer = {
+            "action": kind,
+            "remote": asdict(remote),
+            "local_file": str(local),
+            "remote_deleted": deleted,
+            "delete_error": delete_error,
+            "completed_at": _utc_now(),
+        }
+        with self._lock:
+            self._state.update({
+                "files": files,
+                "camera_status": camera_status,
+                "last_transfer": transfer,
+                "message": (
+                    "Файл камеры скачан, но LiveView не удалось возобновить."
+                    if restart_error
+                    else "Файл камеры скачан и проверен."
+                ),
+                "error": delete_error or restart_error or None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
+
+    def download(self, file_id: str) -> dict[str, Any]:
+        client = self._require_client()
+        remote = self._remote_file(file_id, client)
+        preferences = self.snapshot()["preferences"]
+        try:
+            local = client.download_file(remote, preferences["download_dir"])
+        except Exception as exc:
+            self._set_error("Не удалось скачать файл камеры.", exc)
+            raise
+        transfer = {
+            "action": "download",
+            "remote": asdict(remote),
+            "local_file": str(local),
+            "remote_deleted": False,
+            "delete_error": "",
+            "completed_at": _utc_now(),
+        }
+        with self._lock:
+            self._state.update({
+                "last_transfer": transfer,
+                "message": "Файл скачан и проверен.",
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
+
+    def delete(self, file_id: str) -> dict[str, Any]:
+        client = self._require_client()
+        remote = self._remote_file(file_id, client)
+        try:
+            client.delete_file(remote)
+            files = [asdict(item) for item in client.list_files()]
+        except Exception as exc:
+            self._set_error("Не удалось удалить удалённый файл камеры.", exc)
+            raise
+        with self._lock:
+            self._state.update({
+                "files": files,
+                "message": f"Удалён файл {remote.name}.",
                 "error": None,
                 "updated_at": _utc_now(),
             })
@@ -273,6 +478,55 @@ class CameraController:
         if client is None:
             raise RuntimeError("Сначала подключитесь к сервису камеры.")
         return client
+
+    def _validate_photo_settings(self, requested: dict[str, str]) -> dict[str, str]:
+        with self._lock:
+            capabilities = self._state.get("capabilities") or {}
+        controls = {
+            str(item.get("path")): item
+            for group in ("photo_controls", "exposure_controls")
+            for item in capabilities.get(group, [])
+            if isinstance(item, dict) and item.get("path")
+        }
+        selected: dict[str, str] = {}
+        for path, raw_value in requested.items():
+            control = controls.get(str(path))
+            value = str(raw_value)
+            if control is None:
+                raise ValueError(f"Камера не поддерживает параметр {path}.")
+            choices = [str(item) for item in control.get("choices") or []]
+            if value not in choices:
+                raise ValueError(f"Недопустимое значение параметра {path}: {value}.")
+            selected[str(path)] = value
+        return selected
+
+    @staticmethod
+    def _resolve_photo_settings(
+        capabilities: dict[str, Any],
+        saved: dict[str, str],
+    ) -> dict[str, str]:
+        selected: dict[str, str] = {}
+        for group in ("photo_controls", "exposure_controls"):
+            for control in capabilities.get(group, []):
+                if not isinstance(control, dict):
+                    continue
+                path = str(control.get("path") or "")
+                choices = [str(item) for item in control.get("choices") or []]
+                if not path or not choices:
+                    continue
+                value = str(saved.get(path) or control.get("current") or choices[0])
+                selected[path] = value if value in choices else str(control.get("current") or choices[0])
+        return selected
+
+    def _remote_file(self, file_id: str, client: CameraClient) -> RemoteFile:
+        selected_id = str(file_id or "").strip()
+        if not selected_id:
+            raise ValueError("Не указан идентификатор удалённого файла.")
+        files = client.list_files()
+        remote = next((item for item in files if item.file_id == selected_id), None)
+        if remote is None:
+            raise ValueError("Удалённый файл больше не найден на Raspberry Pi.")
+        return remote
 
     def _set_error(self, message: str, exc: Exception) -> None:
         with self._lock:
