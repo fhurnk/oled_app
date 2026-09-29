@@ -2,7 +2,9 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, use
 
 import {
   type CameraState,
+  type CameraSeriesTarget,
   captureCameraFile,
+  clearCameraSeriesTarget,
   connectCamera,
   deleteCameraFile,
   disconnectCamera,
@@ -10,6 +12,7 @@ import {
   fetchCameraFrame,
   fetchCameraState,
   refreshCamera,
+  selectCameraSeriesTarget,
   startCameraRecording,
   startCameraLiveview,
   stopCameraRecording,
@@ -43,7 +46,15 @@ function formatDuration(startedAt: string | null | undefined): string {
     .join(":");
 }
 
-export default function CameraWorkspace({ onConnectionChanged }: {onConnectionChanged?: () => void}) {
+export default function CameraWorkspace({
+  initialTarget,
+  onConnectionChanged,
+  onTargetChanged
+}: {
+  initialTarget?: CameraSeriesTarget | null;
+  onConnectionChanged?: () => void;
+  onTargetChanged?: (target: CameraSeriesTarget | null) => void;
+}) {
   const [state, setState] = useState<CameraState | null>(null);
   const [host, setHost] = useState("192.168.4.1");
   const [port, setPort] = useState("8765");
@@ -60,6 +71,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
   const currentFrameUrl = useRef<string | null>(null);
   const connectionState = useRef<boolean | null>(null);
   const preferencesConnection = useRef<string | null>(null);
+  const appliedTarget = useRef("");
 
   const applyState = useCallback((next: CameraState) => {
     setState(next);
@@ -160,6 +172,14 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
     }
   }, [applyState]);
 
+  useEffect(() => {
+    if (!initialTarget) return;
+    const key = `${initialTarget.series_path}|${initialTarget.pixel_id}|${initialTarget.station}`;
+    if (appliedTarget.current === key) return;
+    appliedTarget.current = key;
+    void run(() => selectCameraSeriesTarget(initialTarget));
+  }, [initialTarget, run]);
+
   const cameraStatus = state?.camera_status ?? {};
   const health = state?.health ?? {};
   const qualityControls = (state?.capabilities?.photo_controls as Array<Record<string, unknown>> | undefined) ?? [];
@@ -170,6 +190,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
   ];
   const crop = {width_percent: Number(cropWidth), height_percent: Number(cropHeight)};
   const transfer = state?.last_transfer;
+  const seriesTarget = state?.series_target;
 
   const renderControls = (
     controls: Array<Record<string, unknown>>,
@@ -196,9 +217,9 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
       <article className="panel camera-connect-panel">
         <div className="panel__header">
           <div>
-            <p className="panel__eyebrow">Этап 6 · свободная камера</p>
-            <h2>Raspberry Pi camera service</h2>
-            <p className="panel__subtitle">Подключение, состояние сервиса, LiveView и список удалённых файлов без запуска измерения.</p>
+            <p className="panel__eyebrow">Этап 6 · {seriesTarget ? "камера серии" : "свободная камера"}</p>
+            <h2>{seriesTarget ? `${seriesTarget.station_label} · ${seriesTarget.pixel_id}` : "Raspberry Pi camera service"}</h2>
+            <p className="panel__subtitle">{seriesTarget ? `Медиа сохраняются в 04_CAMERA серии ${seriesTarget.series_name}.` : "Подключение, состояние сервиса, LiveView и список удалённых файлов без запуска измерения."}</p>
           </div>
           <StatusBadge tone={state?.connected ? "success" : state?.error || error ? "danger" : "neutral"}>
             {state?.connected ? "Подключена" : "Отключена"}
@@ -229,6 +250,27 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
         </div>
       </article>
 
+      {seriesTarget && (
+        <article className="panel camera-series-panel">
+          <div>
+            <p className="panel__eyebrow">Привязка к серии</p>
+            <h2>{seriesTarget.series_name}</h2>
+            <p>{seriesTarget.station_label} · пиксель <strong>{seriesTarget.pixel_id}</strong></p>
+            <small title={seriesTarget.session_dir ?? undefined}>{seriesTarget.session_dir ? `Сеанс: ${seriesTarget.session_dir}` : "Нумерованная папка 04_CAMERA будет создана при первом файле."}</small>
+          </div>
+          <div className="camera-series-actions">
+            <label className="field">
+              <span className="field__label">Станция</span>
+              <select className="select-input" disabled={busy || state?.recording_active} value={seriesTarget.station} onChange={(event) => {const target = {series_path: seriesTarget.series_path, pixel_id: seriesTarget.pixel_id, station: event.target.value as "ivl" | "stability"}; onTargetChanged?.(target); void run(() => selectCameraSeriesTarget(target));}}>
+                <option value="ivl">ВАЯХ</option>
+                <option value="stability">Стабильность</option>
+              </select>
+            </label>
+            <Button disabled={busy || state?.recording_active} onClick={() => {appliedTarget.current = ""; onTargetChanged?.(null); void run(clearCameraSeriesTarget);}} variant="ghost">Свободный режим</Button>
+          </div>
+        </article>
+      )}
+
       <div className="camera-main-grid">
         <article className="panel camera-preview-panel">
           <div className="panel__header">
@@ -251,7 +293,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
           </div>
           <div className="camera-capture-row">
             <label className="field">
-              <span className="field__label">Имя файла, необязательно</span>
+              <span className="field__label">{seriesTarget ? "Дополнение к имени, необязательно" : "Имя файла, необязательно"}</span>
               <input className="text-input" disabled={busy || !state?.connected || state?.recording_active} value={captureName} onChange={(event) => setCaptureName(event.target.value)} placeholder="например, sample_before" />
             </label>
             <div className="camera-actions">
@@ -277,6 +319,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
             <div><dt>Инициализация</dt><dd>{state?.initialized ? "готова" : "нет"}</dd></div>
             <div><dt>LiveView</dt><dd>{state?.liveview_active ? "активен" : "остановлен"}</dd></div>
             <div><dt>Видеозапись</dt><dd>{state?.recording_active ? formatDuration(state.recording_started_at) : "остановлена"}</dd></div>
+            <div><dt>Режим</dt><dd>{seriesTarget ? `Серия · ${seriesTarget.station_label}` : "Свободный"}</dd></div>
             <div><dt>Модель</dt><dd>{field(cameraStatus.camera_model ?? cameraStatus.model)}</dd></div>
             <div><dt>Удалённых файлов</dt><dd>{state?.files.length ?? 0}</dd></div>
           </dl>
@@ -300,7 +343,7 @@ export default function CameraWorkspace({ onConnectionChanged }: {onConnectionCh
             </div>
             <Button compact disabled={busy || state?.recording_active} onClick={() => {setCropWidth("100"); setCropHeight("100");}}>Сбросить 100 × 100%</Button>
             <label className="camera-checkbox"><input checked={keepRemote} disabled={busy || state?.recording_active} type="checkbox" onChange={(event) => setKeepRemote(event.target.checked)} /><span>Оставлять исходник на Raspberry Pi после скачивания</span></label>
-            <p className="camera-download-dir" title={state?.preferences.download_dir}>Локальная папка: {state?.preferences.download_dir ?? "—"}</p>
+            <p className="camera-download-dir" title={seriesTarget?.session_dir ?? state?.preferences.download_dir}>Локальная папка: {seriesTarget?.session_dir ?? state?.preferences.download_dir ?? "—"}</p>
           </section>
         </div>
       </article>

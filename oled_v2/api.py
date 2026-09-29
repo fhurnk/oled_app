@@ -94,6 +94,7 @@ def create_app(
             **dict(camera_defaults.get("photo_exposure_settings") or {}),
         },
         default_video_settings=dict(camera_defaults.get("video_camera_settings") or {}),
+        series_service=series_service,
     )
     camera_operation_gate = asyncio.Lock()
 
@@ -193,8 +194,12 @@ def create_app(
         }
 
     def camera_http_error(exc: Exception) -> HTTPException:
-        if isinstance(exc, ValueError):
+        if isinstance(exc, SeriesNotFoundError):
+            code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, (SeriesValidationError, ValueError)):
             code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        elif isinstance(exc, SeriesConflictError):
+            code = status.HTTP_409_CONFLICT
         elif isinstance(exc, CameraClientError):
             code = status.HTTP_502_BAD_GATEWAY
         elif isinstance(exc, RuntimeError):
@@ -358,6 +363,35 @@ def create_app(
         except Exception as exc:
             raise camera_http_error(exc) from exc
 
+    @app.put("/api/camera/series-target")
+    async def camera_series_target(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(
+                    camera_controller.select_series_target,
+                    {
+                        "series_path": values.get("series_path"),
+                        "pixel_id": values.get("pixel_id"),
+                    },
+                    str(values.get("station") or "ivl"),
+                )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.delete("/api/camera/series-target")
+    async def camera_series_target_clear(
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            async with camera_operation_gate:
+                return camera_controller.clear_series_target()
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
     @app.post("/api/camera/files/{file_id}/download")
     async def camera_download(
         file_id: str,
@@ -394,7 +428,8 @@ def create_app(
     async def series_mutation_guard(_client_id: str = Depends(require_controller)):
         async with operation_gate:
             if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
-                    or stability_controller.snapshot()["active"]):
+                    or stability_controller.snapshot()["active"]
+                    or camera_controller.snapshot()["recording_active"]):
                 raise HTTPException(status_code=409, detail="Завершите измерение перед изменением серии.")
             yield
 
@@ -418,13 +453,17 @@ def create_app(
         _client_id: str = Depends(require_controller),
     ) -> dict:
         try:
-            return await asyncio.to_thread(series_service.open_series, (payload or {}).get("path"))
+            result = await asyncio.to_thread(series_service.open_series, (payload or {}).get("path"))
+            camera_controller.clear_series_target()
+            return result
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 
     @app.post("/api/series/close", dependencies=[Depends(series_mutation_guard)])
     async def series_close(_client_id: str = Depends(require_controller)) -> dict:
-        return await asyncio.to_thread(series_service.close_series)
+        result = await asyncio.to_thread(series_service.close_series)
+        camera_controller.clear_series_target()
+        return result
 
     @app.post("/api/series/create", dependencies=[Depends(series_mutation_guard)], status_code=status.HTTP_201_CREATED)
     async def series_create(
@@ -432,7 +471,9 @@ def create_app(
         _client_id: str = Depends(require_controller),
     ) -> dict:
         try:
-            return await asyncio.to_thread(series_service.create_series, payload or {})
+            result = await asyncio.to_thread(series_service.create_series, payload or {})
+            camera_controller.clear_series_target()
+            return result
         except SeriesServiceError as exc:
             raise series_http_error(exc) from exc
 

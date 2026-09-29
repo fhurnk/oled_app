@@ -121,6 +121,39 @@ class BrokenCameraClient(FakeCameraClient):
         raise OSError("service offline")
 
 
+class FakeSeriesService:
+    def __init__(self, root: Path):
+        self.root = root
+        self.records: list[dict] = []
+        self.create_calls = 0
+
+    def camera_target(self, target, station):
+        return {
+            **target,
+            "series_name": "2026-09-29_camera",
+            "pixel_row": {"Pixel ID": target["pixel_id"]},
+            "station": station,
+            "station_label": "ВАЯХ" if station == "ivl" else "Стабильность",
+            "journal_type": "CAMERA_IVL" if station == "ivl" else "CAMERA_STABILITY",
+        }
+
+    def create_camera_session(self, target, station):
+        self.create_calls += 1
+        context = self.camera_target(target, station)
+        session = self.root / "04_CAMERA" / target["pixel_id"] / str(self.create_calls)
+        session.mkdir(parents=True)
+        return {**context, "session_dir": str(session)}
+
+    def record_camera_file(self, context, media_kind, file_path, remote_name, extra_params=None):
+        self.records.append({
+            "context": context,
+            "media_kind": media_kind,
+            "file_path": Path(file_path),
+            "remote_name": remote_name,
+            "extra_params": extra_params,
+        })
+
+
 class V2CameraControllerTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeCameraClient.instances.clear()
@@ -288,6 +321,45 @@ class V2CameraControllerTests(unittest.TestCase):
         self.assertFalse(state["connected"])
         self.assertFalse(state["recording_active"])
         self.assertTrue(Path(state["last_transfer"]["local_file"]).is_file())
+
+    def test_series_mode_reuses_numbered_session_and_journals_photo_and_video(self) -> None:
+        series = FakeSeriesService(Path(self.temp_dir.name) / "series")
+        controller = CameraController(
+            client_factory=FakeCameraClient,
+            default_download_dir=Path(self.temp_dir.name) / "free",
+            series_service=series,
+        )
+        try:
+            selected = controller.select_series_target(
+                {"series_path": str(series.root), "pixel_id": "Q1_1_1"},
+                "ivl",
+            )
+            self.assertEqual(selected["mode"], "series")
+            self.assertIsNone(selected["series_target"]["session_dir"])
+            controller.connect("camera.local", 8765)
+            controller.start_liveview()
+
+            photo = controller.capture("snapshot", "before")
+            photo_path = Path(photo["last_transfer"]["local_file"])
+            self.assertTrue(photo_path.is_file())
+            self.assertIn("Q1_1_1_ivl_snapshot_before_", photo_path.stem)
+            self.assertEqual(series.create_calls, 1)
+            self.assertEqual(series.records[-1]["media_kind"], "snapshot")
+
+            controller.start_recording(keep_remote_files=False)
+            video = controller.stop_recording()
+            video_path = Path(video["last_transfer"]["local_file"])
+            self.assertTrue(video_path.is_file())
+            self.assertIn("Q1_1_1_ivl_video_", video_path.stem)
+            self.assertEqual(series.create_calls, 1)
+            self.assertEqual([item["media_kind"] for item in series.records], ["snapshot", "video"])
+            self.assertEqual(video["series_target"]["session_dir"], str(photo_path.parent))
+
+            cleared = controller.clear_series_target()
+            self.assertEqual(cleared["mode"], "free")
+            self.assertIsNone(cleared["series_target"])
+        finally:
+            controller.shutdown()
 
 
 if __name__ == "__main__":

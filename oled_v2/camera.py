@@ -13,7 +13,9 @@ from oled_app.camera.client import (
     RemoteFile,
     build_camera_service_url,
     normalize_center_crop,
+    safe_capture_stem,
 )
+from oled_app.utils import safe_filename, timestamp_for_file
 
 
 def _utc_now() -> str:
@@ -34,6 +36,7 @@ class CameraController:
         default_crop: Optional[dict[str, Any]] = None,
         default_photo_settings: Optional[dict[str, str]] = None,
         default_video_settings: Optional[dict[str, str]] = None,
+        series_service=None,
     ) -> None:
         try:
             initial_port = int(default_port)
@@ -42,12 +45,14 @@ class CameraController:
         if not 1 <= initial_port <= 65535:
             initial_port = 8765
         self._client_factory = client_factory
+        self._series_service = series_service
         self._logger = logger
         self._lock = threading.RLock()
         self._client: Optional[CameraClient] = None
         self._stream_thread: Optional[threading.Thread] = None
         self._stream_stop = threading.Event()
         self._latest_frame: Optional[bytes] = None
+        self._recording_context: Optional[dict[str, Any]] = None
         try:
             initial_crop = normalize_center_crop(default_crop)
         except ValueError:
@@ -65,6 +70,8 @@ class CameraController:
             "liveview_active": False,
             "recording_active": False,
             "recording_started_at": None,
+            "mode": "free",
+            "series_target": None,
             "frame_sequence": 0,
             "frame_size": 0,
             "frame_received_at": None,
@@ -95,7 +102,44 @@ class CameraController:
                 "video_settings": dict(self._state["preferences"]["video_settings"]),
             }
             state["last_transfer"] = dict(self._state["last_transfer"] or {}) or None
+            state["series_target"] = dict(self._state["series_target"] or {}) or None
             return state
+
+    def select_series_target(self, target: dict[str, Any], station: str) -> dict[str, Any]:
+        if self.snapshot()["recording_active"]:
+            raise RuntimeError("Сначала завершите запись видео.")
+        if self._series_service is None:
+            raise RuntimeError("Режим камеры серии недоступен.")
+        context = self._series_service.camera_target(target, station)
+        public_target = {
+            key: context[key]
+            for key in ("series_path", "series_name", "pixel_id", "station", "station_label")
+        }
+        public_target["session_dir"] = None
+        with self._lock:
+            self._state.update({
+                "mode": "series",
+                "series_target": public_target,
+                "message": (
+                    f"Камера привязана к {context['station_label']} · {context['pixel_id']}."
+                ),
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
+
+    def clear_series_target(self) -> dict[str, Any]:
+        if self.snapshot()["recording_active"]:
+            raise RuntimeError("Сначала завершите запись видео.")
+        with self._lock:
+            self._state.update({
+                "mode": "free",
+                "series_target": None,
+                "message": "Включён свободный режим камеры.",
+                "error": None,
+                "updated_at": _utc_now(),
+            })
+        return self.snapshot()
 
     def connect(
         self,
@@ -271,21 +315,25 @@ class CameraController:
         if kind == "snapshot" and not current["liveview_active"]:
             raise RuntimeError("Сначала запустите LiveView для сохранения preview-кадра.")
 
+        series_context, output_dir, requested_name = self._capture_destination(
+            kind, str(file_name or "").strip()
+        )
+
         restart_liveview = kind == "photo" and current["liveview_active"]
         if restart_liveview:
             self.stop_liveview()
         restart_error = ""
         try:
             remote = (
-                client.save_liveview_snapshot(str(file_name or "").strip(), selected_crop)
+                client.save_liveview_snapshot(requested_name, selected_crop)
                 if kind == "snapshot"
                 else client.capture_photo(
                     selected_settings,
-                    str(file_name or "").strip(),
+                    requested_name,
                     selected_crop,
                 )
             )
-            local = client.download_file(remote, preferences["download_dir"])
+            local = client.download_file(remote, output_dir)
             deleted = False
             delete_error = ""
             if not keep_remote:
@@ -302,6 +350,14 @@ class CameraController:
                 camera_status = client.status()
             except Exception:
                 camera_status = current["camera_status"]
+            if series_context is not None:
+                self._series_service.record_camera_file(
+                    series_context,
+                    kind,
+                    local,
+                    remote.name,
+                    {"v2_camera_mode": "series"},
+                )
         except Exception as exc:
             self._set_error("Не удалось создать или скачать файл камеры.", exc)
             raise
@@ -320,6 +376,7 @@ class CameraController:
             "remote_deleted": deleted,
             "delete_error": delete_error,
             "completed_at": _utc_now(),
+            "series_target": self.snapshot().get("series_target"),
         }
         with self._lock:
             self._state.update({
@@ -400,6 +457,7 @@ class CameraController:
             if keep_remote_files is None
             else bool(keep_remote_files)
         )
+        series_context, output_dir, preferred_name = self._capture_destination("video", "")
         try:
             camera_status = client.start_recording(selected_settings, selected_crop)
         except Exception as exc:
@@ -422,6 +480,11 @@ class CameraController:
                 "error": None,
                 "updated_at": _utc_now(),
             })
+            self._recording_context = {
+                "series": series_context,
+                "output_dir": str(output_dir),
+                "preferred_name": f"{preferred_name}.mp4" if preferred_name else "",
+            }
         if not current["liveview_active"]:
             self._start_stream_reader(client, reset_frame=True)
         return self.snapshot()
@@ -432,6 +495,7 @@ class CameraController:
         if not current["recording_active"]:
             raise RuntimeError("Запись видео не запущена.")
         preferences = current["preferences"]
+        recording_context = dict(self._recording_context or {})
         try:
             remote = client.stop_recording()
         except Exception as exc:
@@ -447,7 +511,11 @@ class CameraController:
                 "updated_at": _utc_now(),
             })
         try:
-            local = client.download_file(remote, preferences["download_dir"])
+            local = client.download_file(
+                remote,
+                recording_context.get("output_dir") or preferences["download_dir"],
+                preferred_name=str(recording_context.get("preferred_name") or ""),
+            )
             deleted = False
             delete_error = ""
             if not preferences["keep_remote_files"]:
@@ -458,6 +526,15 @@ class CameraController:
                     delete_error = str(exc)
             files = [asdict(item) for item in client.list_files()]
             camera_status = client.status()
+            series_context = recording_context.get("series")
+            if series_context is not None:
+                self._series_service.record_camera_file(
+                    series_context,
+                    "video",
+                    local,
+                    remote.name,
+                    {"v2_camera_mode": "series"},
+                )
         except Exception as exc:
             try:
                 files = [asdict(item) for item in client.list_files()]
@@ -482,6 +559,7 @@ class CameraController:
             "remote_deleted": deleted,
             "delete_error": delete_error,
             "completed_at": _utc_now(),
+            "series_target": self.snapshot().get("series_target"),
         }
         with self._lock:
             self._state.update({
@@ -492,6 +570,7 @@ class CameraController:
                 "error": delete_error or None,
                 "updated_at": _utc_now(),
             })
+            self._recording_context = None
         return self.snapshot()
 
     def start_liveview(self, video_settings: Optional[dict[str, str]] = None) -> dict[str, Any]:
@@ -582,6 +661,7 @@ class CameraController:
         with self._lock:
             self._client = None
             self._latest_frame = None
+            self._recording_context = None
             self._state.update({
                 "connected": False,
                 "initialized": False,
@@ -636,6 +716,45 @@ class CameraController:
         if client is None:
             raise RuntimeError("Сначала подключитесь к сервису камеры.")
         return client
+
+    def _capture_destination(
+        self,
+        media_kind: str,
+        suffix: str,
+    ) -> tuple[Optional[dict[str, Any]], Path, str]:
+        state = self.snapshot()
+        target = state.get("series_target")
+        if state.get("mode") != "series" or not target:
+            return None, Path(state["preferences"]["download_dir"]), safe_capture_stem(suffix)
+        if self._series_service is None:
+            raise RuntimeError("Режим камеры серии недоступен.")
+        request = {
+            "series_path": target["series_path"],
+            "pixel_id": target["pixel_id"],
+        }
+        if target.get("session_dir"):
+            context = self._series_service.camera_target(request, target["station"])
+            context["session_dir"] = target["session_dir"]
+        else:
+            context = self._series_service.create_camera_session(request, target["station"])
+            with self._lock:
+                if self._state.get("series_target"):
+                    self._state["series_target"]["session_dir"] = context["session_dir"]
+                    self._state["updated_at"] = _utc_now()
+        parts = [
+            safe_filename(context["pixel_id"], fallback="pixel"),
+            context["station"],
+            safe_filename(media_kind, fallback="capture"),
+        ]
+        safe_suffix = safe_capture_stem(suffix)
+        if safe_suffix:
+            parts.append(safe_suffix)
+        parts.append(timestamp_for_file())
+        return (
+            context,
+            Path(context["session_dir"]),
+            safe_capture_stem("_".join(parts)),
+        )
 
     def _validate_photo_settings(self, requested: dict[str, str]) -> dict[str, str]:
         with self._lock:

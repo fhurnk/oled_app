@@ -223,12 +223,14 @@ export default function SeriesWorkspace({
   onSeriesChanged,
   onMeasureIvl,
   onMeasureSpectrum,
-  onMeasureStability
+  onMeasureStability,
+  onOpenCamera
 }: {
   onSeriesChanged?: () => void;
   onMeasureIvl?: (target: {series_path: string; pixel_id: string}) => void;
   onMeasureSpectrum?: (target: {series_path: string; pixel_id: string}) => void;
   onMeasureStability?: (target: {series_path: string; pixel_id: string}) => void;
+  onOpenCamera?: (target: {series_path: string; pixel_id: string; station: "ivl" | "stability"}) => void;
 }) {
   const [state, setState] = useState<SeriesState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -599,6 +601,8 @@ export default function SeriesWorkspace({
                     <div className="pixel-inspector__actions">
                       <Button compact onClick={() => onMeasureSpectrum?.({series_path: active.path, pixel_id: selectedPixel.pixel_id})}>Спектр выбранного пикселя · эмулятор</Button>
                       <Button compact disabled={!selectedPixel.last_ivl_file} onClick={() => onMeasureStability?.({series_path: active.path, pixel_id: selectedPixel.pixel_id})}>Стабильность · эмулятор</Button>
+                      <Button compact onClick={() => onOpenCamera?.({series_path: active.path, pixel_id: selectedPixel.pixel_id, station: "ivl"})}>Камера · ВАЯХ</Button>
+                      <Button compact disabled={!selectedPixel.last_ivl_file} onClick={() => onOpenCamera?.({series_path: active.path, pixel_id: selectedPixel.pixel_id, station: "stability"})}>Камера · стабильность</Button>
                       {!selectedPixel.last_spectrum_file && (
                         <>
                           <Button compact disabled={busy} onClick={() => void runAction(

@@ -528,10 +528,34 @@ def camera_smoke() -> int:
             self.files = [item for item in self.files if item.file_id != file_id]
             return {"success": True}
 
+    class SmokeSeriesService:
+        def __init__(self, root: Path):
+            self.root = root
+            self.records = []
+
+        def camera_target(self, target, station):
+            return {
+                **target, "series_name": "camera-smoke-series",
+                "pixel_row": {"Pixel ID": target["pixel_id"]},
+                "station": station, "station_label": "ВАЯХ",
+                "journal_type": "CAMERA_IVL",
+            }
+
+        def create_camera_session(self, target, station):
+            context = self.camera_target(target, station)
+            session = self.root / "04_CAMERA" / target["pixel_id"] / "1"
+            session.mkdir(parents=True, exist_ok=False)
+            return {**context, "session_dir": str(session)}
+
+        def record_camera_file(self, context, media_kind, file_path, remote_name, extra_params=None):
+            self.records.append((context, media_kind, Path(file_path), remote_name, extra_params))
+
     download_root = tempfile.TemporaryDirectory(prefix="oled-v2-camera-smoke-")
+    series_service = SmokeSeriesService(Path(download_root.name) / "series")
     controller = CameraController(
         client_factory=SmokeCameraClient,
         default_download_dir=download_root.name,
+        series_service=series_service,
     )
     try:
         connected = controller.connect("smoke-camera.local", 8765)
@@ -568,6 +592,17 @@ def camera_smoke() -> int:
                 or not Path(str(video_transfer.get("local_file") or "")).is_file()
                 or video_transfer.get("remote_deleted") is not True):
             raise RuntimeError(f"Camera video smoke failed: {video}")
+        controller.select_series_target(
+            {"series_path": str(series_service.root), "pixel_id": "SMOKE_1_1"},
+            "ivl",
+        )
+        series_capture = controller.capture("snapshot", "before")
+        series_transfer = series_capture.get("last_transfer") or {}
+        if (not Path(str(series_transfer.get("local_file") or "")).is_file()
+                or len(series_service.records) != 1
+                or series_service.records[0][1] != "snapshot"
+                or not (series_capture.get("series_target") or {}).get("session_dir")):
+            raise RuntimeError(f"Camera series smoke failed: {series_capture}")
         stopped = controller.stop_liveview()
         if stopped["liveview_active"]:
             raise RuntimeError("Camera smoke did not stop LiveView.")
@@ -579,6 +614,7 @@ def camera_smoke() -> int:
             "capture_verified": True,
             "remote_cleanup_verified": True,
             "video_verified": True,
+            "series_camera_verified": True,
             "liveview_stopped": True,
         }, ensure_ascii=False))
     finally:

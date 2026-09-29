@@ -34,6 +34,7 @@ from oled_app.series.metadata import (
     series_half_orientation,
 )
 from oled_app.settings import load_app_settings
+from oled_app.series.paths import ensure_camera_session_folder
 from oled_app.utils import resolve_series_file
 
 
@@ -541,6 +542,91 @@ class SeriesService:
                     "v2_run_id": result["run_id"],
                 },
                 notes=notes,
+            )
+
+    def camera_target(self, target: Dict[str, Any], station: Any) -> Dict[str, Any]:
+        """Resolve one active-series pixel for a camera station without writes."""
+
+        if not isinstance(target, dict) or set(target) != {"series_path", "pixel_id"}:
+            raise SeriesValidationError("Для камеры нужны папка серии и выбранный пиксель.")
+        station_key = str(station or "").strip().lower()
+        stations = {
+            "ivl": ("ВАЯХ", "CAMERA_IVL"),
+            "stability": ("Стабильность", "CAMERA_STABILITY"),
+        }
+        if station_key not in stations:
+            raise SeriesValidationError("Станция камеры должна быть ivl или stability.")
+        with self._lock:
+            manager = self._require_active_locked()
+            series_path = str(manager.series_folder.resolve())
+            if target.get("series_path") != series_path:
+                raise SeriesConflictError("Активная серия изменилась. Выберите пиксель заново.")
+            pixel_id = _clean_text(target.get("pixel_id"), "Пиксель", 160, True)
+            row = manager.journal.get_pixel(pixel_id)
+            if row is None:
+                raise SeriesNotFoundError(f"Пиксель не найден: {pixel_id}")
+            label, journal_type = stations[station_key]
+            return {
+                "series_path": series_path,
+                "series_name": manager.series_folder.name,
+                "pixel_id": pixel_id,
+                "pixel_row": row,
+                "station": station_key,
+                "station_label": label,
+                "journal_type": journal_type,
+            }
+
+    def create_camera_session(self, target: Dict[str, Any], station: Any) -> Dict[str, Any]:
+        """Create one compatible numbered 04_CAMERA folder for the selected target."""
+
+        context = self.camera_target(target, station)
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != context["series_path"]:
+                raise SeriesConflictError("Серия изменилась до создания сеанса камеры.")
+            session_dir = ensure_camera_session_folder(
+                manager.series_folder,
+                context["pixel_id"],
+                context["pixel_row"],
+            )
+            return {**context, "session_dir": str(session_dir.resolve())}
+
+    def record_camera_file(
+        self,
+        context: Dict[str, Any],
+        media_kind: str,
+        file_path: Path,
+        remote_name: str,
+        extra_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Append a camera artifact to the compatible measurements journal."""
+
+        with self._lock:
+            manager = self._require_active_locked()
+            if str(manager.series_folder.resolve()) != context.get("series_path"):
+                raise SeriesConflictError("Серия изменилась; файл камеры сохранён без записи в журнал.")
+            pixel_id = str(context.get("pixel_id") or "")
+            if manager.journal.get_pixel(pixel_id) is None:
+                raise SeriesNotFoundError(f"Пиксель не найден: {pixel_id}")
+            params = {
+                "station": context["station"],
+                "station_label": context["station_label"],
+                "pixel_id": pixel_id,
+                "media_kind": str(media_kind),
+                "remote_file": str(remote_name),
+                **dict(extra_params or {}),
+            }
+            manager.journal.update_after_measurement(
+                context["journal_type"],
+                pixel_id,
+                "CAPTURED",
+                Path(file_path),
+                params,
+                notes="Съёмка камеры v2, привязанная к станции и пикселю",
+            )
+            self._log(
+                f"Camera file recorded: {Path(file_path).name}; "
+                f"station={context['station']} pixel={pixel_id}"
             )
 
     def _validated_config_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:

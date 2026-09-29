@@ -14,6 +14,7 @@ import {
 } from "./design-system/components";
 import {
   type AppState,
+  type CameraSeriesTarget,
   type IvlTarget,
   type SpectrumTarget,
   type StabilityTarget,
@@ -58,6 +59,7 @@ function App() {
   const [ivlTarget, setIvlTarget] = useState<IvlTarget | null>(null);
   const [spectrumTarget, setSpectrumTarget] = useState<SpectrumTarget | null>(null);
   const [stabilityTarget, setStabilityTarget] = useState<StabilityTarget | null>(null);
+  const [cameraTarget, setCameraTarget] = useState<CameraSeriesTarget | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [appState, setAppState] = useState<AppState | null>(null);
   const [pocState, setPocState] = useState<PocState | null>(null);
@@ -300,7 +302,7 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера · свободный режим" : "Серии OLED"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
@@ -324,9 +326,9 @@ function App() {
         ) : activeView === "stability" ? (
           <StabilityWorkspace initialTarget={stabilityTarget} />
         ) : activeView === "camera" ? (
-          <CameraWorkspace onConnectionChanged={refreshAppState} />
+          <CameraWorkspace initialTarget={cameraTarget} onConnectionChanged={refreshAppState} onTargetChanged={setCameraTarget} />
         ) : activeView === "series" ? (
-            <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setStabilityTarget(target); setActiveView("stability"); }} onSeriesChanged={() => void refreshAppState()} />
+            <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (
             <>
           <div className={`connection-banner connection-banner--${loadState}`}>

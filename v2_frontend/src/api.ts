@@ -503,6 +503,15 @@ export type CameraState = {
   liveview_active: boolean;
   recording_active: boolean;
   recording_started_at: string | null;
+  mode: "free" | "series";
+  series_target: {
+    series_path: string;
+    series_name: string;
+    pixel_id: string;
+    station: "ivl" | "stability";
+    station_label: string;
+    session_dir: string | null;
+  } | null;
   frame_sequence: number;
   frame_size: number;
   frame_received_at: string | null;
@@ -520,6 +529,7 @@ export type CameraState = {
     remote_deleted: boolean;
     delete_error: string;
     completed_at: string;
+    series_target: CameraState["series_target"];
   } | null;
   message: string;
   error: string | null;
@@ -582,6 +592,17 @@ export const startCameraRecording = (
 });
 export const stopCameraRecording = () =>
   requestJson<CameraState>("/api/camera/video/stop", {method: "POST"});
+export type CameraSeriesTarget = {
+  series_path: string;
+  pixel_id: string;
+  station: "ivl" | "stability";
+};
+export const selectCameraSeriesTarget = (target: CameraSeriesTarget) =>
+  requestJson<CameraState>("/api/camera/series-target", {
+    method: "PUT", body: JSON.stringify(target)
+  });
+export const clearCameraSeriesTarget = () =>
+  requestJson<CameraState>("/api/camera/series-target", {method: "DELETE"});
 export async function fetchCameraFrame(): Promise<Blob> {
   const response = await fetch(`/api/camera/frame?sequence=${Date.now()}`, {
     cache: "no-store", headers: desktopHeaders()

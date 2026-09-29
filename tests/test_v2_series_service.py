@@ -81,6 +81,24 @@ class V2SeriesServiceTests(unittest.TestCase):
         self.assertEqual(cleared["queue_update"]["changed"], 4)
         self.assertEqual(cleared["active"]["metrics"]["spectrum_queue"], 0)
 
+    def test_camera_session_uses_compatible_tree_and_journals_media(self) -> None:
+        active = self.service.create_series(series_payload(self.root))["active"]
+        pixel_id = active["pixels"][0]["pixel_id"]
+        target = {"series_path": active["path"], "pixel_id": pixel_id}
+
+        context = self.service.create_camera_session(target, "ivl")
+        session_dir = Path(context["session_dir"])
+        photo = session_dir / f"{pixel_id}_ivl_photo_test.jpg"
+        photo.write_bytes(b"jpeg")
+        self.service.record_camera_file(context, "photo", photo, "remote.jpg")
+
+        self.assertEqual(session_dir.parts[-6], "04_CAMERA")
+        self.assertEqual(session_dir.name, "1")
+        state = self.service.state()
+        self.assertEqual(state["active"]["history"][-1]["type"], "CAMERA_IVL")
+        self.assertEqual(state["active"]["history"][-1]["pixel_id"], pixel_id)
+        self.assertIn(photo.name, state["active"]["history"][-1]["file"])
+
     def test_ivl_queue_starts_at_selected_pixel_and_skips_known_unusable(self) -> None:
         active = self.service.create_series(series_payload(self.root))["active"]
         pixels = active["pixels"]

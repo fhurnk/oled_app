@@ -2087,6 +2087,12 @@ select:focus-visible {
 .camera-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .camera-message { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); color: var(--color-text-muted); background: var(--color-surface-muted); font-size: 10px; }
 .camera-message--error { color: var(--color-danger); background: var(--color-danger-soft); }
+.camera-series-panel { display: flex; justify-content: space-between; gap: 18px; align-items: end; border-color: #acd2f5 !important; background: linear-gradient(135deg, var(--color-surface), #f3f9ff); }
+.camera-series-panel h2 { margin: 2px 0 5px; }
+.camera-series-panel p { margin: 0; color: var(--color-text); font-size: 10px; }
+.camera-series-panel small { display: block; max-width: 760px; margin-top: 6px; overflow: hidden; color: var(--color-text-muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.camera-series-actions { display: flex; gap: 10px; align-items: end; min-width: 300px; }
+.camera-series-actions .field { flex: 1; }
 .camera-main-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .65fr); gap: 16px; }
 .camera-preview { position: relative; display: grid; min-height: 390px; margin-top: 16px; overflow: hidden; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #101923; }
 .camera-image-stage { position: relative; display: block; max-width: 100%; max-height: 560px; line-height: 0; }
@@ -2134,4 +2140,5 @@ select:focus-visible {
 @media (max-width: 760px) {
   .camera-settings-grid { grid-template-columns: minmax(0,1fr); }
   .camera-recording { align-items: stretch; flex-direction: column; }
+  .camera-series-panel, .camera-series-actions { align-items: stretch; flex-direction: column; min-width: 0; }
 }
