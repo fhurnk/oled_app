@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  fetchSeriesState, fetchStabilityState, preflightStability, setStabilitySetpoint,
+  cancelGuidedCamera, continueGuidedCamera, fetchGuidedCameraState, finishGuidedCamera,
+  prepareGuidedCamera, fetchSeriesState, fetchStabilityState, preflightStability, setStabilitySetpoint,
   startStability, stopStability, type ActiveSeries, type StabilityPoint,
-  type StabilityPreflight, type StabilityState, type StabilityTarget
+  type GuidedCameraState, type StabilityPreflight, type StabilityState, type StabilityTarget
 } from "./api";
 import { Button, Notice, Panel } from "./design-system/components";
+import GuidedCameraPanel from "./GuidedCameraPanel";
 
 const fields: [string, string, string][] = [
   ["current_setpoint_mA", "Уставка тока, мА", "0.1"],
@@ -51,7 +53,7 @@ function StabilityChart({points}: {points: StabilityPoint[]}) {
   </div>;
 }
 
-export default function StabilityWorkspace({initialTarget = null}: {initialTarget?: StabilityTarget | null}) {
+export default function StabilityWorkspace({initialTarget = null, guidedCamera = false}: {initialTarget?: StabilityTarget | null; guidedCamera?: boolean}) {
   const [target, setTarget] = useState<StabilityTarget | null>(initialTarget);
   const [series, setSeries] = useState<ActiveSeries | null>(null);
   const [mode, setMode] = useState<"current" | "voltage">("current");
@@ -63,6 +65,8 @@ export default function StabilityWorkspace({initialTarget = null}: {initialTarge
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [guided, setGuided] = useState<GuidedCameraState | null>(null);
+  const [createTelemetry, setCreateTelemetry] = useState(true);
 
   useEffect(() => {
     let disposed = false, initialized = false, timer = 0;
@@ -92,6 +96,19 @@ export default function StabilityWorkspace({initialTarget = null}: {initialTarge
   }, []);
 
   useEffect(() => {
+    let disposed = false, timer = 0;
+    async function pollGuided() {
+      try {
+        const next = await fetchGuidedCameraState();
+        if (!disposed) setGuided(next);
+      } catch { /* main connection warning already covers backend loss */ }
+      finally { if (!disposed) timer = window.setTimeout(pollGuided, 500); }
+    }
+    void pollGuided();
+    return () => { disposed = true; window.clearTimeout(timer); };
+  }, []);
+
+  useEffect(() => {
     if (!state || state.active || !["completed", "stopped", "failed"].includes(state.status)) return;
     void fetchSeriesState().then((current) => setSeries(current.active)).catch(() => undefined);
   }, [state?.status, state?.active]);
@@ -117,9 +134,22 @@ export default function StabilityWorkspace({initialTarget = null}: {initialTarge
     try {
       if (kind === "stop") setState(await stopStability());
       else if (kind === "start" && preflight) {
-        setState(await startStability({...preflight.params, target: preflight.target, use_ivl_start_voltage: preflight.use_ivl_start_voltage}));
+        const measurement = {...preflight.params, target: preflight.target, use_ivl_start_voltage: preflight.use_ivl_start_voltage};
+        if (guidedCamera) setGuided(await prepareGuidedCamera("stability", measurement, createTelemetry));
+        else setState(await startStability(measurement));
         setPreflight(null);
       } else setPreflight(await preflightStability(payload()));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  }
+
+  async function guidedAction(kind: "continue" | "photo" | "skip" | "cancel") {
+    setBusy(true); setError("");
+    try {
+      setGuided(kind === "continue" ? await continueGuidedCamera()
+        : kind === "photo" ? await finishGuidedCamera(true)
+        : kind === "skip" ? await finishGuidedCamera(false)
+        : await cancelGuidedCamera());
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }
@@ -136,25 +166,29 @@ export default function StabilityWorkspace({initialTarget = null}: {initialTarge
 
   const latest = state?.latest_point;
   const unit = mode === "current" ? "мА" : "В";
+  const guidedActive = Boolean(guided?.active);
   return <section className="stability-workspace">
     <Notice title="Стабильность · эмулятор">Backend выполняет одиночный запуск, хранит live-точки и позволяет менять уставку без остановки. Для пикселя тестовой серии результат записывается в совместимый журнал; реальные приборы не включаются.</Notice>
+    {guidedCamera && <Notice tone="warning" title="Измерение с камерой">После проверки параметров приложение сделает фото до измерения, запишет стабильность на видео и предложит контрольное фото после.</Notice>}
     {!connected && <Notice tone="warning" title="Соединение восстанавливается">Измерение продолжает выполняться на сервере; экран восстановит состояние.</Notice>}
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
     <Panel>
       <h2>Параметры стабильности</h2>
-      <label>Пиксель <select disabled={busy || Boolean(state?.active)} value={target?.pixel_id ?? ""} onChange={(event) => {
+      <label>Пиксель <select disabled={busy || Boolean(state?.active) || guidedActive || guidedCamera} value={target?.pixel_id ?? ""} onChange={(event) => {
         setTarget(event.target.value && series ? {series_path: series.path, pixel_id: event.target.value} : null);
         setUseIvlStart(Boolean(event.target.value)); setPreflight(null);
       }}><option value="">Отдельный запуск SIM_STABILITY</option>{series?.pixels.filter((pixel) => pixel.last_ivl_file).map((pixel) => <option value={pixel.pixel_id} key={pixel.pixel_id}>{pixel.pixel_id} · {pixel.status}</option>)}</select></label>
       {!series && <p>Чтобы записать результат в журнал, откройте тестовую серию в разделе «Серия».</p>}
-      <label>Режим <select disabled={busy || Boolean(state?.active)} value={mode} onChange={(event) => { setMode(event.target.value as "current" | "voltage"); setPreflight(null); }}><option value="current">Удерживать ток</option><option value="voltage">Удерживать напряжение</option></select></label>
+      <label>Режим <select disabled={busy || Boolean(state?.active) || guidedActive} value={mode} onChange={(event) => { setMode(event.target.value as "current" | "voltage"); setPreflight(null); }}><option value="current">Удерживать ток</option><option value="voltage">Удерживать напряжение</option></select></label>
       {mode === "current" && target && <label className="ivl-checkbox"><input type="checkbox" checked={useIvlStart} disabled={busy || Boolean(state?.active)} onChange={(event) => { setUseIvlStart(event.target.checked); setPreflight(null); }} />Рассчитать старт как 90% напряжения последней ВАЯХ при выбранном токе</label>}
-      <fieldset className="ivl-fields" disabled={busy || Boolean(state?.active)}>
+      {guidedCamera && <label className="ivl-checkbox"><input type="checkbox" checked={createTelemetry} disabled={busy || guidedActive} onChange={(event) => setCreateTelemetry(event.target.checked)} />Создать рядом копию MP4 с показаниями стабильности</label>}
+      <fieldset className="ivl-fields" disabled={busy || Boolean(state?.active) || guidedActive}>
         {fields.filter(([key]) => mode === "current" ? key !== "voltage_setpoint_V" : !["current_setpoint_mA", "voltage_start"].includes(key)).map(([key, label, step]) => <label key={key}>{label}<input type="number" step={step} value={values[key] ?? ""} onChange={(event) => { setValues({...values, [key]: event.target.value}); setPreflight(null); }} /></label>)}
       </fieldset>
-      <div className="ivl-actions"><Button disabled={busy || !connected || state?.active || !Object.keys(values).length} onClick={() => void action("check")}>Проверить параметры</Button><Button variant="primary" disabled={busy || !connected || !preflight || state?.active} onClick={() => void action("start")}>Начать стабильность</Button><Button variant="danger" disabled={busy || !connected || !state?.active} onClick={() => void action("stop")}>Безопасно остановить</Button></div>
+      <div className="ivl-actions"><Button disabled={busy || !connected || state?.active || guidedActive || !Object.keys(values).length} onClick={() => void action("check")}>Проверить параметры</Button><Button variant="primary" disabled={busy || !connected || !preflight || state?.active || guidedActive} onClick={() => void action("start")}>{guidedCamera ? "Сделать фото до измерения" : "Начать стабильность"}</Button><Button variant="danger" disabled={busy || !connected || !state?.active} onClick={() => void action("stop")}>Безопасно остановить</Button></div>
       {preflight && <p>{preflight.note}<br />Стартовое напряжение: {preflight.effective_voltage_start.toFixed(3)} В{preflight.ivl_voltage_at_target != null ? ` — 90% от ${preflight.ivl_voltage_at_target.toFixed(3)} В по ВАЯХ` : ""}.<br />Папка результатов: {preflight.output_root}</p>}
     </Panel>
+    {guided && (guidedCamera || guided.station === "stability") && guided.status !== "idle" && <GuidedCameraPanel state={guided} busy={busy} onContinue={() => void guidedAction("continue")} onFinish={(takePhoto) => void guidedAction(takePhoto ? "photo" : "skip")} onCancel={() => void guidedAction("cancel")} />}
     {state?.active && <Panel><h2>Динамическая уставка</h2><p>Текущая цель: {state.current_setpoint?.toFixed(3)} {latest?.target_unit ?? unit}. Новое значение применяется backend без перезапуска.</p><div className="stability-setpoint"><input type="number" step="0.1" value={setpoint} onChange={(event) => setSetpoint(event.target.value)} />{[-1, -0.5, -0.25, -0.1, 0.1, 0.25, 0.5, 1].map((delta) => <Button compact disabled={busy || !connected} key={delta} onClick={() => void changeSetpoint((state.current_setpoint ?? 0) + delta)}>{delta > 0 ? "+" : ""}{delta}</Button>)}<Button variant="primary" disabled={busy || !connected || !Number.isFinite(Number(setpoint))} onClick={() => void changeSetpoint(Number(setpoint))}>Применить</Button></div></Panel>}
     <Panel>
       <h2>{labels[state?.status ?? "idle"] ?? state?.status} · {state?.pixel_id ?? "SIM_STABILITY"} · {state?.point_count ?? 0} точек</h2>

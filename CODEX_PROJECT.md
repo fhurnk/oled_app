@@ -53,12 +53,15 @@ camera connection, service status, remote-file list and cancellable LiveView;
 full-photo capture, verified download and explicit or post-download remote
 deletion. Checkpoint 18 adds dynamic Canon video controls, backend-owned MP4
 recording, live preview during recording, verified download, optional remote
-cleanup and automatic finalization before disconnect. The series-bound guided
-camera workflow remains pending. Checkpoint 19 adds a selected-series-pixel
+cleanup and automatic finalization before disconnect. Checkpoint 19 adds a selected-series-pixel
 camera mode for IVL or stability: compatible numbered `04_CAMERA` sessions,
 stable media names, shared photo/video folders and `CAMERA_IVL` /
-`CAMERA_STABILITY` journal history. Automatic measurement orchestration remains
-pending.
+`CAMERA_STABILITY` journal history. Checkpoint 20 adds backend-owned guided IVL
+and stability orchestration with before/after photos, video, recoverable
+operator confirmations, five-second stability post-roll, JSON/CSV clock
+sidecars and an optional unchanged-source telemetry-video copy. Stage 6 is now
+software-complete for simulator-first checks; Raspberry Pi/Canon validation is
+still pending.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -84,7 +87,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 5 stability controller: `oled_v2/stability.py`
 - v2 Stage 5 stability workspace: `v2_frontend/src/StabilityWorkspace.tsx`
 - v2 Stage 6 free-camera controller: `oled_v2/camera.py`
-- v2 Stage 6 free-camera workspace: `v2_frontend/src/CameraWorkspace.tsx`
+- v2 guided series-camera workflow: `oled_v2/camera_workflow.py`
+- v2 Stage 6 camera workspace: `v2_frontend/src/CameraWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { fetchIvlState, preflightIvl, startIvl, stopIvl, fetchSeriesState, decideIvlOpening, decideIvlQueue, type ActiveSeries, type IvlTarget, type IvlState, type IvlPreflight } from "./api";
+import { cancelGuidedCamera, continueGuidedCamera, fetchGuidedCameraState, finishGuidedCamera, prepareGuidedCamera, fetchIvlState, preflightIvl, startIvl, stopIvl, fetchSeriesState, decideIvlOpening, decideIvlQueue, type ActiveSeries, type GuidedCameraState, type IvlTarget, type IvlState, type IvlPreflight } from "./api";
 import { Button, Notice, Panel } from "./design-system/components";
+import GuidedCameraPanel from "./GuidedCameraPanel";
 import LivePocChart from "./LivePocChart";
 
 const fields: [string, string][] = [
@@ -20,7 +21,7 @@ const labels: Record<string, string> = {idle: "Ожидание", running: "Из
   completed: "Завершено", failed: "Ошибка", awaiting_opening: "Нужно напряжение открытия",
   awaiting_queue_decision: "Нужно решение по контакту"};
 
-export default function IvlWorkspace({initialTarget = null}: {initialTarget?: IvlTarget | null}) {
+export default function IvlWorkspace({initialTarget = null, guidedCamera = false}: {initialTarget?: IvlTarget | null; guidedCamera?: boolean}) {
   const [target, setTarget] = useState<IvlTarget | null>(initialTarget);
   const [seriesMode, setSeriesMode] = useState(false);
   const [skipNonworking, setSkipNonworking] = useState(false);
@@ -32,6 +33,7 @@ export default function IvlWorkspace({initialTarget = null}: {initialTarget?: Iv
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [guided, setGuided] = useState<GuidedCameraState | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -63,6 +65,19 @@ export default function IvlWorkspace({initialTarget = null}: {initialTarget?: Iv
   }, []);
 
   useEffect(() => {
+    let disposed = false, timer = 0;
+    async function pollGuided() {
+      try {
+        const next = await fetchGuidedCameraState();
+        if (!disposed) setGuided(next);
+      } catch { /* main connection warning already covers backend loss */ }
+      finally { if (!disposed) timer = window.setTimeout(pollGuided, 500); }
+    }
+    void pollGuided();
+    return () => { disposed = true; window.clearTimeout(timer); };
+  }, []);
+
+  useEffect(() => {
     if (!state || state.active || !["completed", "stopped", "failed"].includes(state.status)) return;
     void fetchSeriesState().then((current) => setSeries(current.active)).catch(() => undefined);
   }, [state?.status, state?.active]);
@@ -87,7 +102,10 @@ export default function IvlWorkspace({initialTarget = null}: {initialTarget?: Iv
       else if (kind === "stop") setState(await stopIvl());
       else if (kind === "start" && preflight) {
         const queue = preflight.queue ? {series_path: preflight.queue.series_path, start_pixel: preflight.queue.start_pixel, skip_nonworking: preflight.queue.skip_nonworking} : null;
-        setState(await startIvl({...preflight.params, target: preflight.target, queue})); setPreflight(null);
+        const measurement = {...preflight.params, target: preflight.target, queue};
+        if (guidedCamera) setGuided(await prepareGuidedCamera("ivl", measurement, false));
+        else setState(await startIvl(measurement));
+        setPreflight(null);
       }
       else {
         setPreflight(null);
@@ -100,13 +118,27 @@ export default function IvlWorkspace({initialTarget = null}: {initialTarget?: Iv
     finally { setBusy(false); }
   }
 
+  async function guidedAction(kind: "continue" | "photo" | "skip" | "cancel") {
+    setBusy(true); setError("");
+    try {
+      setGuided(kind === "continue" ? await continueGuidedCamera()
+        : kind === "photo" ? await finishGuidedCamera(true)
+        : kind === "skip" ? await finishGuidedCamera(false)
+        : await cancelGuidedCamera());
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  }
+
+  const guidedActive = Boolean(guided?.active);
+
   return <section className="ivl-workspace">
     <Notice title="ВАЯХ · эмулятор">Можно измерить выбранный пиксель тестовой серии или выполнить отдельный запуск SIM_IVL. Серийные результаты попадут в журнал с пометкой «ЭМУЛЯТОР v2». Реальные приборы не включаются.</Notice>
+    {guidedCamera && <Notice tone="warning" title="Измерение с камерой">После проверки параметров кнопка запуска сначала сделает фото. Само измерение начнётся только после вашего подтверждения и будет записано на видео.</Notice>}
     {!connected && <Notice tone="warning" title="Соединение восстанавливается">Состояние операции будет получено с сервера. Измерение продолжает выполняться при уходе с экрана.</Notice>}
     {error && <Notice tone="danger" title="Не удалось выполнить действие">{error}</Notice>}
     <Panel>
       <h2>Параметры ВАЯХ</h2>
-      <label>Режим <select disabled={busy || Boolean(state?.active) || !series} value={seriesMode ? "series" : "single"} onChange={(event) => {
+      <label>Режим <select disabled={busy || Boolean(state?.active) || guidedActive || !series || guidedCamera} value={seriesMode ? "series" : "single"} onChange={(event) => {
         const enabled = event.target.value === "series";
         setSeriesMode(enabled);
         if (enabled && !target && series?.pixels[0]) setTarget({series_path: series.path, pixel_id: series.pixels[0].pixel_id});
@@ -115,7 +147,7 @@ export default function IvlWorkspace({initialTarget = null}: {initialTarget?: Iv
         <option value="single">Один пиксель / SIM_IVL</option>
         <option value="series">Вся серия последовательно</option>
       </select></label>
-      <label>{seriesMode ? "Стартовый пиксель" : "Пиксель"} <select disabled={busy || Boolean(state?.active)} value={target?.pixel_id ?? ""} onChange={(event) => {
+      <label>{seriesMode ? "Стартовый пиксель" : "Пиксель"} <select disabled={busy || Boolean(state?.active) || guidedActive || guidedCamera} value={target?.pixel_id ?? ""} onChange={(event) => {
         setTarget(event.target.value && series ? {series_path: series.path, pixel_id: event.target.value} : null); setPreflight(null);
       }}>
         {!seriesMode && <option value="">Отдельный запуск SIM_IVL</option>}
@@ -124,16 +156,17 @@ export default function IvlWorkspace({initialTarget = null}: {initialTarget?: Iv
       {seriesMode && <label className="ivl-checkbox"><input disabled={busy || Boolean(state?.active)} type="checkbox" checked={skipNonworking} onChange={(event) => { setSkipNonworking(event.target.checked); setPreflight(null); }} />Пропускать пиксели со статусом NONWORKING или BURNED</label>}
       {target && <p>Серия: {target.series_path}</p>}
       {!series && <p>Чтобы выбрать пиксель серии, откройте её в разделе «Серия».</p>}
-      <fieldset className="ivl-fields" disabled={busy || Boolean(state?.active)}>
+      <fieldset className="ivl-fields" disabled={busy || Boolean(state?.active) || guidedActive}>
         {fields.map(([key, label]) => <label key={key}>{label}<input type="number" step={key.endsWith("points") ? "1" : "any"} value={state?.active && state.params ? String(state.params[key]) : values[key] ?? ""} onChange={(event) => { setValues({...values, [key]: event.target.value}); setPreflight(null); }} /></label>)}
       </fieldset>
       <div className="ivl-actions">
-        <Button disabled={busy || !connected || !Object.keys(values).length || state?.active} onClick={() => void action("check")}>Проверить параметры</Button>
-        <Button variant="primary" disabled={busy || !connected || !preflight || state?.active} onClick={() => void action("start")}>Начать ВАЯХ</Button>
+        <Button disabled={busy || !connected || !Object.keys(values).length || state?.active || guidedActive} onClick={() => void action("check")}>Проверить параметры</Button>
+        <Button variant="primary" disabled={busy || !connected || !preflight || state?.active || guidedActive} onClick={() => void action("start")}>{guidedCamera ? "Сделать фото до измерения" : "Начать ВАЯХ"}</Button>
         <Button variant="danger" disabled={busy || !connected || !state?.active || state.status === "processing"} onClick={() => void action("stop")}>Остановить</Button>
       </div>
       {preflight && <p>{preflight.note}<br />Папка результатов: {preflight.output_root}<br />{preflight.queue ? `Кандидатов от стартового пикселя: ${preflight.queue.candidate_count}; автопропуск: ${preflight.queue.skipped_pixels.length}. Калибровка определяется отдельно для каждого пикселя.` : `Коэффициент светимости: ${preflight.luminance_coefficient}. Спектральная калибровка: ${preflight.spectral_calibration ? "применяется" : "нет"}.`}</p>}
     </Panel>
+    {guided && (guidedCamera || guided.station === "ivl") && guided.status !== "idle" && <GuidedCameraPanel state={guided} busy={busy} onContinue={() => void guidedAction("continue")} onFinish={(takePhoto) => void guidedAction(takePhoto ? "photo" : "skip")} onCancel={() => void guidedAction("cancel")} />}
     {state?.decision?.kind === "opening_voltage" && <Panel>
       <h2>Напряжение открытия · {state.pixel_id}</h2>
       <p>{state.decision.message} Выходы SMU отключены; значение сохраняется в журнале.</p>

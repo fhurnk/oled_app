@@ -60,6 +60,7 @@ function App() {
   const [spectrumTarget, setSpectrumTarget] = useState<SpectrumTarget | null>(null);
   const [stabilityTarget, setStabilityTarget] = useState<StabilityTarget | null>(null);
   const [cameraTarget, setCameraTarget] = useState<CameraSeriesTarget | null>(null);
+  const [guidedCameraTarget, setGuidedCameraTarget] = useState<CameraSeriesTarget | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [appState, setAppState] = useState<AppState | null>(null);
   const [pocState, setPocState] = useState<PocState | null>(null);
@@ -320,15 +321,32 @@ function App() {
 
         <section className="content">
           {activeView === "ivl" ? (
-          <IvlWorkspace initialTarget={ivlTarget} />
+          <IvlWorkspace initialTarget={ivlTarget} guidedCamera={guidedCameraTarget?.station === "ivl"} />
         ) : activeView === "spectrum" ? (
           <SpectrumWorkspace initialTarget={spectrumTarget} />
         ) : activeView === "stability" ? (
-          <StabilityWorkspace initialTarget={stabilityTarget} />
+          <StabilityWorkspace initialTarget={stabilityTarget} guidedCamera={guidedCameraTarget?.station === "stability"} />
         ) : activeView === "camera" ? (
-          <CameraWorkspace initialTarget={cameraTarget} onConnectionChanged={refreshAppState} onTargetChanged={setCameraTarget} />
+          <CameraWorkspace
+            initialTarget={cameraTarget}
+            onConnectionChanged={refreshAppState}
+            onTargetChanged={(target) => {
+              setCameraTarget(target);
+              if (!target) setGuidedCameraTarget(null);
+            }}
+            onOpenMeasurement={(target) => {
+              setGuidedCameraTarget(target);
+              if (target.station === "ivl") {
+                setIvlTarget(target);
+                setActiveView("ivl");
+              } else {
+                setStabilityTarget(target);
+                setActiveView("stability");
+              }
+            }}
+          />
         ) : activeView === "series" ? (
-            <SeriesWorkspace onMeasureIvl={(target) => { setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={() => void refreshAppState()} />
+            <SeriesWorkspace onMeasureIvl={(target) => { setGuidedCameraTarget(null); setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setGuidedCameraTarget(null); setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setGuidedCameraTarget(null); setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (
             <>
           <div className={`connection-banner connection-banner--${loadState}`}>

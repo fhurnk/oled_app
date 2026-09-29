@@ -569,6 +569,11 @@ POST   /api/camera/video/start
 POST   /api/camera/video/stop
 PUT    /api/camera/series-target
 DELETE /api/camera/series-target
+GET    /api/camera/guided/state
+POST   /api/camera/guided/prepare
+POST   /api/camera/guided/continue
+POST   /api/camera/guided/finish
+POST   /api/camera/guided/cancel
 
 POST   /api/reports/build
 POST   /api/recalculation/luminance
@@ -773,7 +778,7 @@ workflow на этом этапе не запускались.
 
 ### Этап 6. Камера
 
-Статус: выполняется, checkpoint 19. Свободный режим подключает и инициализирует
+Статус: simulator-first завершён в checkpoint 20. Свободный режим подключает и инициализирует
 существующий Raspberry Pi HTTP-сервис, показывает состояние, список файлов и
 LiveView; backend владеет клиентом и безопасно закрывает поток. Уже перенесены
 динамические настройки JPEG/экспозиции, кроп, фото, проверенное скачивание и
@@ -781,7 +786,10 @@ LiveView; backend владеет клиентом и безопасно закр
 проверенной загрузкой и финализацией перед отключением. Камера серии принимает
 пиксель из инспектора, выбирает ВАЯХ или стабильность, создаёт отдельный
 нумерованный сеанс `04_CAMERA` и записывает фото/видео в совместимый журнал.
-Автоматический запуск измерения и телеметрическая копия остаются в работе.
+Backend сопровождает фото до/после, видео вместе с ВАЯХ или стабильностью,
+операторские подтверждения, пятисекундный post-roll, JSON/CSV timeline и
+необязательную телеметрическую копию. Реальная Raspberry Pi/Canon остаётся для
+аппаратной приёмки этапа 9.
 
 - свободный режим;
 - режим серии;

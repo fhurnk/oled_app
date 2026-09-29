@@ -18,6 +18,7 @@ from oled_app.settings import load_app_settings, save_app_settings
 
 from .config import API_SCHEMA_VERSION, SessionConfig
 from .camera import CameraController
+from .camera_workflow import GuidedCameraWorkflow
 from .logging_setup import log_directory
 from .poc import PocBusyError, PocController
 from .ivl import IvlController
@@ -96,6 +97,12 @@ def create_app(
         default_video_settings=dict(camera_defaults.get("video_camera_settings") or {}),
         series_service=series_service,
     )
+    guided_camera = GuidedCameraWorkflow(
+        camera_controller,
+        ivl_controller,
+        stability_controller,
+        logger=logger,
+    )
     camera_operation_gate = asyncio.Lock()
 
     @asynccontextmanager
@@ -105,6 +112,7 @@ def create_app(
         try:
             yield
         finally:
+            await asyncio.to_thread(guided_camera.shutdown)
             await asyncio.to_thread(ivl_controller.shutdown)
             await asyncio.to_thread(spectrum_controller.shutdown)
             await asyncio.to_thread(stability_controller.shutdown)
@@ -126,6 +134,7 @@ def create_app(
     app.state.spectrum_controller = spectrum_controller
     app.state.stability_controller = stability_controller
     app.state.camera_controller = camera_controller
+    app.state.guided_camera = guided_camera
     app.state.poc_controller = poc_controller
     app.state.series_service = series_service
     app.state.started_at = _utc_now()
@@ -188,7 +197,7 @@ def create_app(
             "series": series_service.app_summary(),
             "migration": {
                 "stage": 6,
-                "status": "stage_6_free_camera_in_progress",
+                "status": "stage_6_guided_camera_simulator_complete",
                 "tkinter_default_preserved": True,
             },
         }
@@ -208,6 +217,10 @@ def create_app(
             code = status.HTTP_502_BAD_GATEWAY
         return HTTPException(status_code=code, detail=str(exc))
 
+    def require_guided_camera_idle() -> None:
+        if guided_camera.snapshot()["active"]:
+            raise RuntimeError("Завершите сопровождаемый сценарий камеры.")
+
     @app.get("/api/camera/state")
     async def camera_state(_client_id: str = Depends(require_controller)) -> dict:
         return camera_controller.snapshot()
@@ -221,6 +234,7 @@ def create_app(
         settings = load_app_settings().get("camera", {})
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(
                     camera_controller.connect,
                     values.get("host", settings.get("host", "192.168.4.1")),
@@ -236,6 +250,7 @@ def create_app(
     async def camera_refresh(_client_id: str = Depends(require_controller)) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(camera_controller.refresh)
         except Exception as exc:
             raise camera_http_error(exc) from exc
@@ -247,6 +262,7 @@ def create_app(
     ) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(
                     camera_controller.start_liveview,
                     (payload or {}).get("video_settings"),
@@ -258,6 +274,7 @@ def create_app(
     async def camera_liveview_stop(_client_id: str = Depends(require_controller)) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(camera_controller.stop_liveview)
         except Exception as exc:
             raise camera_http_error(exc) from exc
@@ -273,6 +290,7 @@ def create_app(
     @app.post("/api/camera/disconnect")
     async def camera_disconnect(_client_id: str = Depends(require_controller)) -> dict:
         async with camera_operation_gate:
+            require_guided_camera_idle()
             return await asyncio.to_thread(camera_controller.disconnect)
 
     @app.put("/api/camera/preferences")
@@ -283,6 +301,7 @@ def create_app(
         values = payload or {}
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 state = await asyncio.to_thread(
                     camera_controller.update_preferences,
                     values.get("photo_settings"),
@@ -327,6 +346,7 @@ def create_app(
         values = payload or {}
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(
                     camera_controller.capture,
                     str(values.get("kind") or "photo"),
@@ -346,6 +366,7 @@ def create_app(
         values = payload or {}
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(
                     camera_controller.start_recording,
                     values.get("video_settings"),
@@ -359,6 +380,7 @@ def create_app(
     async def camera_video_stop(_client_id: str = Depends(require_controller)) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(camera_controller.stop_recording)
         except Exception as exc:
             raise camera_http_error(exc) from exc
@@ -371,6 +393,7 @@ def create_app(
         values = payload or {}
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(
                     camera_controller.select_series_target,
                     {
@@ -388,6 +411,7 @@ def create_app(
     ) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return camera_controller.clear_series_target()
         except Exception as exc:
             raise camera_http_error(exc) from exc
@@ -399,6 +423,7 @@ def create_app(
     ) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(camera_controller.download, file_id)
         except Exception as exc:
             raise camera_http_error(exc) from exc
@@ -410,9 +435,59 @@ def create_app(
     ) -> dict:
         try:
             async with camera_operation_gate:
+                require_guided_camera_idle()
                 return await asyncio.to_thread(camera_controller.delete, file_id)
         except Exception as exc:
             raise camera_http_error(exc) from exc
+
+    @app.get("/api/camera/guided/state")
+    async def camera_guided_state(_client_id: str = Depends(require_controller)) -> dict:
+        return guided_camera.snapshot()
+
+    @app.post("/api/camera/guided/prepare")
+    async def camera_guided_prepare(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        values = payload or {}
+        try:
+            async with operation_gate, camera_operation_gate:
+                require_hardware_idle()
+                return await asyncio.to_thread(
+                    guided_camera.prepare,
+                    str(values.get("station") or ""),
+                    values.get("measurement") or {},
+                    bool(values.get("create_telemetry", True)),
+                )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/guided/continue")
+    async def camera_guided_continue(_client_id: str = Depends(require_controller)) -> dict:
+        try:
+            async with operation_gate, camera_operation_gate:
+                require_hardware_idle(allow_guided=True)
+                return await asyncio.to_thread(guided_camera.continue_measurement)
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/guided/finish")
+    async def camera_guided_finish(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            async with camera_operation_gate:
+                return await asyncio.to_thread(
+                    guided_camera.finish,
+                    bool((payload or {}).get("take_photo", True)),
+                )
+        except Exception as exc:
+            raise camera_http_error(exc) from exc
+
+    @app.post("/api/camera/guided/cancel")
+    async def camera_guided_cancel(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(guided_camera.cancel)
 
     def series_http_error(exc: SeriesServiceError) -> HTTPException:
         if isinstance(exc, SeriesNotFoundError):
@@ -429,7 +504,8 @@ def create_app(
         async with operation_gate:
             if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
                     or stability_controller.snapshot()["active"]
-                    or camera_controller.snapshot()["recording_active"]):
+                    or camera_controller.snapshot()["recording_active"]
+                    or guided_camera.snapshot()["active"]):
                 raise HTTPException(status_code=409, detail="Завершите измерение перед изменением серии.")
             yield
 
@@ -521,10 +597,11 @@ def create_app(
             raise series_http_error(exc) from exc
         return FileResponse(str(thumbnail), media_type="image/png", headers=SECURITY_HEADERS)
 
-    def require_hardware_idle():
+    def require_hardware_idle(allow_guided: bool = False):
         if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
                 or stability_controller.snapshot()["active"]
-                or poc_controller.snapshot(False)["active"]):
+                or poc_controller.snapshot(False)["active"]
+                or (guided_camera.snapshot()["active"] and not allow_guided)):
             raise HTTPException(status_code=409, detail="Дождитесь завершения текущей операции.")
 
     @app.get("/api/ivl/state")

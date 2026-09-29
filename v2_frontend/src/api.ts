@@ -603,6 +603,49 @@ export const selectCameraSeriesTarget = (target: CameraSeriesTarget) =>
   });
 export const clearCameraSeriesTarget = () =>
   requestJson<CameraState>("/api/camera/series-target", {method: "DELETE"});
+export type GuidedCameraState = {
+  workflow_id: string | null;
+  status: string;
+  active: boolean;
+  station: "ivl" | "stability" | null;
+  target: {series_path: string; pixel_id: string} | null;
+  measurement_run_id: string | null;
+  measurement_status: string | null;
+  measurement_result: Record<string, unknown> | null;
+  before_photo: string | null;
+  video_file: string | null;
+  sync_file: string | null;
+  timeline_file: string | null;
+  telemetry_file: string | null;
+  telemetry_error: string | null;
+  after_photo: string | null;
+  postroll_remaining_s: number;
+  create_telemetry: boolean;
+  cancel_requested: boolean;
+  message: string;
+  error: string | null;
+  started_at: string | null;
+  updated_at: string;
+  finished_at: string | null;
+};
+export const fetchGuidedCameraState = () =>
+  requestJson<GuidedCameraState>("/api/camera/guided/state");
+export const prepareGuidedCamera = (
+  station: "ivl" | "stability",
+  measurement: IvlInput | StabilityInput,
+  createTelemetry = true
+) => requestJson<GuidedCameraState>("/api/camera/guided/prepare", {
+  method: "POST",
+  body: JSON.stringify({station, measurement, create_telemetry: createTelemetry})
+});
+export const continueGuidedCamera = () =>
+  requestJson<GuidedCameraState>("/api/camera/guided/continue", {method: "POST"});
+export const finishGuidedCamera = (takePhoto: boolean) =>
+  requestJson<GuidedCameraState>("/api/camera/guided/finish", {
+    method: "POST", body: JSON.stringify({take_photo: takePhoto})
+  });
+export const cancelGuidedCamera = () =>
+  requestJson<GuidedCameraState>("/api/camera/guided/cancel", {method: "POST"});
 export async function fetchCameraFrame(): Promise<Blob> {
   const response = await fetch(`/api/camera/frame?sequence=${Date.now()}`, {
     cache: "no-store", headers: desktopHeaders()

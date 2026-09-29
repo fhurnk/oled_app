@@ -355,6 +355,14 @@ class V2CameraControllerTests(unittest.TestCase):
             self.assertEqual([item["media_kind"] for item in series.records], ["snapshot", "video"])
             self.assertEqual(video["series_target"]["session_dir"], str(photo_path.parent))
 
+            telemetry = photo_path.parent / "video_telemetry.mp4"
+            telemetry.write_bytes(b"telemetry")
+            controller.record_series_derivative(
+                telemetry, "video_telemetry", video_path.name, {"measurement_file": "stability.xlsx"}
+            )
+            self.assertEqual(series.records[-1]["media_kind"], "video_telemetry")
+            self.assertTrue(series.records[-1]["extra_params"]["derived"])
+
             cleared = controller.clear_series_target()
             self.assertEqual(cleared["mode"], "free")
             self.assertIsNone(cleared["series_target"])

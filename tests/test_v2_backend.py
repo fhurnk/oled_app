@@ -103,7 +103,7 @@ class V2LoopbackBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["application"]["version"], APP_VERSION)
         self.assertEqual(payload["backend"]["bound_host"], "127.0.0.1")
-        self.assertEqual(payload["migration"]["status"], "stage_6_free_camera_in_progress")
+        self.assertEqual(payload["migration"]["status"], "stage_6_guided_camera_simulator_complete")
         self.assertTrue(payload["migration"]["tkinter_default_preserved"])
 
         with self.request("/api/camera/state", headers) as response:

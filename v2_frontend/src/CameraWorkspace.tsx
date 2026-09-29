@@ -49,11 +49,13 @@ function formatDuration(startedAt: string | null | undefined): string {
 export default function CameraWorkspace({
   initialTarget,
   onConnectionChanged,
-  onTargetChanged
+  onTargetChanged,
+  onOpenMeasurement
 }: {
   initialTarget?: CameraSeriesTarget | null;
   onConnectionChanged?: () => void;
   onTargetChanged?: (target: CameraSeriesTarget | null) => void;
+  onOpenMeasurement?: (target: CameraSeriesTarget) => void;
 }) {
   const [state, setState] = useState<CameraState | null>(null);
   const [host, setHost] = useState("192.168.4.1");
@@ -259,6 +261,7 @@ export default function CameraWorkspace({
             <small title={seriesTarget.session_dir ?? undefined}>{seriesTarget.session_dir ? `Сеанс: ${seriesTarget.session_dir}` : "Нумерованная папка 04_CAMERA будет создана при первом файле."}</small>
           </div>
           <div className="camera-series-actions">
+            <Button disabled={busy || !state?.connected || !state.initialized || state.recording_active} onClick={() => onOpenMeasurement?.({series_path: seriesTarget.series_path, pixel_id: seriesTarget.pixel_id, station: seriesTarget.station})} variant="primary">Настроить измерение с камерой</Button>
             <label className="field">
               <span className="field__label">Станция</span>
               <select className="select-input" disabled={busy || state?.recording_active} value={seriesTarget.station} onChange={(event) => {const target = {series_path: seriesTarget.series_path, pixel_id: seriesTarget.pixel_id, station: event.target.value as "ivl" | "stability"}; onTargetChanged?.(target); void run(() => selectCameraSeriesTarget(target));}}>
@@ -363,7 +366,7 @@ export default function CameraWorkspace({
             </tbody>
           </table>
         </div>
-        <p className="camera-scope-note">Фото и завершённый MP4 скачиваются через временный `.part` с проверкой размера/SHA-256. Режим камеры серии будет перенесён следующим checkpoint Stage 6.</p>
+        <p className="camera-scope-note">Фото и завершённый MP4 скачиваются через временный `.part` с проверкой размера/SHA-256. Сопровождаемый режим продолжает работу в backend при переходе на экран измерения.</p>
       </article>
     </div>
   );

@@ -454,6 +454,7 @@ def camera_smoke() -> int:
 
     from oled_app.camera.client import RemoteFile
     from .camera import CameraController
+    from .camera_workflow import GuidedCameraWorkflow
 
     class SmokeCameraClient:
         def __init__(self, base_url: str, timeout_s: float, stream_timeout_s: float):
@@ -517,6 +518,13 @@ def camera_smoke() -> int:
             self.files.append(remote)
             return remote
 
+        def capture_photo(self, _settings, file_name, _crop):
+            remote = RemoteFile(
+                f"photo-{len(self.files)}", f"{file_name or 'photo'}.jpg", "photo", 16
+            )
+            self.files.append(remote)
+            return remote
+
         def download_file(self, remote, output_dir, preferred_name=""):
             target = Path(output_dir) / (preferred_name or remote.name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -549,6 +557,36 @@ def camera_smoke() -> int:
 
         def record_camera_file(self, context, media_kind, file_path, remote_name, extra_params=None):
             self.records.append((context, media_kind, Path(file_path), remote_name, extra_params))
+
+    class SmokeMeasurement:
+        def __init__(self):
+            self.state = {"active": False, "status": "idle", "run_id": None, "result": None}
+
+        def preflight(self, payload):
+            return {"target": payload.get("target")}
+
+        def start(self, _payload):
+            self.state = {
+                "active": True, "status": "running", "run_id": "camera-smoke-guided",
+                "result": None,
+            }
+            threading.Thread(target=self._complete, daemon=True).start()
+            return dict(self.state)
+
+        def _complete(self):
+            time.sleep(0.03)
+            self.state = {
+                "active": False, "status": "completed", "run_id": "camera-smoke-guided",
+                "result": {"status": "WORKING", "file": "smoke.xlsx", "events": []},
+            }
+
+        def snapshot(self):
+            return dict(self.state)
+
+        def stop(self):
+            self.state["active"] = False
+            self.state["status"] = "stopped"
+            return dict(self.state)
 
     download_root = tempfile.TemporaryDirectory(prefix="oled-v2-camera-smoke-")
     series_service = SmokeSeriesService(Path(download_root.name) / "series")
@@ -603,6 +641,21 @@ def camera_smoke() -> int:
                 or series_service.records[0][1] != "snapshot"
                 or not (series_capture.get("series_target") or {}).get("session_dir")):
             raise RuntimeError(f"Camera series smoke failed: {series_capture}")
+        measurement = SmokeMeasurement()
+        guided = GuidedCameraWorkflow(controller, measurement, measurement)
+        guided.prepare("ivl", {
+            "target": {"series_path": str(series_service.root), "pixel_id": "SMOKE_1_1"},
+        }, create_telemetry=False)
+        guided.continue_measurement()
+        deadline = time.monotonic() + 3.0
+        while guided.snapshot()["status"] != "awaiting_after_photo" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        guided_result = guided.finish(True)
+        if (guided_result["status"] != "completed"
+                or not Path(str(guided_result.get("before_photo") or "")).is_file()
+                or not Path(str(guided_result.get("video_file") or "")).is_file()
+                or not Path(str(guided_result.get("after_photo") or "")).is_file()):
+            raise RuntimeError(f"Guided camera smoke failed: {guided_result}")
         stopped = controller.stop_liveview()
         if stopped["liveview_active"]:
             raise RuntimeError("Camera smoke did not stop LiveView.")
@@ -615,6 +668,7 @@ def camera_smoke() -> int:
             "remote_cleanup_verified": True,
             "video_verified": True,
             "series_camera_verified": True,
+            "guided_camera_verified": True,
             "liveview_stopped": True,
         }, ensure_ascii=False))
     finally:

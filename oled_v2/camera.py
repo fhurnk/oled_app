@@ -141,6 +141,39 @@ class CameraController:
             })
         return self.snapshot()
 
+    def record_series_derivative(
+        self,
+        file_path: Path,
+        media_kind: str,
+        source_name: str,
+        extra_params: Optional[dict[str, Any]] = None,
+    ) -> Path:
+        """Journal a locally derived file in the active camera series session."""
+
+        state = self.snapshot()
+        target = state.get("series_target")
+        if state.get("mode") != "series" or not target or not target.get("session_dir"):
+            raise RuntimeError("Активный сеанс камеры серии не найден.")
+        if self._series_service is None:
+            raise RuntimeError("Режим камеры серии недоступен.")
+        local = Path(file_path).resolve()
+        session_dir = Path(target["session_dir"]).resolve()
+        if local.parent != session_dir or not local.is_file():
+            raise RuntimeError("Производный файл камеры должен находиться в текущем сеансе серии.")
+        context = self._series_service.camera_target(
+            {"series_path": target["series_path"], "pixel_id": target["pixel_id"]},
+            target["station"],
+        )
+        context["session_dir"] = str(session_dir)
+        self._series_service.record_camera_file(
+            context,
+            media_kind,
+            local,
+            source_name,
+            {"v2_camera_mode": "series", "derived": True, **dict(extra_params or {})},
+        )
+        return local
+
     def connect(
         self,
         host: str,
