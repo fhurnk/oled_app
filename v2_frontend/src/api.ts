@@ -113,6 +113,47 @@ export type ReportInput = {
   pixel_grids: Record<string, { start: number; stop: number; step: number }>;
 };
 
+export type RecalculationOperation = {
+  status: "idle" | "running" | "completed" | "failed";
+  active: boolean;
+  operation: "spectral_calibration" | "luminance" | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  result: Record<string, unknown> | null;
+  series_path: string | null;
+  progress: { completed: number; total: number; current: string };
+};
+
+export type RecalculationGroup = {
+  key: string;
+  label: string;
+  quarters: number[];
+  candidates: Array<{ pixel_id: string; quarter: number; source: string }>;
+  stored_calibration: null | {
+    source_pixel: string;
+    method: string;
+    coefficient: number | null;
+    calculated_at: string | null;
+  };
+};
+
+export type RecalculationOptions = {
+  series_path: string;
+  groups: RecalculationGroup[];
+  thresholds: {
+    median_tolerance_percent: number;
+    linear_model_outlier_percent: number;
+  };
+  measurement_counts: { IVL: number; SPECTRUM: number; STABILITY: number; total: number };
+};
+
+export type RecalculationState = {
+  available: boolean;
+  operation: RecalculationOperation;
+  options: RecalculationOptions | null;
+};
+
 export type PocPoint = {
   index: number;
   elapsed_s: number;
@@ -362,6 +403,27 @@ export function startReport(payload: ReportInput): Promise<ReportState> {
   return requestJson<ReportState>("/api/report/build", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export function fetchRecalculationState(signal?: AbortSignal): Promise<RecalculationState> {
+  return requestJson<RecalculationState>("/api/recalculation/state", {}, signal);
+}
+
+export function startSpectralCalibration(payload: {
+  selections: Record<string, { pixel_id: string; strategy: "replace" | "reuse" }>;
+  thresholds: RecalculationOptions["thresholds"];
+}): Promise<RecalculationState> {
+  return requestJson<RecalculationState>("/api/recalculation/spectral", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function startLuminanceRecalculation(): Promise<RecalculationState> {
+  return requestJson<RecalculationState>("/api/recalculation/luminance", {
+    method: "POST",
+    body: JSON.stringify({ confirmed: true })
   });
 }
 

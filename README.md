@@ -66,6 +66,14 @@ Stage 7 начат рабочим пунктом `Настройки`. Новы�
 `.opju` — при наличии OriginPro и его Python-интеграции. Отчёт сохраняется в
 папке серии и не перезаписывает существующий файл.
 
+Пункт `Пересчёты` Stage 7 выполняет спектральную калибровку выбранных областей
+и пакетный пересчёт светимости. Для каждой четверти, половины или всей подложки
+выбирается один сохранённый спектр и действие: заменить модель новой либо
+применить уже сохранённую. Исходный спектр не изменяется, результат создаётся
+как отдельный `SPECTRAL_RECALC_*.xlsx`. Пакетная операция запускается только
+после явного подтверждения, атомарно обновляет расчётные XLSX ВАЯХ, спектров и
+стабильности и восстанавливает отсутствующие raw CSV.
+
 ### Запуск Без Visual Studio
 
 Откройте `dist\OLED Measurement App 2 Alpha\OLED Measurement App 2 Alpha.exe`.
@@ -110,6 +118,7 @@ Python и Node.js для запуска не требуется. Нужен Wind
 .\env\Scripts\python.exe .\oled_v2_app.py --stability-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --camera-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py --report-smoke
+.\env\Scripts\python.exe .\oled_v2_app.py --recalculation-smoke
 .\env\Scripts\python.exe .\oled_v2_app.py
 ```
 

@@ -10,6 +10,10 @@ webview_datas, webview_binaries, webview_hiddenimports = collect_all("webview")
 
 datas = webview_datas + [
     (str(project_root / "oled_v2" / "static"), "oled_v2/static"),
+    (
+        str(project_root / "oled_app" / "data" / "spectral_sensitivity.csv"),
+        "oled_app/data",
+    ),
 ]
 
 a = Analysis(

@@ -805,6 +805,111 @@ def report_smoke() -> int:
     return 0
 
 
+def recalculation_smoke() -> int:
+    """Verify spectral calibration and destructive luminance recalculation."""
+
+    from copy import deepcopy
+
+    from oled_app.settings import DEFAULT_APP_SETTINGS
+
+    from .ivl import IvlController
+    from .recalculation import RecalculationService
+    from .series_service import SeriesService
+    from .spectrum import SpectrumController
+
+    with tempfile.TemporaryDirectory(prefix="oled-v2-recalculation-smoke-") as folder:
+        root = Path(folder)
+        series_service = SeriesService(root / "series")
+        active = series_service.create_series({
+            "root": str(root / "series"),
+            "deposition_date": "2026-09-30",
+            "keyword": "recalculation-smoke",
+            "series_led_color": "green",
+            "quarter_bases": {str(number): "Q" for number in range(1, 5)},
+            "quarter_descriptions": {str(number): "Smoke" for number in range(1, 5)},
+        })["active"]
+        pixel_id = active["pixels"][0]["pixel_id"]
+        target = {"series_path": active["path"], "pixel_id": pixel_id}
+        spectrum = SpectrumController(root / "standalone-spectrum", series_service)
+        ivl = IvlController(root / "standalone-ivl", series_service)
+        settings_box = {"value": deepcopy(DEFAULT_APP_SETTINGS)}
+        service = RecalculationService(
+            settings_loader=lambda: deepcopy(settings_box["value"]),
+            settings_saver=lambda value: settings_box.update(value=deepcopy(value)),
+        )
+        try:
+            spectrum.start({
+                "voltage_start": 3.0,
+                "voltage_end": 3.1,
+                "voltage_step": 0.1,
+                "settle_time_voltage_s": 0.0,
+                "settle_time_spectrum_s": 0.0,
+                "discard_first_scan_after_tint_change": False,
+                "target": target,
+                "use_opening_voltage": False,
+            })
+            deadline = time.monotonic() + 25.0
+            while spectrum.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.03)
+            if spectrum.snapshot()["status"] != "completed":
+                raise RuntimeError(f"Recalculation spectrum seed failed: {spectrum.snapshot()}")
+
+            ivl.start({
+                "sweep_end": 0.2,
+                "sweep_increment": 0.1,
+                "target": target,
+            })
+            deadline = time.monotonic() + 20.0
+            while ivl.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.03)
+            if ivl.snapshot()["status"] != "completed":
+                raise RuntimeError(f"Recalculation IVL seed failed: {ivl.snapshot()}")
+
+            options = service.options(Path(active["path"]))
+            group = next(item for item in options["groups"] if item["candidates"])
+            service.start_calibration(Path(active["path"]), {
+                "selections": {
+                    group["key"]: {"pixel_id": pixel_id, "strategy": "replace"}
+                },
+                "thresholds": {
+                    "median_tolerance_percent": 10.0,
+                    "linear_model_outlier_percent": 50.0,
+                },
+            })
+            deadline = time.monotonic() + 15.0
+            while service.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.03)
+            calibration = service.snapshot()
+            if calibration["status"] != "completed":
+                raise RuntimeError(f"Spectral calibration smoke failed: {calibration}")
+            calibration_file = Path(calibration["result"]["items"][0]["output"])
+            if not calibration_file.is_file():
+                raise RuntimeError("Spectral calibration smoke did not create XLSX.")
+
+            service.start_luminance(Path(active["path"]), {"confirmed": True})
+            deadline = time.monotonic() + 15.0
+            while service.snapshot()["active"] and time.monotonic() < deadline:
+                time.sleep(0.03)
+            luminance = service.snapshot()
+            result = luminance.get("result") or {}
+            if (luminance["status"] != "completed"
+                    or int(result.get("workbooks_updated", 0)) < 2
+                    or int(result.get("errors", 0)) != 0):
+                raise RuntimeError(f"Luminance recalculation smoke failed: {luminance}")
+            console_write(json.dumps({
+                "status": "completed",
+                "spectral_calibration_verified": True,
+                "separate_workbook_verified": True,
+                "luminance_workbooks_updated": result["workbooks_updated"],
+                "raw_files_restored": result["raw_files_restored"],
+            }, ensure_ascii=False))
+        finally:
+            service.shutdown()
+            spectrum.shutdown()
+            ivl.shutdown()
+    return 0
+
+
 def launch_desktop(auto_close_after_s: Optional[float] = None) -> int:
     missing = [name for name, present in dependency_status().items() if not present]
     if missing:
@@ -881,6 +986,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build and verify a diagnostic XLSX through the v2 report service.",
     )
     parser.add_argument(
+        "--recalculation-smoke",
+        action="store_true",
+        help="Verify spectral calibration and series luminance recalculation.",
+    )
+    parser.add_argument(
         "--window-smoke",
         action="store_true",
         help="Open the WebView2 shell briefly, then close it automatically.",
@@ -890,27 +1000,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
-    if args.status:
-        for line in status_lines():
-            console_write(line)
-        return 0
-    if args.backend_smoke:
-        return backend_smoke()
-    if args.poc_smoke:
-        return poc_smoke()
-    if args.ivl_smoke:
-        return ivl_smoke()
-    if args.spectrum_smoke:
-        return spectrum_smoke()
-    if args.stability_smoke:
-        return stability_smoke()
-    if args.camera_smoke:
-        return camera_smoke()
-    if args.series_smoke:
-        return series_smoke()
-    if args.report_smoke:
-        return report_smoke()
     try:
+        if args.status:
+            for line in status_lines():
+                console_write(line)
+            return 0
+        if args.backend_smoke:
+            return backend_smoke()
+        if args.poc_smoke:
+            return poc_smoke()
+        if args.ivl_smoke:
+            return ivl_smoke()
+        if args.spectrum_smoke:
+            return spectrum_smoke()
+        if args.stability_smoke:
+            return stability_smoke()
+        if args.camera_smoke:
+            return camera_smoke()
+        if args.series_smoke:
+            return series_smoke()
+        if args.report_smoke:
+            return report_smoke()
+        if args.recalculation_smoke:
+            return recalculation_smoke()
         return launch_desktop(auto_close_after_s=1.5 if args.window_smoke else None)
     except Exception as exc:
         console_write(f"Не удалось запустить v2 prototype: {exc}", error=True)

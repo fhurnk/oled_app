@@ -71,6 +71,12 @@ Checkpoint 22 adds `oled_v2/report.py` and
 reuse the existing Origin/diagnostic-XLSX builder with dates, excluded
 quarters, series-scope grouping, selected spectral pixels and common or
 per-pixel voltage grids. Generation is backend-owned and recoverable in the UI.
+Checkpoint 23 adds `oled_v2/recalculation.py` and
+`v2_frontend/src/RecalculationWorkspace.tsx`: selected configured scopes can
+create separate CIE/BPW34 recalculation workbooks and replace or reuse their
+stored calibration, while an explicitly confirmed background operation updates
+existing IVL, spectrum and stability luminance workbooks and restores missing
+raw CSV. Use `--recalculation-smoke` to verify both operations.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -87,7 +93,7 @@ application until v2 passes the full parity and hardware checklist.
 - v2 status/smoke: `python oled_v2_app.py --status`,
   `python oled_v2_app.py --backend-smoke`, and
   `python oled_v2_app.py --poc-smoke` / `--series-smoke` /
-  `--report-smoke`
+  `--report-smoke` / `--recalculation-smoke`
 - v2 Stage 2 coordinator: `oled_v2/poc.py`
 - v2 Stage 3 design system: `v2_frontend/src/design-system/`
 - v2 Stage 4 series bridge: `oled_v2/series_service.py`
@@ -103,6 +109,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 7 settings workspace: `v2_frontend/src/SettingsWorkspace.tsx`
 - v2 Stage 7 report service: `oled_v2/report.py`
 - v2 Stage 7 report workspace: `v2_frontend/src/ReportWorkspace.tsx`
+- v2 Stage 7 recalculation service: `oled_v2/recalculation.py`
+- v2 Stage 7 recalculation workspace: `v2_frontend/src/RecalculationWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

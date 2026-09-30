@@ -7,15 +7,27 @@ import logging
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from oled_v2.launcher import console_write, report_smoke, series_smoke, status_lines
+from oled_v2.launcher import (
+    console_write,
+    main,
+    recalculation_smoke,
+    report_smoke,
+    series_smoke,
+    status_lines,
+)
 from oled_v2.logging_setup import log_directory, remove_expired_logs
 
 
 class V2LauncherTests(unittest.TestCase):
+    def test_cli_failure_returns_code_without_unhandled_windowed_exception(self) -> None:
+        with patch("oled_v2.launcher.status_lines", side_effect=RuntimeError("smoke failed")):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(main(["--status"]), 1)
+
     def test_windowed_build_can_finish_cli_action_without_stdout(self) -> None:
         with patch("oled_v2.launcher.sys.stdout", None):
             console_write("completed")
@@ -73,6 +85,16 @@ class V2LauncherTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "completed")
         self.assertTrue(payload["workbook_verified"])
+
+    def test_recalculation_smoke_runs_both_operations(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(recalculation_smoke(), 0)
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(payload["status"], "completed")
+        self.assertTrue(payload["spectral_calibration_verified"])
+        self.assertGreaterEqual(payload["luminance_workbooks_updated"], 2)
 
 
 if __name__ == "__main__":
