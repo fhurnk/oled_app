@@ -15,10 +15,13 @@ from oled_v2.launcher import (
     diagnostics_smoke,
     console_write,
     main,
+    launch_desktop,
+    packaging_smoke,
     recalculation_smoke,
     report_smoke,
     series_smoke,
     status_lines,
+    webview2_runtime_status,
 )
 from oled_v2.logging_setup import log_directory, remove_expired_logs
 
@@ -42,6 +45,30 @@ class V2LauncherTests(unittest.TestCase):
             "Stable default launcher: oled_modular_app.py (Tkinter)",
             status_lines(),
         )
+
+    def test_webview2_runtime_is_found_in_version_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            version = Path(folder) / "123.45.67.8"
+            version.mkdir()
+            (version / "msedgewebview2.exe").write_bytes(b"test")
+
+            status = webview2_runtime_status([Path(folder)])
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["version"], "123.45.67.8")
+
+    def test_missing_webview2_returns_operator_facing_error(self) -> None:
+        dependencies = {
+            "fastapi": True, "uvicorn": True, "websockets": True,
+            "webview": True, "static_index": True,
+            "webview2_runtime": False, "webview2_version": None,
+        }
+        with patch("oled_v2.launcher.dependency_status", return_value=dependencies):
+            with patch("oled_v2.launcher.show_windows_error") as show:
+                with redirect_stderr(io.StringIO()):
+                    self.assertEqual(launch_desktop(), 2)
+        show.assert_called_once()
+        self.assertIn("WebView2", show.call_args.args[0])
 
     def test_log_directory_can_be_redirected_for_tests_and_portable_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -106,6 +133,28 @@ class V2LauncherTests(unittest.TestCase):
 
         self.assertEqual(payload["secrets"], "filtered")
         self.assertGreaterEqual(payload["operations"], 7)
+
+    def test_packaging_smoke_checks_writable_user_data(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder:
+            report = Path(folder) / "report.json"
+            with patch.dict(os.environ, {
+                "OLED_APP_DATA_DIR": folder,
+                "OLED_V2_PACKAGING_SMOKE_REPORT": str(report),
+            }):
+                with patch("oled_v2.launcher.webview2_runtime_status", return_value={
+                    "available": True, "version": "123.45", "path": folder,
+                }):
+                    with redirect_stdout(output):
+                        self.assertEqual(packaging_smoke(), 0)
+            report_payload = json.loads(report.read_text(encoding="utf-8"))
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["write_access"])
+        self.assertEqual(payload["webview2"], "123.45")
+        self.assertIn("default_series_root", payload)
+        self.assertIn("simulator_config_path", payload)
+        self.assertIn("camera_download_dir", payload)
+        self.assertEqual(report_payload, payload)
 
 
 if __name__ == "__main__":

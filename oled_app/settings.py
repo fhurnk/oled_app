@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -16,6 +19,31 @@ from .constants import (
     SCRIPT_DIR,
     SIM_CONFIG_FILE,
 )
+
+
+APP_DATA_DIR_ENV = "OLED_APP_DATA_DIR"
+APP_DATA_FOLDER = "OLED Measurement App"
+
+
+def application_data_root(
+    *,
+    frozen: Optional[bool] = None,
+    local_app_data: Optional[str] = None,
+) -> Path:
+    """Return writable user data for packaged v2 and the project root in source runs."""
+
+    override = os.environ.get(APP_DATA_DIR_ENV)
+    if override:
+        return Path(override).expanduser().resolve()
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else bool(frozen)
+    if not is_frozen:
+        return SCRIPT_DIR
+    configured = local_app_data if local_app_data is not None else os.environ.get("LOCALAPPDATA")
+    base = Path(configured).expanduser() if configured else Path.home() / "AppData" / "Local"
+    return (base / APP_DATA_FOLDER).resolve()
+
+
+APP_DATA_ROOT = application_data_root()
 
 DEFAULT_SIMULATOR_CONFIG: Dict[str, Any] = {
     "active": True,
@@ -75,11 +103,11 @@ DEFAULT_SIMULATOR_CONFIG: Dict[str, Any] = {
 }
 
 DEFAULT_APP_SETTINGS: Dict[str, Any] = {
-    "default_root": str(SCRIPT_DIR / DEFAULT_ROOT),
+    "default_root": str(APP_DATA_ROOT / DEFAULT_ROOT),
     "hardware_mode": HARDWARE_MODE_SIM,
     "com_port": "SIM",
     "auto_com_port": False,
-    "simulator_config_path": str(SCRIPT_DIR / SIM_CONFIG_FILE),
+    "simulator_config_path": str(APP_DATA_ROOT / SIM_CONFIG_FILE),
     "camera": {
         "host": "192.168.4.1",
         "port": 8765,
@@ -90,7 +118,7 @@ DEFAULT_APP_SETTINGS: Dict[str, Any] = {
         "wifi_interface": "",
         "wifi_connect_timeout_s": 25.0,
         "restore_previous_wifi": True,
-        "download_dir": str(SCRIPT_DIR / "camera_downloads"),
+        "download_dir": str(APP_DATA_ROOT / "camera_downloads"),
         "keep_remote_files_after_download": True,
         "combine_stability_telemetry_video": True,
         "crop_width_percent": 100.0,
@@ -207,11 +235,56 @@ def deep_update(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def app_settings_path() -> Path:
-    return SCRIPT_DIR / APP_SETTINGS_FILE
+    return application_data_root() / APP_SETTINGS_FILE
+
+
+def legacy_app_settings_candidates() -> list[Path]:
+    """Find portable settings locations used before installed user-data storage."""
+
+    if not getattr(sys, "frozen", False):
+        return []
+    candidates = [Path(sys.executable).resolve().parent / APP_SETTINGS_FILE]
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        candidates.append(Path(bundled).resolve() / APP_SETTINGS_FILE)
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
+def migrate_legacy_app_settings(
+    target: Optional[Path] = None,
+    candidates: Optional[list[Path]] = None,
+) -> Optional[Path]:
+    """Copy the first portable settings file once without overwriting user data."""
+
+    destination = Path(target) if target is not None else app_settings_path()
+    if destination.exists():
+        return None
+    for candidate in candidates if candidates is not None else legacy_app_settings_candidates():
+        source = Path(candidate)
+        if source == destination or not source.is_file():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + ".migrating")
+        try:
+            shutil.copy2(source, temporary)
+            temporary.replace(destination)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            continue
+        return source
+    return None
 
 
 def load_app_settings() -> Dict[str, Any]:
     path = app_settings_path()
+    migrate_legacy_app_settings(path)
     settings = deepcopy(DEFAULT_APP_SETTINGS)
     if path.exists():
         try:
@@ -234,7 +307,8 @@ def save_app_settings(settings: Dict[str, Any]) -> None:
 
 
 def ensure_default_sim_config(config_path: Optional[Path] = None) -> Path:
-    path = Path(config_path) if config_path else SCRIPT_DIR / SIM_CONFIG_FILE
+    path = Path(config_path) if config_path else application_data_root() / SIM_CONFIG_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(json.dumps(DEFAULT_SIMULATOR_CONFIG, ensure_ascii=False, indent=2), encoding="utf-8")
     return path

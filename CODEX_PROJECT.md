@@ -83,6 +83,11 @@ runtime, hardware, camera, paths, background operations and sanitized recent
 errors, and produces a copyable summary without desktop-session secrets. Use
 `--diagnostics-smoke` to verify the packaged endpoint. Stage 7 is
 software-complete pending real-series, OriginPro and hardware validation.
+Checkpoint 25 starts Stage 8: packaged defaults and settings now live under
+`%LOCALAPPDATA%\OLED Measurement App`, portable settings are migrated once
+without overwrite, and the launcher detects a missing WebView2 Runtime before
+opening the desktop window. Use `--packaging-smoke` to verify writable storage,
+bundle isolation and the installed Runtime.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -99,7 +104,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 status/smoke: `python oled_v2_app.py --status`,
   `python oled_v2_app.py --backend-smoke`, and
   `python oled_v2_app.py --poc-smoke` / `--series-smoke` /
-  `--report-smoke` / `--recalculation-smoke` / `--diagnostics-smoke`
+  `--report-smoke` / `--recalculation-smoke` / `--diagnostics-smoke` /
+  `--packaging-smoke`
 - v2 Stage 2 coordinator: `oled_v2/poc.py`
 - v2 Stage 3 design system: `v2_frontend/src/design-system/`
 - v2 Stage 4 series bridge: `oled_v2/series_service.py`

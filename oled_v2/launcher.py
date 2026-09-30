@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import time
@@ -32,12 +33,61 @@ def console_write(value: str, error: bool = False) -> None:
         return
 
 
+def webview2_runtime_status(
+    candidate_roots: Optional[Iterable[Path]] = None,
+) -> dict:
+    """Locate an Evergreen or fixed WebView2 Runtime without starting a window."""
+
+    roots = list(candidate_roots) if candidate_roots is not None else []
+    if candidate_roots is None:
+        fixed_runtime = os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER")
+        if fixed_runtime:
+            roots.append(Path(fixed_runtime))
+        for variable in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
+            value = os.environ.get(variable)
+            if value:
+                roots.append(Path(value) / "Microsoft" / "EdgeWebView" / "Application")
+    for root in roots:
+        folder = Path(root)
+        direct = folder / "msedgewebview2.exe"
+        if direct.is_file():
+            return {"available": True, "version": folder.name, "path": str(folder)}
+        try:
+            versions = sorted(
+                (item for item in folder.iterdir() if item.is_dir()),
+                key=lambda item: item.name,
+                reverse=True,
+            )
+        except OSError:
+            continue
+        for version in versions:
+            if (version / "msedgewebview2.exe").is_file():
+                return {"available": True, "version": version.name, "path": str(version)}
+    return {"available": False, "version": None, "path": None}
+
+
+def show_windows_error(title: str, message: str) -> None:
+    """Display a short native startup error for a console-less Windows build."""
+
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, str(message), str(title), 0x10)
+    except (AttributeError, OSError):
+        return
+
+
 def dependency_status() -> dict:
+    runtime = webview2_runtime_status()
     return {
         "fastapi": importlib.util.find_spec("fastapi") is not None,
         "uvicorn": importlib.util.find_spec("uvicorn") is not None,
         "websockets": importlib.util.find_spec("websockets") is not None,
         "webview": importlib.util.find_spec("webview") is not None,
+        "webview2_runtime": runtime["available"],
+        "webview2_version": runtime["version"],
         "static_index": (default_static_root() / "index.html").is_file(),
     }
 
@@ -57,8 +107,71 @@ def status_lines() -> list[str]:
             else "missing"
         ),
         f"pywebview/WebView2 bridge: {'ready' if dependencies['webview'] else 'missing'}",
+        "WebView2 Runtime: "
+        + (
+            f"ready ({dependencies['webview2_version']})"
+            if dependencies["webview2_runtime"]
+            else "missing"
+        ),
         f"Logs: {log_directory()}",
     ]
+
+
+def packaging_smoke() -> int:
+    """Verify packaged user-data isolation, write access and WebView2 presence."""
+
+    from oled_app.settings import DEFAULT_APP_SETTINGS, application_data_root, app_settings_path
+
+    root = application_data_root()
+    settings = app_settings_path()
+    runtime = webview2_runtime_status()
+    root.mkdir(parents=True, exist_ok=True)
+    probe = root / ".oled-v2-write-probe"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        if probe.read_text(encoding="utf-8") != "ok":
+            raise RuntimeError("User data write check returned unexpected content.")
+    finally:
+        probe.unlink(missing_ok=True)
+    if getattr(sys, "frozen", False):
+        bundled = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)).resolve()
+        try:
+            root.resolve().relative_to(bundled)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("Packaged user data still points inside the application bundle.")
+        managed_paths = (
+            Path(DEFAULT_APP_SETTINGS["default_root"]),
+            Path(DEFAULT_APP_SETTINGS["simulator_config_path"]),
+            Path(DEFAULT_APP_SETTINGS["camera"]["download_dir"]),
+        )
+        for managed in managed_paths:
+            try:
+                managed.resolve().relative_to(root.resolve())
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Packaged default path is outside the user data root: {managed}"
+                ) from exc
+    if not runtime["available"]:
+        raise RuntimeError("Microsoft Edge WebView2 Runtime is not installed.")
+    payload = {
+        "packaged": bool(getattr(sys, "frozen", False)),
+        "user_data_root": str(root),
+        "settings_path": str(settings),
+        "default_series_root": str(DEFAULT_APP_SETTINGS["default_root"]),
+        "simulator_config_path": str(DEFAULT_APP_SETTINGS["simulator_config_path"]),
+        "camera_download_dir": str(DEFAULT_APP_SETTINGS["camera"]["download_dir"]),
+        "write_access": True,
+        "webview2": runtime["version"],
+    }
+    report_path = os.environ.get("OLED_V2_PACKAGING_SMOKE_REPORT")
+    if report_path:
+        report = Path(report_path).expanduser().resolve()
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    console_write(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
 
 
 def backend_smoke() -> int:
@@ -949,13 +1062,26 @@ def recalculation_smoke() -> int:
 
 
 def launch_desktop(auto_close_after_s: Optional[float] = None) -> int:
-    missing = [name for name, present in dependency_status().items() if not present]
+    dependencies = dependency_status()
+    missing = [
+        name for name in ("fastapi", "uvicorn", "websockets", "webview", "static_index")
+        if not dependencies[name]
+    ]
     if missing:
         raise RuntimeError(
             "v2 prototype dependencies are incomplete: "
             + ", ".join(missing)
             + ". Install requirements-v2.txt and build the frontend."
         )
+    if not dependencies["webview2_runtime"]:
+        message = (
+            "Для запуска OLED Measurement App требуется Microsoft Edge WebView2 Runtime.\n\n"
+            "Установите Evergreen WebView2 Runtime с сайта Microsoft и повторите запуск."
+        )
+        if auto_close_after_s is None:
+            show_windows_error("OLED Measurement App — не найден WebView2", message)
+        console_write(message, error=True)
+        return 2
 
     import webview
 
@@ -1034,6 +1160,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify the authenticated, secret-free diagnostics summary.",
     )
     parser.add_argument(
+        "--packaging-smoke",
+        action="store_true",
+        help="Verify writable user data and the installed WebView2 Runtime.",
+    )
+    parser.add_argument(
         "--window-smoke",
         action="store_true",
         help="Open the WebView2 shell briefly, then close it automatically.",
@@ -1068,6 +1199,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return recalculation_smoke()
         if args.diagnostics_smoke:
             return diagnostics_smoke()
+        if args.packaging_smoke:
+            return packaging_smoke()
         return launch_desktop(auto_close_after_s=1.5 if args.window_smoke else None)
     except Exception as exc:
         console_write(f"Не удалось запустить v2 prototype: {exc}", error=True)

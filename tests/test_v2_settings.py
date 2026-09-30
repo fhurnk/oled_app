@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from oled_app.settings import DEFAULT_APP_SETTINGS
+from oled_app.settings import (
+    DEFAULT_APP_SETTINGS,
+    application_data_root,
+    migrate_legacy_app_settings,
+)
 from oled_v2.settings_service import SettingsService, SettingsValidationError
 
 
@@ -96,6 +104,37 @@ class V2SettingsServiceTests(unittest.TestCase):
             from oled_v2.stability import default_params as stability_defaults
             self.assertEqual(stability_defaults().voltage_step_max, 0.07)
             self.assertEqual(stability_defaults().pixel_area_mm2, 3.5)
+
+
+class PackagedSettingsStorageTests(unittest.TestCase):
+    def test_frozen_application_uses_local_app_data(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {"OLED_APP_DATA_DIR": ""}):
+                root = application_data_root(frozen=True, local_app_data=folder)
+
+        self.assertEqual(root, (Path(folder) / "OLED Measurement App").resolve())
+
+    def test_environment_override_is_available_for_portable_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {"OLED_APP_DATA_DIR": folder}):
+                self.assertEqual(application_data_root(frozen=True), Path(folder).resolve())
+
+    def test_portable_settings_are_migrated_once_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "portable" / "oled_app_settings.json"
+            target = root / "user" / "oled_app_settings.json"
+            source.parent.mkdir()
+            source.write_text(json.dumps({"hardware_mode": "real"}), encoding="utf-8")
+
+            migrated = migrate_legacy_app_settings(target, [source])
+
+            self.assertEqual(migrated, source)
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["hardware_mode"], "real")
+            target.write_text(json.dumps({"hardware_mode": "simulator"}), encoding="utf-8")
+            source.write_text(json.dumps({"hardware_mode": "real", "changed": True}), encoding="utf-8")
+            self.assertIsNone(migrate_legacy_app_settings(target, [source]))
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"hardware_mode": "simulator"})
 
 
 if __name__ == "__main__":
