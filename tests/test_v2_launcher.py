@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from oled_v2.launcher import (
+    diagnostics_smoke,
     console_write,
     main,
     recalculation_smoke,
@@ -95,6 +96,16 @@ class V2LauncherTests(unittest.TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertTrue(payload["spectral_calibration_verified"])
         self.assertGreaterEqual(payload["luminance_workbooks_updated"], 2)
+
+    def test_diagnostics_smoke_filters_session_secrets(self) -> None:
+        output = io.StringIO()
+        with patch("oled_v2.launcher.configure_logging", return_value=logging.getLogger("oled-v2-diagnostics-smoke-test")):
+            with redirect_stdout(output):
+                self.assertEqual(diagnostics_smoke(), 0)
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(payload["secrets"], "filtered")
+        self.assertGreaterEqual(payload["operations"], 7)
 
 
 if __name__ == "__main__":

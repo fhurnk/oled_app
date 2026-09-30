@@ -9,6 +9,7 @@ import CameraWorkspace from "./CameraWorkspace";
 import SettingsWorkspace from "./SettingsWorkspace";
 import ReportWorkspace from "./ReportWorkspace";
 import RecalculationWorkspace from "./RecalculationWorkspace";
+import DiagnosticsWorkspace from "./DiagnosticsWorkspace";
 import {
   Button,
   HardwarePill,
@@ -35,7 +36,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type StreamState = "connecting" | "connected" | "disconnected";
-type ActiveView = "overview" | "series" | "ivl" | "spectrum" | "stability" | "camera" | "reports" | "recalculation" | "settings";
+type ActiveView = "overview" | "series" | "ivl" | "spectrum" | "stability" | "camera" | "reports" | "recalculation" | "settings" | "diagnostics";
 
 const navigation = [
   ["Обзор", "overview", true],
@@ -294,10 +295,10 @@ function App() {
             Настройки
             <small>рабочий</small>
           </button>
-          <button className="nav-item" disabled type="button">
+          <button className={`nav-item ${activeView === "diagnostics" ? "nav-item--active" : ""}`} onClick={() => setActiveView("diagnostics")} type="button">
             <span className="nav-icon nav-icon--diagnostics" aria-hidden="true" />
             Диагностика
-            <small>скоро</small>
+            <small>рабочий</small>
           </button>
           <div className="build-label">v2.0.0 alpha · этап 7</div>
         </div>
@@ -307,13 +308,13 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера" : activeView === "reports" ? "Отчёты" : activeView === "recalculation" ? "Пересчёты" : activeView === "settings" ? "Настройки приложения" : "Серии OLED"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера" : activeView === "reports" ? "Отчёты" : activeView === "recalculation" ? "Пересчёты" : activeView === "settings" ? "Настройки приложения" : activeView === "diagnostics" ? "Диагностика" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Очередь спектров · подбор T_int, CSV, Excel и журнал" : activeView === "stability" ? "Удержание тока или напряжения · динамическая уставка и журнал" : activeView === "camera" ? "Raspberry Pi service · LiveView и удалённые файлы" : activeView === "reports" ? "Полный отчёт, ВАЯХ или спектры · Excel и Origin Project" : activeView === "recalculation" ? "Спектральная калибровка и пакетный пересчёт светимости" : activeView === "settings" ? "Общие параметры, оборудование и расширенные режимы измерений" : "Создание, открытие и совместимый журнал измерений"}
+                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Очередь спектров · подбор T_int, CSV, Excel и журнал" : activeView === "stability" ? "Удержание тока или напряжения · динамическая уставка и журнал" : activeView === "camera" ? "Raspberry Pi service · LiveView и удалённые файлы" : activeView === "reports" ? "Полный отчёт, ВАЯХ или спектры · Excel и Origin Project" : activeView === "recalculation" ? "Спектральная калибровка и пакетный пересчёт светимости" : activeView === "settings" ? "Общие параметры, оборудование и расширенные режимы измерений" : activeView === "diagnostics" ? "Версия, подключения, пути, операции и безопасная сводка ошибок" : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -355,6 +356,8 @@ function App() {
           <ReportWorkspace />
         ) : activeView === "recalculation" ? (
           <RecalculationWorkspace />
+        ) : activeView === "diagnostics" ? (
+          <DiagnosticsWorkspace />
         ) : activeView === "series" ? (
             <SeriesWorkspace onMeasureIvl={(target) => { setGuidedCameraTarget(null); setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setGuidedCameraTarget(null); setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setGuidedCameraTarget(null); setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (

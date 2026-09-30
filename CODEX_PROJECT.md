@@ -77,6 +77,12 @@ create separate CIE/BPW34 recalculation workbooks and replace or reuse their
 stored calibration, while an explicitly confirmed background operation updates
 existing IVL, spectrum and stability luminance workbooks and restores missing
 raw CSV. Use `--recalculation-smoke` to verify both operations.
+Checkpoint 24 adds `oled_v2/diagnostics.py` and
+`v2_frontend/src/DiagnosticsWorkspace.tsx`: the passive diagnostics page shows
+runtime, hardware, camera, paths, background operations and sanitized recent
+errors, and produces a copyable summary without desktop-session secrets. Use
+`--diagnostics-smoke` to verify the packaged endpoint. Stage 7 is
+software-complete pending real-series, OriginPro and hardware validation.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -93,7 +99,7 @@ application until v2 passes the full parity and hardware checklist.
 - v2 status/smoke: `python oled_v2_app.py --status`,
   `python oled_v2_app.py --backend-smoke`, and
   `python oled_v2_app.py --poc-smoke` / `--series-smoke` /
-  `--report-smoke` / `--recalculation-smoke`
+  `--report-smoke` / `--recalculation-smoke` / `--diagnostics-smoke`
 - v2 Stage 2 coordinator: `oled_v2/poc.py`
 - v2 Stage 3 design system: `v2_frontend/src/design-system/`
 - v2 Stage 4 series bridge: `oled_v2/series_service.py`
@@ -111,6 +117,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 7 report workspace: `v2_frontend/src/ReportWorkspace.tsx`
 - v2 Stage 7 recalculation service: `oled_v2/recalculation.py`
 - v2 Stage 7 recalculation workspace: `v2_frontend/src/RecalculationWorkspace.tsx`
+- v2 Stage 7 diagnostics service: `oled_v2/diagnostics.py`
+- v2 Stage 7 diagnostics workspace: `v2_frontend/src/DiagnosticsWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

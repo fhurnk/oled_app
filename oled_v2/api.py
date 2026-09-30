@@ -14,11 +14,12 @@ from fastapi.staticfiles import StaticFiles
 
 from oled_app.constants import APP_VERSION
 from oled_app.camera.client import CameraClientError
-from oled_app.settings import load_app_settings, save_app_settings
+from oled_app.settings import app_settings_path, load_app_settings, save_app_settings
 
 from .config import API_SCHEMA_VERSION, SessionConfig
 from .camera import CameraController
 from .camera_workflow import GuidedCameraWorkflow
+from .diagnostics import create_diagnostics_snapshot
 from .logging_setup import log_directory
 from .poc import PocBusyError, PocController
 from .report import ReportError, ReportService, ReportValidationError
@@ -212,10 +213,38 @@ def create_app(
             "series": series_service.app_summary(),
             "migration": {
                 "stage": 7,
-                "status": "stage_7_recalculation_in_progress",
+                "status": "stage_7_diagnostics_complete",
                 "tkinter_default_preserved": True,
             },
         }
+
+    @app.get("/api/diagnostics")
+    async def diagnostics(_client_id: str = Depends(require_controller)) -> dict:
+        settings = load_app_settings()
+        camera = camera_controller.snapshot()
+        hardware = poc_controller.hardware_summary(settings)
+        if camera["connected"]:
+            hardware["camera"] = "ready"
+        return await asyncio.to_thread(
+            create_diagnostics_snapshot,
+            settings=settings,
+            hardware=hardware,
+            series=series_service.app_summary(),
+            operations={
+                "Аппаратная проверка": poc_controller.snapshot(False),
+                "ВАЯХ": ivl_controller.snapshot(),
+                "Спектры": spectrum_controller.snapshot(),
+                "Стабильность": stability_controller.snapshot(),
+                "Сценарий камеры": guided_camera.snapshot(),
+                "Отчёт": report_service.snapshot(),
+                "Пересчёт": recalculation_service.snapshot(),
+            },
+            camera=camera,
+            settings_path=app_settings_path(),
+            log_dir=log_directory(),
+            backend_ready=bool(app.state.ready),
+            backend_started_at=app.state.started_at,
+        )
 
     def camera_http_error(exc: Exception) -> HTTPException:
         if isinstance(exc, SeriesNotFoundError):

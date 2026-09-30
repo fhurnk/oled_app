@@ -251,6 +251,44 @@ def ivl_smoke() -> int:
     return 0
 
 
+def diagnostics_smoke() -> int:
+    """Verify the authenticated diagnostics endpoint and secret filtering."""
+
+    logger = configure_logging()
+    with LocalBackend(logger=logger) as backend:
+        assert backend.session is not None
+        headers = {
+            SESSION_HEADER: backend.session.token,
+            CLIENT_HEADER: "diagnostics-smoke-client-0001",
+        }
+        request = urllib.request.Request(
+            f"{backend.session.origin}/api/diagnostics",
+            headers=headers,
+        )
+        with urllib.request.urlopen(request, timeout=3.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        serialized = json.dumps(payload, ensure_ascii=False)
+        if payload.get("application", {}).get("version") != APP_VERSION:
+            raise RuntimeError("Diagnostics version does not match APP_VERSION.")
+        if backend.session.token in serialized or backend.session.session_id in serialized:
+            raise RuntimeError("Diagnostics payload exposed a desktop-session secret.")
+        if not payload.get("copy_text") or len(payload.get("operations", [])) < 7:
+            raise RuntimeError("Diagnostics payload is incomplete.")
+        console_write(
+            json.dumps(
+                {
+                    "version": payload["application"]["version"],
+                    "operations": len(payload["operations"]),
+                    "recent_errors": len(payload["recent_errors"]),
+                    "secrets": "filtered",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    return 0
+
+
 def spectrum_smoke() -> int:
     """Exercise simulator T_int optimization, compatible workbook and journal."""
     from openpyxl import load_workbook
@@ -991,6 +1029,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify spectral calibration and series luminance recalculation.",
     )
     parser.add_argument(
+        "--diagnostics-smoke",
+        action="store_true",
+        help="Verify the authenticated, secret-free diagnostics summary.",
+    )
+    parser.add_argument(
         "--window-smoke",
         action="store_true",
         help="Open the WebView2 shell briefly, then close it automatically.",
@@ -1023,6 +1066,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return report_smoke()
         if args.recalculation_smoke:
             return recalculation_smoke()
+        if args.diagnostics_smoke:
+            return diagnostics_smoke()
         return launch_desktop(auto_close_after_s=1.5 if args.window_smoke else None)
     except Exception as exc:
         console_write(f"Не удалось запустить v2 prototype: {exc}", error=True)

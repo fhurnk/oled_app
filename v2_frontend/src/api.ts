@@ -58,6 +58,43 @@ export type SettingsDocument = {
   stability_advanced: Record<string, number>;
 };
 
+export type DiagnosticsState = {
+  application: {
+    name: string;
+    version: string;
+    channel: string;
+    schema_version: number;
+    generated_at: string;
+  };
+  runtime: {
+    python: string;
+    platform: string;
+    frozen: boolean;
+    backend_ready: boolean;
+    backend_started_at: string;
+  };
+  hardware: {
+    mode: string;
+    smu: string;
+    spectrometer: string;
+    camera: string;
+  };
+  camera: {
+    connected: boolean;
+    initialized: boolean;
+    model: string | null;
+    liveview_active: boolean;
+    recording_active: boolean;
+    message: string;
+    error: string | null;
+  };
+  series: { active: boolean; path: string | null; root: string };
+  paths: Record<string, string | null>;
+  operations: Array<{ name: string; status: string; active: boolean; error: string | null }>;
+  recent_errors: string[];
+  copy_text: string;
+};
+
 export type SettingsState = { settings: SettingsDocument; path: string };
 
 export type ReportGeneration = {
@@ -375,6 +412,10 @@ async function requestJson<T>(
 
 export function fetchAppState(signal?: AbortSignal): Promise<AppState> {
   return requestJson<AppState>("/api/app/state", {}, signal);
+}
+
+export function fetchDiagnostics(signal?: AbortSignal): Promise<DiagnosticsState> {
+  return requestJson<DiagnosticsState>("/api/diagnostics", {}, signal);
 }
 
 export function fetchSettings(signal?: AbortSignal): Promise<SettingsState> {
