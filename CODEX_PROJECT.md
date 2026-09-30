@@ -88,6 +88,12 @@ Checkpoint 25 starts Stage 8: packaged defaults and settings now live under
 without overwrite, and the launcher detects a missing WebView2 Runtime before
 opening the desktop window. Use `--packaging-smoke` to verify writable storage,
 bundle isolation and the installed Runtime.
+By the user's decision, a Windows installer and digital signing are deferred;
+do not implement them unless the user explicitly returns to that task. The
+current distributable remains the tested PyInstaller `onedir` folder. Continue
+with functional-parity acceptance in the packaged application, including old
+series, simulator UI flows, DPI/system dialogs, and later real hardware and
+OriginPro validation.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
