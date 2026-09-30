@@ -65,17 +65,26 @@ def backend_smoke() -> int:
     logger = configure_logging()
     with LocalBackend(logger=logger) as backend:
         assert backend.session is not None
+        headers = {
+            SESSION_HEADER: backend.session.token,
+            CLIENT_HEADER: "backend-smoke-client-0001",
+        }
         request = urllib.request.Request(
             f"{backend.session.origin}/api/app/state",
-            headers={
-                SESSION_HEADER: backend.session.token,
-                CLIENT_HEADER: "backend-smoke-client-0001",
-            },
+            headers=headers,
         )
         with urllib.request.urlopen(request, timeout=3.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
+        settings_request = urllib.request.Request(
+            f"{backend.session.origin}/api/settings",
+            headers=headers,
+        )
+        with urllib.request.urlopen(settings_request, timeout=3.0) as response:
+            settings_payload = json.loads(response.read().decode("utf-8"))
         if payload.get("application", {}).get("version") != APP_VERSION:
             raise RuntimeError("Backend version does not match APP_VERSION.")
+        if "measurement_units" not in settings_payload.get("settings", {}):
+            raise RuntimeError("Settings API did not return measurement units.")
         console_write(
             json.dumps(
                 {
@@ -83,6 +92,7 @@ def backend_smoke() -> int:
                     "version": payload["application"]["version"],
                     "origin": backend.session.origin,
                     "session_id": backend.session.session_id,
+                    "settings": "ready",
                 },
                 ensure_ascii=False,
                 indent=2,

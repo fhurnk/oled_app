@@ -21,7 +21,7 @@ from oled_app.measurements.spectrum import (
     save_rejected_spectrum_workbook,
 )
 from oled_app.series.paths import ensure_measurement_folder
-from oled_app.settings import DEFAULT_APP_SETTINGS, load_app_settings
+from oled_app.settings import load_app_settings
 
 from .logging_setup import log_directory
 from .poc import utc_now
@@ -54,7 +54,7 @@ REQUEST_FIELDS = set(NUMERIC_FIELDS) | BOOLEAN_FIELDS | {"led_type"}
 
 
 def default_params() -> SpectrumParams:
-    settings = DEFAULT_APP_SETTINGS
+    settings = load_app_settings()
     advanced = settings["spectrum_advanced"]
     units = settings["measurement_units"]
     return SpectrumParams(

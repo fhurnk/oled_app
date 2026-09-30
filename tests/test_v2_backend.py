@@ -103,13 +103,18 @@ class V2LoopbackBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["application"]["version"], APP_VERSION)
         self.assertEqual(payload["backend"]["bound_host"], "127.0.0.1")
-        self.assertEqual(payload["migration"]["status"], "stage_6_guided_camera_simulator_complete")
+        self.assertEqual(payload["migration"]["status"], "stage_7_settings_in_progress")
         self.assertTrue(payload["migration"]["tkinter_default_preserved"])
 
         with self.request("/api/camera/state", headers) as response:
             camera = json.loads(response.read().decode("utf-8"))
         self.assertFalse(camera["connected"])
         self.assertEqual(camera["frame_sequence"], 0)
+
+        with self.request("/api/settings", headers) as response:
+            settings = json.loads(response.read().decode("utf-8"))
+        self.assertIn(settings["settings"]["hardware_mode"], {"simulator", "real"})
+        self.assertIn("measurement_units", settings["settings"])
 
         with self.assertRaises(urllib.error.HTTPError) as raised:
             self.request(

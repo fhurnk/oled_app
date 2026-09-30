@@ -35,10 +35,32 @@ FIELDS = {
 }
 
 
+def default_params():
+    settings = load_app_settings()
+    advanced = settings["ivl_advanced"]
+    units = settings["measurement_units"]
+    return IVLParams(
+        com_port="SIM",
+        photodiode_bias_V=float(advanced["photodiode_bias_V"]),
+        photodiode_range=int(advanced["photodiode_range"]),
+        photodiode_threshold_uA=float(advanced["photodiode_threshold_uA"]),
+        working_confirmation_points=int(advanced["working_confirmation_points"]),
+        opening_photodiode_threshold_uA=float(advanced["opening_photodiode_threshold_uA"]),
+        opening_confirmation_points=int(advanced["opening_confirmation_points"]),
+        burnout_current_threshold_mA=float(advanced["burnout_current_threshold_mA"]),
+        mark_current_limit_as_burnout=bool(advanced["mark_current_limit_as_burnout"]),
+        no_contact_max_led_current_mA=float(advanced["no_contact_max_led_current_mA"]),
+        burned_confirmation_cycles=int(advanced["burned_confirmation_cycles"]),
+        pixel_area_mm2=float(units["pixel_area_mm2"]),
+        luminance_cd_m2_per_uA=float(units.get("luminance_green_cd_m2_per_uA", 1.0)),
+        geometric_coefficient=float(units["geometric_conversion_coefficient"]),
+    )
+
+
 def validate_params(payload):
     if not isinstance(payload, dict) or set(payload) - FIELDS.keys():
         raise ValueError("Неизвестные параметры ВАЯХ.")
-    params = IVLParams(com_port="SIM")
+    params = default_params()
     for key, value in payload.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{key}: требуется число.")

@@ -16,7 +16,7 @@ from oled_app.measurements.stability import (
     run_stability_measurement,
 )
 from oled_app.series.paths import ensure_measurement_folder
-from oled_app.settings import DEFAULT_APP_SETTINGS, load_app_settings
+from oled_app.settings import load_app_settings
 
 from .logging_setup import log_directory
 from .poc import utc_now
@@ -36,8 +36,9 @@ REQUEST_FIELDS = set(NUMERIC_FIELDS) | {"control_mode"}
 
 
 def default_params() -> StabilityParams:
-    advanced = DEFAULT_APP_SETTINGS["stability_advanced"]
-    units = DEFAULT_APP_SETTINGS["measurement_units"]
+    settings = load_app_settings()
+    advanced = settings["stability_advanced"]
+    units = settings["measurement_units"]
     return StabilityParams(
         com_port="SIM",
         control_mode="current",

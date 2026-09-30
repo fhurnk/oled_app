@@ -34,6 +34,32 @@ export type AppState = {
   };
 };
 
+export type SettingsDocument = {
+  default_root: string;
+  hardware_mode: "simulator" | "real";
+  com_port: string;
+  auto_com_port: boolean;
+  simulator_config_path: string;
+  raw_data: { policy: "keep_separate" | "delete_after_xlsx"; folder_name: string };
+  measurement_units: Record<string, number>;
+  spectral_calibration: Record<string, number>;
+  camera: {
+    host: string; port: number; request_timeout_s: number; stream_timeout_s: number;
+    auto_connect_wifi: boolean; wifi_profile: string; wifi_interface: string;
+    wifi_connect_timeout_s: number; restore_previous_wifi: boolean; download_dir: string;
+    keep_remote_files_after_download: boolean; combine_stability_telemetry_video: boolean;
+    crop_width_percent: number; crop_height_percent: number;
+    video_camera_settings: Record<string, string>;
+    photo_quality_settings: Record<string, string>;
+    photo_exposure_settings: Record<string, string>;
+  };
+  ivl_advanced: Record<string, number | boolean>;
+  spectrum_advanced: Record<string, number | boolean | string>;
+  stability_advanced: Record<string, number>;
+};
+
+export type SettingsState = { settings: SettingsDocument; path: string };
+
 export type PocPoint = {
   index: number;
   elapsed_s: number;
@@ -255,6 +281,17 @@ async function requestJson<T>(
 
 export function fetchAppState(signal?: AbortSignal): Promise<AppState> {
   return requestJson<AppState>("/api/app/state", {}, signal);
+}
+
+export function fetchSettings(signal?: AbortSignal): Promise<SettingsState> {
+  return requestJson<SettingsState>("/api/settings", {}, signal);
+}
+
+export function saveSettings(settings: SettingsDocument): Promise<SettingsState> {
+  return requestJson<SettingsState>("/api/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings)
+  });
 }
 
 export function fetchPocState(signal?: AbortSignal): Promise<PocState> {

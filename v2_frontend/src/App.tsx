@@ -6,6 +6,7 @@ import SeriesWorkspace from "./SeriesWorkspace";
 import SpectrumWorkspace from "./SpectrumWorkspace";
 import StabilityWorkspace from "./StabilityWorkspace";
 import CameraWorkspace from "./CameraWorkspace";
+import SettingsWorkspace from "./SettingsWorkspace";
 import {
   Button,
   HardwarePill,
@@ -32,7 +33,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type StreamState = "connecting" | "connected" | "disconnected";
-type ActiveView = "overview" | "series" | "ivl" | "spectrum" | "stability" | "camera";
+type ActiveView = "overview" | "series" | "ivl" | "spectrum" | "stability" | "camera" | "settings";
 
 const navigation = [
   ["Обзор", "overview", true],
@@ -285,17 +286,17 @@ function App() {
         </nav>
 
         <div className="sidebar__bottom">
-          <button className="nav-item" disabled type="button">
+          <button className={`nav-item ${activeView === "settings" ? "nav-item--active" : ""}`} onClick={() => setActiveView("settings")} type="button">
             <span className="nav-icon nav-icon--settings" aria-hidden="true" />
             Настройки
-            <small>скоро</small>
+            <small>рабочий</small>
           </button>
           <button className="nav-item" disabled type="button">
             <span className="nav-icon nav-icon--diagnostics" aria-hidden="true" />
             Диагностика
             <small>скоро</small>
           </button>
-          <div className="build-label">v2.0.0 alpha · этап 6</div>
+          <div className="build-label">v2.0.0 alpha · этап 7</div>
         </div>
       </aside>
 
@@ -303,13 +304,13 @@ function App() {
         <header className="topbar">
           <div>
             <div className="title-row">
-              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера" : "Серии OLED"}</h1>
+              <h1>{activeView === "overview" ? "Обзор приложения" : activeView === "ivl" ? "ВАЯХ · эмулятор" : activeView === "spectrum" ? "Спектры · эмулятор" : activeView === "stability" ? "Стабильность · эмулятор" : activeView === "camera" ? "Камера" : activeView === "settings" ? "Настройки приложения" : "Серии OLED"}</h1>
               <span className="alpha-badge">ALPHA</span>
             </div>
             <p>
               {activeView === "overview"
                 ? "Аппаратный proof of concept новой desktop-оболочки"
-                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Очередь спектров · подбор T_int, CSV, Excel и журнал" : activeView === "stability" ? "Удержание тока или напряжения · динамическая уставка и журнал" : activeView === "camera" ? "Raspberry Pi service · LiveView и удалённые файлы" : "Создание, открытие и совместимый журнал измерений"}
+                : activeView === "ivl" ? "Измерение пикселя на эмуляторе · CSV, Excel и журнал" : activeView === "spectrum" ? "Очередь спектров · подбор T_int, CSV, Excel и журнал" : activeView === "stability" ? "Удержание тока или напряжения · динамическая уставка и журнал" : activeView === "camera" ? "Raspberry Pi service · LiveView и удалённые файлы" : activeView === "settings" ? "Общие параметры, оборудование и расширенные режимы измерений" : "Создание, открытие и совместимый журнал измерений"}
             </p>
           </div>
           <div className="topbar__hardware">
@@ -345,6 +346,8 @@ function App() {
               }
             }}
           />
+        ) : activeView === "settings" ? (
+          <SettingsWorkspace onSaved={() => void refreshAppState()} />
         ) : activeView === "series" ? (
             <SeriesWorkspace onMeasureIvl={(target) => { setGuidedCameraTarget(null); setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setGuidedCameraTarget(null); setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setGuidedCameraTarget(null); setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={() => void refreshAppState()} />
           ) : (

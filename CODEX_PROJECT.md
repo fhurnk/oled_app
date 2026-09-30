@@ -61,7 +61,11 @@ and stability orchestration with before/after photos, video, recoverable
 operator confirmations, five-second stability post-roll, JSON/CSV clock
 sidecars and an optional unchanged-source telemetry-video copy. Stage 6 is now
 software-complete for simulator-first checks; Raspberry Pi/Canon validation is
-still pending.
+still pending. Checkpoint 21 starts Stage 7 with validated settings APIs and
+`v2_frontend/src/SettingsWorkspace.tsx`: the existing `oled_app_settings.json`
+is loaded and atomically saved, cancel does not write, Canon dynamic controls
+are preserved, and saved measurement values feed the next IVL, spectrum and
+stability defaults.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -89,6 +93,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 6 free-camera controller: `oled_v2/camera.py`
 - v2 guided series-camera workflow: `oled_v2/camera_workflow.py`
 - v2 Stage 6 camera workspace: `v2_frontend/src/CameraWorkspace.tsx`
+- v2 Stage 7 settings service: `oled_v2/settings_service.py`
+- v2 Stage 7 settings workspace: `v2_frontend/src/SettingsWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

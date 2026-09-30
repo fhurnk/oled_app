@@ -31,6 +31,7 @@ from .security import (
     require_controller,
     require_session,
 )
+from .settings_service import SettingsService, SettingsValidationError
 from .series_service import (
     SeriesConflictError,
     SeriesNotFoundError,
@@ -76,6 +77,7 @@ def create_app(
     poc_controller = PocController(logger=logger)
     operation_gate = asyncio.Lock()
     series_service = SeriesService(default_root=series_root, logger=logger)
+    settings_service = SettingsService()
     ivl_controller = IvlController(series_service=series_service)
     spectrum_controller = SpectrumController(series_service=series_service)
     stability_controller = StabilityController(series_service=series_service)
@@ -137,6 +139,7 @@ def create_app(
     app.state.guided_camera = guided_camera
     app.state.poc_controller = poc_controller
     app.state.series_service = series_service
+    app.state.settings_service = settings_service
     app.state.started_at = _utc_now()
     app.state.ready = False
 
@@ -196,8 +199,8 @@ def create_app(
             "hardware": hardware,
             "series": series_service.app_summary(),
             "migration": {
-                "stage": 6,
-                "status": "stage_6_guided_camera_simulator_complete",
+                "stage": 7,
+                "status": "stage_7_settings_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
@@ -603,6 +606,28 @@ def create_app(
                 or poc_controller.snapshot(False)["active"]
                 or (guided_camera.snapshot()["active"] and not allow_guided)):
             raise HTTPException(status_code=409, detail="Дождитесь завершения текущей операции.")
+
+    @app.get("/api/settings")
+    async def settings_state(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(settings_service.state)
+
+    @app.put("/api/settings")
+    async def settings_update(
+        payload: dict = Body(...),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        async with operation_gate, camera_operation_gate:
+            require_hardware_idle()
+            camera_state = camera_controller.snapshot()
+            if camera_state.get("recording_active") or camera_state.get("liveview_active"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Остановите LiveView или запись перед сохранением настроек.",
+                )
+            try:
+                return await asyncio.to_thread(settings_service.update, payload)
+            except SettingsValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/ivl/state")
     async def ivl_state(_client_id: str = Depends(require_controller)) -> dict:

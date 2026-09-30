@@ -51,6 +51,13 @@ preview-кадр, полноразмерное фото и запись MP4 с �
 Backend выполняет сопровождаемый цикл вместе с ВАЯХ или стабильностью. Реальная
 Canon ещё не проходила аппаратную приёмку v2.
 
+Stage 7 начат рабочим пунктом `Настройки`. Новый экран читает и сохраняет тот же
+`oled_app_settings.json`: доступны общие пути и коэффициенты, эмулятор, камера,
+расширенные параметры ВАЯХ, спектров и стабильности. Backend проверяет значения
+до записи, сохраняет файл атомарно и не теряет динамические настройки Canon.
+Отмена возвращает последнее сохранённое состояние без записи; новые параметры
+измерений используются при следующем открытии соответствующей формы.
+
 ### Запуск Без Visual Studio
 
 Откройте `dist\OLED Measurement App 2 Alpha\OLED Measurement App 2 Alpha.exe`.
@@ -231,7 +238,7 @@ Raw CSV и итоговый XLSX отдельно сохраняют выбра�
 - `oled_measurement_app_v2_5.py` - оригинальное рабочее приложение, оставлено как референс.
 - `oled_modular_app.py` - новый основной вход модульного приложения.
 - `oled_app/` - новый пакет модульного приложения: константы, настройки, утилиты, серии, hardware-слой, отчеты, измерения и GUI без правки референса.
-- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 ВАЯХ/спектры/стабильность, свободная и сопровождаемая камера Stage 6 и защита desktop-сеанса v2.
+- `oled_v2_app.py`, `oled_v2/` - отдельные launcher, backend, Stage 2 PoC, Stage 4 series API, Stage 5 ВАЯХ/спектры/стабильность, свободная и сопровождаемая камера Stage 6, настройки Stage 7 и защита desktop-сеанса v2.
 - `v2_frontend/` - исходники React/Vite, live-графики, рабочие `SeriesWorkspace.tsx`, `IvlWorkspace.tsx`, `SpectrumWorkspace.tsx`, `StabilityWorkspace.tsx`, `CameraWorkspace.tsx` и `src/design-system/`; готовые assets входят в `oled_v2/static/`.
 - `requirements-v2.txt` - дополнительные зависимости v2 и сборщика.
 - `scripts/build_v2_frontend.ps1`, `scripts/build_v2_alpha.ps1` - production frontend и PyInstaller `onedir`.

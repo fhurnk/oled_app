@@ -223,7 +223,14 @@ def load_app_settings() -> Dict[str, Any]:
 
 
 def save_app_settings(settings: Dict[str, Any]) -> None:
-    app_settings_path().write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    path = app_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(settings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def ensure_default_sim_config(config_path: Optional[Path] = None) -> Path:
