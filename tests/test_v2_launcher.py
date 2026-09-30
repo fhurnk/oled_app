@@ -16,6 +16,7 @@ from oled_v2.launcher import (
     console_write,
     main,
     launch_desktop,
+    legacy_series_smoke,
     packaging_smoke,
     recalculation_smoke,
     report_smoke,
@@ -102,6 +103,22 @@ class V2LauncherTests(unittest.TestCase):
         self.assertEqual(payload["pixels"], 48)
         self.assertEqual(payload["spectrum_queue"], 4)
         self.assertTrue(payload["reopened"])
+
+    def test_legacy_series_smoke_preserves_v191_data(self) -> None:
+        output = io.StringIO()
+        logger = logging.getLogger("oled-v2-legacy-series-smoke-test")
+        with patch("oled_v2.launcher.configure_logging", return_value=logger):
+            with redirect_stdout(output):
+                self.assertEqual(legacy_series_smoke(), 0)
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["source_version"], "1.9.1")
+        self.assertEqual(payload["pixels"], 48)
+        self.assertEqual(payload["measurements"], 1)
+        self.assertTrue(payload["config_unchanged"])
+        self.assertTrue(payload["custom_sheet_preserved"])
+        self.assertTrue(payload["pixel_result_preserved"])
 
     def test_report_smoke_builds_diagnostic_workbook(self) -> None:
         output = io.StringIO()

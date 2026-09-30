@@ -918,6 +918,232 @@ def series_smoke() -> int:
     return 0
 
 
+def _create_v191_series_fixture(root: Path) -> tuple[Path, bytes, str, str]:
+    """Write a small v1.9.1-compatible series without using current managers."""
+
+    from openpyxl import Workbook
+
+    from oled_app.constants import (
+        CONFIG_FILE,
+        JOURNAL_FILE,
+        MEASUREMENT_HEADERS,
+        MEASUREMENTS_SHEET,
+        PIXEL_HEADERS,
+        PIXELS_SHEET,
+        QUARTERS_SHEET,
+        SERIES_SHEET,
+    )
+
+    series = root / "Старая серия v1.9.1"
+    series.mkdir(parents=True)
+    config = {
+        "app_version": "1.9.1",
+        "created_at": "2026-07-30 12:00:00",
+        "deposition_date": "2026-07-30",
+        "keyword": "legacy acceptance",
+        "series_led_color": "green",
+        "quarter_bases": {"1": "A", "2": "B", "3": "C", "4": "D"},
+        "quarter_descriptions": {
+            "1": "reference",
+            "2": "transport",
+            "3": "emission",
+            "4": "control",
+        },
+        "quarter_led_colors": {str(number): "green" for number in range(1, 5)},
+        "quarter_names": {"1": "AG", "2": "BG", "3": "CG", "4": "DG"},
+    }
+    config_bytes = json.dumps(config, ensure_ascii=False, indent=2).encode("utf-8")
+    (series / CONFIG_FILE).write_bytes(config_bytes)
+
+    pixel_id = "AG1_1_1"
+    relative_ivl = (
+        "measurements/01_IVL_VAH/2026-07-30/AG1_1_1/1/legacy_ivl.xlsx"
+    )
+    ivl_path = series / Path(relative_ivl)
+    ivl_path.parent.mkdir(parents=True)
+    ivl_workbook = Workbook()
+    ivl_sheet = ivl_workbook.active
+    ivl_sheet.title = "Cycle_1"
+    ivl_sheet.append(["Voltage OLED / LED measured (V)", "Current OLED / LED (mA)"])
+    ivl_sheet.append([0.0, 0.0])
+    ivl_sheet.append([3.0, 1.25])
+    ivl_workbook.save(ivl_path)
+    ivl_workbook.close()
+
+    journal = Workbook()
+    journal.remove(journal.active)
+    series_sheet = journal.create_sheet(SERIES_SHEET)
+    series_sheet.append(["OLED series journal"])
+    series_sheet.append([])
+    series_sheet.append(["App version", "1.9.1"])
+    series_sheet.append(["Created at", config["created_at"]])
+    series_sheet.append(["Deposition date", config["deposition_date"]])
+    series_sheet.append(["Keyword", config["keyword"]])
+
+    quarters = journal.create_sheet(QUARTERS_SHEET)
+    quarters.append([
+        "Quarter number",
+        "Quarter code/name",
+        "LED color",
+        "Short description",
+        "Generated pixel prefix example",
+    ])
+    codes = {1: "AG", 2: "BG", 3: "CG", 4: "DG"}
+    descriptions = config["quarter_descriptions"]
+    for quarter_number in range(1, 5):
+        code = codes[quarter_number]
+        quarters.append([
+            quarter_number,
+            code,
+            "Зеленый (G)",
+            descriptions[str(quarter_number)],
+            f"{code}{quarter_number}_1_1",
+        ])
+
+    pixels = journal.create_sheet(PIXELS_SHEET)
+    pixels.append(PIXEL_HEADERS)
+    for quarter_number in range(1, 5):
+        code = codes[quarter_number]
+        for substrate_number in range(1, 4):
+            for pixel_number in range(1, 5):
+                current_id = f"{code}{quarter_number}_{substrate_number}_{pixel_number}"
+                measured = current_id == pixel_id
+                pixels.append([
+                    current_id,
+                    code,
+                    quarter_number,
+                    descriptions[str(quarter_number)],
+                    "Зеленый (G)",
+                    substrate_number,
+                    pixel_number,
+                    "WORKING" if measured else "UNKNOWN",
+                    2.6 if measured else "",
+                    "2026-07-30 12:30:00" if measured else "",
+                    relative_ivl if measured else "",
+                    1.25 if measured else "",
+                    0.75 if measured else "",
+                    False,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "2026-07-30 12:30:00" if measured else "",
+                ])
+
+    measurements = journal.create_sheet(MEASUREMENTS_SHEET)
+    measurements.append(MEASUREMENT_HEADERS)
+    measurements.append([
+        "2026-07-30 12:30:00",
+        "2026-07-30",
+        "IVL",
+        pixel_id,
+        "WORKING",
+        relative_ivl,
+        '{"source": "v1.9.1"}',
+        "legacy measurement",
+    ])
+    operator_notes = journal.create_sheet("Operator Notes")
+    operator_notes["A1"] = "keep this legacy sheet"
+    journal.save(series / JOURNAL_FILE)
+    journal.close()
+    return series, config_bytes, pixel_id, relative_ivl
+
+
+def legacy_series_smoke() -> int:
+    """Open a v1.9.1 series through the packaged API and preserve its data."""
+
+    from openpyxl import load_workbook
+
+    from oled_app.constants import CONFIG_FILE, JOURNAL_FILE, MEASUREMENTS_SHEET, PIXELS_SHEET
+
+    logger = configure_logging()
+    client_id = "legacy-series-smoke-client-0001"
+    with tempfile.TemporaryDirectory(prefix="oled-v2-legacy-series-smoke-") as folder:
+        root = Path(folder) / "Серии OLED"
+        root.mkdir()
+        series_path, config_before, pixel_id, relative_ivl = _create_v191_series_fixture(root)
+        with LocalBackend(logger=logger, series_root=root) as backend:
+            assert backend.session is not None
+            session = backend.session
+            headers = {
+                SESSION_HEADER: session.token,
+                CLIENT_HEADER: client_id,
+                "Content-Type": "application/json",
+            }
+
+            def send(path: str, payload: Optional[dict] = None) -> dict:
+                request = urllib.request.Request(
+                    f"{session.origin}{path}",
+                    data=(json.dumps(payload).encode("utf-8") if payload is not None else None),
+                    headers=headers,
+                    method="POST" if payload is not None else "GET",
+                )
+                with urllib.request.urlopen(request, timeout=8.0) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            listed = send("/api/series/state")
+            recent = listed.get("recent") or []
+            if len(recent) != 1 or recent[0].get("measurements_count") != 1:
+                raise RuntimeError("Legacy series was not listed with its measurement history.")
+            opened = send("/api/series/open", {"path": str(series_path)})
+            active = opened.get("active") or {}
+            pixels = active.get("pixels") or []
+            measured = next((item for item in pixels if item.get("pixel_id") == pixel_id), None)
+            if len(pixels) != 48 or measured is None:
+                raise RuntimeError("Legacy series pixel map was not restored.")
+            if (
+                active.get("keyword") != "legacy acceptance"
+                or active.get("series_led_color") != "green"
+                or measured.get("status") != "WORKING"
+                or measured.get("opening_voltage_V") != 2.6
+                or measured.get("last_ivl_file") != relative_ivl
+            ):
+                raise RuntimeError("Legacy series metadata or IVL result changed while opening.")
+            metrics = active.get("metrics") or {}
+            if metrics.get("history") != 1 or metrics.get("ivl") != 1:
+                raise RuntimeError("Legacy measurement counters were not preserved.")
+
+        if (series_path / CONFIG_FILE).read_bytes() != config_before:
+            raise RuntimeError("Opening a legacy series unexpectedly rewrote its config.")
+        workbook = load_workbook(series_path / JOURNAL_FILE, data_only=True, read_only=True)
+        try:
+            if "Operator Notes" not in workbook.sheetnames:
+                raise RuntimeError("Opening a legacy series removed an unknown journal sheet.")
+            if workbook["Operator Notes"]["A1"].value != "keep this legacy sheet":
+                raise RuntimeError("Opening a legacy series changed operator notes.")
+            if workbook[MEASUREMENTS_SHEET].max_row != 2:
+                raise RuntimeError("Opening a legacy series changed measurement history.")
+            headers = [cell.value for cell in workbook[PIXELS_SHEET][1]]
+            pixel_column = headers.index("Pixel ID") + 1
+            status_column = headers.index("Last status") + 1
+            preserved = False
+            for row_number in range(2, workbook[PIXELS_SHEET].max_row + 1):
+                if workbook[PIXELS_SHEET].cell(row_number, pixel_column).value == pixel_id:
+                    preserved = (
+                        workbook[PIXELS_SHEET].cell(row_number, status_column).value
+                        == "WORKING"
+                    )
+                    break
+            if not preserved:
+                raise RuntimeError("Opening a legacy series lost the existing pixel status.")
+        finally:
+            workbook.close()
+
+        console_write(json.dumps({
+            "status": "completed",
+            "source_version": "1.9.1",
+            "pixels": len(pixels),
+            "measurements": 1,
+            "config_unchanged": True,
+            "custom_sheet_preserved": True,
+            "pixel_result_preserved": True,
+        }, ensure_ascii=False, indent=2))
+    return 0
+
+
 def report_smoke() -> int:
     """Build a diagnostic XLSX through the packaged report service."""
 
@@ -1145,6 +1371,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create and reopen a temporary compatible series through the authenticated API.",
     )
     parser.add_argument(
+        "--legacy-series-smoke",
+        action="store_true",
+        help="Open a v1.9.1 temporary series and verify that existing data stays intact.",
+    )
+    parser.add_argument(
         "--report-smoke",
         action="store_true",
         help="Build and verify a diagnostic XLSX through the v2 report service.",
@@ -1193,6 +1424,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return camera_smoke()
         if args.series_smoke:
             return series_smoke()
+        if args.legacy_series_smoke:
+            return legacy_series_smoke()
         if args.report_smoke:
             return report_smoke()
         if args.recalculation_smoke:

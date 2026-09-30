@@ -94,6 +94,12 @@ current distributable remains the tested PyInstaller `onedir` folder. Continue
 with functional-parity acceptance in the packaged application, including old
 series, simulator UI flows, DPI/system dialogs, and later real hardware and
 OriginPro validation.
+Checkpoint 26 starts Stage 9 acceptance with `--legacy-series-smoke`: a
+temporary stable-v1.9.1 series is discovered and opened through the packaged
+authenticated API while its config, IVL result, measurement history, pixel
+status and an unknown operator worksheet are verified intact. The automated
+contract is accepted; a read-only/manual pass on representative user series is
+still required before full parity is marked complete.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
