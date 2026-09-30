@@ -767,6 +767,44 @@ def series_smoke() -> int:
     return 0
 
 
+def report_smoke() -> int:
+    """Build a diagnostic XLSX through the packaged report service."""
+
+    from openpyxl import load_workbook
+    from .report import ReportService
+
+    logger = configure_logging()
+    with tempfile.TemporaryDirectory(prefix="oled-v2-report-smoke-") as folder:
+        series = Path(folder) / "series"
+        (series / "measurements" / "01_IVL_VAH" / "2026-09-30").mkdir(parents=True)
+        service = ReportService(logger=logger)
+        service.start(series, {
+            "mode": "ivl", "grouping": "settings", "ivl_date": "2026-09-30",
+            "spectrum_date": "", "excluded_quarters": [], "format": "xlsx",
+            "output_name": "report_smoke.xlsx",
+        })
+        deadline = time.monotonic() + 10.0
+        while service.snapshot()["active"] and time.monotonic() < deadline:
+            time.sleep(0.02)
+        state = service.snapshot()
+        output = series / "report_smoke.xlsx"
+        if state["status"] != "completed" or not output.is_file():
+            raise RuntimeError(f"Report smoke failed: {state}")
+        workbook = load_workbook(output, read_only=True)
+        try:
+            if "IVL_U_I_PD" not in workbook.sheetnames or "Spectra_by_voltage" in workbook.sheetnames:
+                raise RuntimeError("Report smoke workbook has unexpected sheets.")
+        finally:
+            workbook.close()
+        console_write(json.dumps({
+            "status": "completed",
+            "format": "xlsx",
+            "report_api": "ready",
+            "workbook_verified": True,
+        }, ensure_ascii=False))
+    return 0
+
+
 def launch_desktop(auto_close_after_s: Optional[float] = None) -> int:
     missing = [name for name, present in dependency_status().items() if not present]
     if missing:
@@ -838,6 +876,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create and reopen a temporary compatible series through the authenticated API.",
     )
     parser.add_argument(
+        "--report-smoke",
+        action="store_true",
+        help="Build and verify a diagnostic XLSX through the v2 report service.",
+    )
+    parser.add_argument(
         "--window-smoke",
         action="store_true",
         help="Open the WebView2 shell briefly, then close it automatically.",
@@ -865,6 +908,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return camera_smoke()
     if args.series_smoke:
         return series_smoke()
+    if args.report_smoke:
+        return report_smoke()
     try:
         return launch_desktop(auto_close_after_s=1.5 if args.window_smoke else None)
     except Exception as exc:

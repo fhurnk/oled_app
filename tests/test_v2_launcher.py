@@ -11,7 +11,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from oled_v2.launcher import console_write, series_smoke, status_lines
+from oled_v2.launcher import console_write, report_smoke, series_smoke, status_lines
 from oled_v2.logging_setup import log_directory, remove_expired_logs
 
 
@@ -62,6 +62,17 @@ class V2LauncherTests(unittest.TestCase):
         self.assertEqual(payload["pixels"], 48)
         self.assertEqual(payload["spectrum_queue"], 4)
         self.assertTrue(payload["reopened"])
+
+    def test_report_smoke_builds_diagnostic_workbook(self) -> None:
+        output = io.StringIO()
+        logger = logging.getLogger("oled-v2-report-smoke-test")
+        with patch("oled_v2.launcher.configure_logging", return_value=logger):
+            with redirect_stdout(output):
+                self.assertEqual(report_smoke(), 0)
+        payload = json.loads(output.getvalue())
+
+        self.assertEqual(payload["status"], "completed")
+        self.assertTrue(payload["workbook_verified"])
 
 
 if __name__ == "__main__":

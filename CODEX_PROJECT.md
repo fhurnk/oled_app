@@ -66,6 +66,11 @@ still pending. Checkpoint 21 starts Stage 7 with validated settings APIs and
 is loaded and atomically saved, cancel does not write, Canon dynamic controls
 are preserved, and saved measurement values feed the next IVL, spectrum and
 stability defaults.
+Checkpoint 22 adds `oled_v2/report.py` and
+`v2_frontend/src/ReportWorkspace.tsx`: full, IVL-only and spectra-only reports
+reuse the existing Origin/diagnostic-XLSX builder with dates, excluded
+quarters, series-scope grouping, selected spectral pixels and common or
+per-pixel voltage grids. Generation is backend-owned and recoverable in the UI.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.
@@ -81,7 +86,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 onedir build: `scripts/build_v2_alpha.ps1`
 - v2 status/smoke: `python oled_v2_app.py --status`,
   `python oled_v2_app.py --backend-smoke`, and
-  `python oled_v2_app.py --poc-smoke` / `--series-smoke`
+  `python oled_v2_app.py --poc-smoke` / `--series-smoke` /
+  `--report-smoke`
 - v2 Stage 2 coordinator: `oled_v2/poc.py`
 - v2 Stage 3 design system: `v2_frontend/src/design-system/`
 - v2 Stage 4 series bridge: `oled_v2/series_service.py`
@@ -95,6 +101,8 @@ application until v2 passes the full parity and hardware checklist.
 - v2 Stage 6 camera workspace: `v2_frontend/src/CameraWorkspace.tsx`
 - v2 Stage 7 settings service: `oled_v2/settings_service.py`
 - v2 Stage 7 settings workspace: `v2_frontend/src/SettingsWorkspace.tsx`
+- v2 Stage 7 report service: `oled_v2/report.py`
+- v2 Stage 7 report workspace: `v2_frontend/src/ReportWorkspace.tsx`
 - v2 implementation plan: `docs/v2_interface_plan.md`
 - v2 migration status: `docs/v2_migration_status.md`
 - v1.9.1 → v2 parity checklist: `docs/v2_functional_parity_checklist.md`

@@ -21,6 +21,7 @@ from .camera import CameraController
 from .camera_workflow import GuidedCameraWorkflow
 from .logging_setup import log_directory
 from .poc import PocBusyError, PocController
+from .report import ReportError, ReportService, ReportValidationError
 from .ivl import IvlController
 from .spectrum import SpectrumController
 from .stability import StabilityController
@@ -78,6 +79,7 @@ def create_app(
     operation_gate = asyncio.Lock()
     series_service = SeriesService(default_root=series_root, logger=logger)
     settings_service = SettingsService()
+    report_service = ReportService(logger=logger)
     ivl_controller = IvlController(series_service=series_service)
     spectrum_controller = SpectrumController(series_service=series_service)
     stability_controller = StabilityController(series_service=series_service)
@@ -115,6 +117,7 @@ def create_app(
             yield
         finally:
             await asyncio.to_thread(guided_camera.shutdown)
+            await asyncio.to_thread(report_service.shutdown)
             await asyncio.to_thread(ivl_controller.shutdown)
             await asyncio.to_thread(spectrum_controller.shutdown)
             await asyncio.to_thread(stability_controller.shutdown)
@@ -140,6 +143,7 @@ def create_app(
     app.state.poc_controller = poc_controller
     app.state.series_service = series_service
     app.state.settings_service = settings_service
+    app.state.report_service = report_service
     app.state.started_at = _utc_now()
     app.state.ready = False
 
@@ -200,7 +204,7 @@ def create_app(
             "series": series_service.app_summary(),
             "migration": {
                 "stage": 7,
-                "status": "stage_7_settings_in_progress",
+                "status": "stage_7_reports_in_progress",
                 "tkinter_default_preserved": True,
             },
         }
@@ -508,7 +512,8 @@ def create_app(
             if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
                     or stability_controller.snapshot()["active"]
                     or camera_controller.snapshot()["recording_active"]
-                    or guided_camera.snapshot()["active"]):
+                    or guided_camera.snapshot()["active"]
+                    or report_service.snapshot()["active"]):
                 raise HTTPException(status_code=409, detail="Завершите измерение перед изменением серии.")
             yield
 
@@ -604,8 +609,47 @@ def create_app(
         if (ivl_controller.snapshot()["active"] or spectrum_controller.snapshot()["active"]
                 or stability_controller.snapshot()["active"]
                 or poc_controller.snapshot(False)["active"]
-                or (guided_camera.snapshot()["active"] and not allow_guided)):
+                or (guided_camera.snapshot()["active"] and not allow_guided)
+                or report_service.snapshot()["active"]):
             raise HTTPException(status_code=409, detail="Дождитесь завершения текущей операции.")
+
+    def report_http_error(exc: Exception) -> HTTPException:
+        code = status.HTTP_422_UNPROCESSABLE_ENTITY if isinstance(exc, ReportValidationError) else status.HTTP_400_BAD_REQUEST
+        return HTTPException(status_code=code, detail=str(exc))
+
+    @app.get("/api/report/state")
+    async def report_state(_client_id: str = Depends(require_controller)) -> dict:
+        return await asyncio.to_thread(report_service.state, series_service.active_path)
+
+    @app.post("/api/report/preview")
+    async def report_preview(
+        payload: Optional[dict] = Body(default=None),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        try:
+            return await asyncio.to_thread(
+                report_service.state,
+                series_service.active_path,
+                payload or {},
+            )
+        except ReportError as exc:
+            raise report_http_error(exc) from exc
+
+    @app.post("/api/report/build", status_code=status.HTTP_202_ACCEPTED)
+    async def report_build(
+        payload: dict = Body(...),
+        _client_id: str = Depends(require_controller),
+    ) -> dict:
+        async with operation_gate:
+            require_hardware_idle()
+            active_path = series_service.active_path
+            if active_path is None:
+                raise HTTPException(status_code=409, detail="Сначала откройте серию.")
+            try:
+                generation = await asyncio.to_thread(report_service.start, active_path, payload)
+                return {"available": True, "generation": generation, "options": None}
+            except ReportError as exc:
+                raise report_http_error(exc) from exc
 
     @app.get("/api/settings")
     async def settings_state(_client_id: str = Depends(require_controller)) -> dict:

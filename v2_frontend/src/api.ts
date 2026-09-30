@@ -60,6 +60,59 @@ export type SettingsDocument = {
 
 export type SettingsState = { settings: SettingsDocument; path: string };
 
+export type ReportGeneration = {
+  status: "idle" | "running" | "completed" | "failed";
+  active: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  series_path: string | null;
+  result: null | {
+    output: string;
+    format: "origin" | "xlsx";
+    ivl_records: number;
+    spectrum_records: number;
+    warnings: string[];
+  };
+};
+
+export type ReportGroup = {
+  key: string;
+  label: string;
+  substrates: Array<{
+    name: string;
+    pixels: Array<{ pixel_id: string; voltages: number[] }>;
+  }>;
+};
+
+export type ReportOptions = {
+  series_path: string;
+  ivl_dates: string[];
+  spectrum_dates: string[];
+  available_modes: Array<"full" | "ivl" | "spectra">;
+  groups: ReportGroup[];
+};
+
+export type ReportState = {
+  available: boolean;
+  generation: ReportGeneration;
+  options: ReportOptions | null;
+};
+
+export type ReportInput = {
+  mode: "full" | "ivl" | "spectra";
+  grouping: "settings" | "quarters";
+  ivl_date: string;
+  spectrum_date: string;
+  excluded_quarters: number[];
+  format: "origin" | "xlsx";
+  output_name: string;
+  selection: Record<string, { substrate: string; pixel_id: string }>;
+  same_grid: boolean;
+  global_grid: { start: number; stop: number; step: number };
+  pixel_grids: Record<string, { start: number; stop: number; step: number }>;
+};
+
 export type PocPoint = {
   index: number;
   elapsed_s: number;
@@ -291,6 +344,24 @@ export function saveSettings(settings: SettingsDocument): Promise<SettingsState>
   return requestJson<SettingsState>("/api/settings", {
     method: "PUT",
     body: JSON.stringify(settings)
+  });
+}
+
+export function fetchReportState(signal?: AbortSignal): Promise<ReportState> {
+  return requestJson<ReportState>("/api/report/state", {}, signal);
+}
+
+export function previewReport(payload: Partial<ReportInput>): Promise<ReportState> {
+  return requestJson<ReportState>("/api/report/preview", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function startReport(payload: ReportInput): Promise<ReportState> {
+  return requestJson<ReportState>("/api/report/build", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 
