@@ -100,6 +100,10 @@ authenticated API while its config, IVL result, measurement history, pixel
 status and an unknown operator worksheet are verified intact. The automated
 contract is accepted; a read-only/manual pass on representative user series is
 still required before full parity is marked complete.
+Checkpoint 27 restores the legacy holder-map appearance in the v2 series
+workspace: a full-width white map above the table, physical L-shaped substrate
+groups in quarters `2 1 / 3 4`, deposition dates above, substrate IDs below,
+legacy status colors and selectable pixels in `1 2 / 4 3` order.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.

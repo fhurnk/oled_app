@@ -163,58 +163,66 @@ function HolderMap({
   selectedPixel: string;
   onSelect: (pixelId: string) => void;
 }) {
+  const depositionDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(active.deposition_date);
+  const mapDate = depositionDate
+    ? `${depositionDate[3]}.${depositionDate[2]}.${depositionDate[1].slice(-2)}`
+    : active.deposition_date;
+
   return (
-    <div className="holder-map" aria-label="Карта подложкодержателя">
-      {quarterOrder.map((number) => {
-        const quarter = active.quarters.find((item) => item.number === number);
-        if (!quarter) {
-          return null;
-        }
-        return (
-          <section className={`holder-quarter holder-quarter--q${number}`} key={number}>
-            <div className="holder-quarter__head">
-              <strong>{quarter.code}{number}</strong>
-              <span>{quarter.description || quarter.led_color_label}</span>
-            </div>
-            <div className="holder-quarter__substrates">
-              {[1, 2, 3].map((substrate) => {
-                const pixels = active.pixels.filter(
-                  (pixel) => pixel.quarter_number === number && pixel.substrate_number === substrate
-                );
-                return (
-                  <div className="holder-substrate" key={substrate}>
-                    <small>{quarter.code}{number}_{substrate}</small>
-                    <div className="holder-substrate__pixels">
-                      {pixelOrder.map((pixelNumber) => {
-                        const pixel = pixels.find((item) => item.pixel_number === pixelNumber);
-                        if (!pixel) {
-                          return <span key={pixelNumber} />;
-                        }
-                        const status = statusPresentation(pixel.status);
-                        return (
-                          <button
-                            aria-label={`${pixel.pixel_id}: ${status.label}`}
-                            className={`holder-pixel holder-pixel--${status.tone} ${
-                              selectedPixel === pixel.pixel_id ? "holder-pixel--selected" : ""
-                            }`}
-                            key={pixel.pixel_id}
-                            onClick={() => onSelect(pixel.pixel_id)}
-                            title={`${pixel.pixel_id} · ${status.label}`}
-                            type="button"
-                          >
-                            {pixel.pixel_number}
-                          </button>
-                        );
-                      })}
+    <div className="holder-map-scroll">
+      <div className="holder-map" aria-label="Карта подложкодержателя">
+        {quarterOrder.map((number) => {
+          const quarter = active.quarters.find((item) => item.number === number);
+          if (!quarter) {
+            return null;
+          }
+          return (
+            <section className={`holder-quarter holder-quarter--q${number}`} key={number}>
+              <div className="holder-quarter__head">
+                <strong>{number}</strong>
+                <span>{quarter.description || `${quarter.code}${number}`}</span>
+              </div>
+              <div className="holder-quarter__substrates">
+                {[1, 2, 3].map((substrate) => {
+                  const pixels = active.pixels.filter(
+                    (pixel) => pixel.quarter_number === number && pixel.substrate_number === substrate
+                  );
+                  return (
+                    <div className={`holder-substrate holder-substrate--s${substrate}`} key={substrate}>
+                      <time className="holder-substrate__date" dateTime={active.deposition_date}>{mapDate}</time>
+                      <div className="holder-substrate__pixels">
+                        {pixelOrder.map((pixelNumber) => {
+                          const pixel = pixels.find((item) => item.pixel_number === pixelNumber);
+                          if (!pixel) {
+                            return <span key={pixelNumber} />;
+                          }
+                          const status = statusPresentation(pixel.status);
+                          return (
+                            <button
+                              aria-label={`${pixel.pixel_id}: ${status.label}`}
+                              aria-pressed={selectedPixel === pixel.pixel_id}
+                              className={`holder-pixel holder-pixel--${status.tone} ${
+                                selectedPixel === pixel.pixel_id ? "holder-pixel--selected" : ""
+                              } ${pixel.status.toUpperCase() === "NEEDS_REVIEW" ? "holder-pixel--review" : ""}`}
+                              key={pixel.pixel_id}
+                              onClick={() => onSelect(pixel.pixel_id)}
+                              title={`${pixel.pixel_id} · ${status.label}`}
+                              type="button"
+                            >
+                              {pixel.pixel_number}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <strong className="holder-substrate__name">{quarter.code}{number}_{substrate}</strong>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        );
-      })}
-      <div className="holder-map__center">OLED</div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -527,6 +535,17 @@ export default function SeriesWorkspace({
           </Panel>
 
           <section className="series-stage4-grid">
+            <Panel className="series-holder-panel">
+              <div className="panel__header"><div><p className="panel__eyebrow">Физический порядок</p><h2>Карта пикселей</h2></div></div>
+              <HolderMap active={active} onSelect={setSelectedPixelId} selectedPixel={selectedPixelId} />
+              <div className="holder-legend">
+                <span><i className="holder-pixel--success" />Рабочий</span>
+                <span><i className="holder-pixel--warning" />Нет контакта</span>
+                <span><i className="holder-pixel--review" />Проверить</span>
+                <span><i className="holder-pixel--danger" />Нерабочий / пробой / остановлен</span>
+                <span><i className="holder-pixel--neutral" />Не измерен</span>
+              </div>
+            </Panel>
             <Panel className="series-stage4-table">
               <div className="panel__header">
                 <div><p className="panel__eyebrow">Показано: {filteredPixels.length}</p><h2>Таблица пикселей</h2></div>
@@ -579,17 +598,6 @@ export default function SeriesWorkspace({
             </Panel>
 
             <div className="series-stage4-side">
-              <Panel>
-                <div className="panel__header"><div><p className="panel__eyebrow">Физический порядок</p><h2>Карта держателя</h2></div></div>
-                <HolderMap active={active} onSelect={setSelectedPixelId} selectedPixel={selectedPixelId} />
-                <div className="holder-legend">
-                  <span><i className="holder-pixel--success" />Рабочий</span>
-                  <span><i className="holder-pixel--warning" />Внимание</span>
-                  <span><i className="holder-pixel--danger" />Стоп</span>
-                  <span><i className="holder-pixel--neutral" />Не измерен</span>
-                </div>
-              </Panel>
-
               <Panel className="pixel-inspector">
                 <div className="panel__header">
                   <div><p className="panel__eyebrow">Выбранный пиксель</p><h2>{selectedPixel?.pixel_id ?? "—"}</h2></div>
