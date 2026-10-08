@@ -95,6 +95,7 @@ class SeriesService:
         self._root = Path(configured_root).expanduser().resolve()
         self._active: Optional[SeriesManager] = None
         self._lock = threading.RLock()
+        self._thumbnail_lock = threading.Lock()
         self._logger = logger
 
     @property
@@ -265,9 +266,16 @@ class SeriesService:
                 thumbnail.relative_to(manager.series_folder.resolve())
             except ValueError as exc:
                 raise SeriesValidationError("Миниатюра находится вне папки серии.") from exc
-            if not thumbnail.is_file():
-                raise SeriesNotFoundError(f"Миниатюра ВАЯХ для {selected} не найдена.")
-            return thumbnail
+        # Workbook hydration/rendering runs in the API worker without holding
+        # the active-series lock, so state and pixel selection stay responsive.
+        with self._thumbnail_lock:
+            try:
+                if ivl_thumbnail_needs_refresh(thumbnail, workbook):
+                    create_ivl_thumbnail_from_workbook(workbook, thumbnail)
+            except Exception as exc:
+                self._log(f"IVL hover thumbnail failed pixel={selected}: {exc}")
+                raise SeriesValidationError(f"Не удалось подготовить ВАХ для {selected}.") from exc
+        return thumbnail
 
     def ivl_target(self, target: Dict[str, Any], params, settings) -> Dict[str, Any]:
         """Resolve a selected pixel without creating any measurement files."""
@@ -835,9 +843,10 @@ class SeriesService:
                 continue
             output = ivl_thumbnail_path(workbook, pixel_id)
             try:
-                if ivl_thumbnail_needs_refresh(output, workbook):
-                    create_ivl_thumbnail_from_workbook(workbook, output)
-                    refreshed += 1
+                with self._thumbnail_lock:
+                    if ivl_thumbnail_needs_refresh(output, workbook):
+                        create_ivl_thumbnail_from_workbook(workbook, output)
+                        refreshed += 1
             except Exception as exc:
                 self._log(f"IVL thumbnail refresh failed pixel={pixel_id}: {exc}")
         return refreshed

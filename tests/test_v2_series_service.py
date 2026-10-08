@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
@@ -160,12 +163,40 @@ class V2SeriesServiceTests(unittest.TestCase):
             max_photo_uA=0.6,
         )
 
+        # Opening an old series need not have pre-generated its previews.
+        # Rendering on hover must leave the active-series lock available.
+        from oled_app.processing.ivl_preview import create_ivl_thumbnail_from_workbook
+
+        def render_without_blocking_state(source, output):
+            completed = threading.Event()
+            worker = threading.Thread(target=lambda: (self.service.app_summary(), completed.set()), daemon=True)
+            worker.start()
+            self.assertTrue(completed.wait(2), "Hover rendering held the series lock")
+            worker.join()
+            return create_ivl_thumbnail_from_workbook(source, output)
+
+        with patch("oled_v2.series_service.create_ivl_thumbnail_from_workbook", side_effect=render_without_blocking_state) as render:
+            thumbnail = self.service.thumbnail_for_pixel(pixel_id)
+            self.assertTrue(thumbnail.is_file())
+            self.assertEqual(render.call_count, 1)
+            self.service.thumbnail_for_pixel(pixel_id)
+            self.assertEqual(render.call_count, 1, "A current preview should be reused")
+            newer = thumbnail.stat().st_mtime + 2
+            os.utime(workbook_path, (newer, newer))
+            self.service.thumbnail_for_pixel(pixel_id)
+            self.assertEqual(render.call_count, 2, "A changed workbook must refresh its preview")
+
         refreshed = self.service.refresh_active()
         row = next(item for item in refreshed["active"]["pixels"] if item["pixel_id"] == pixel_id)
         self.assertTrue(row["thumbnail_available"])
         self.assertEqual(refreshed["active"]["metrics"]["history"], 1)
         self.assertEqual(refreshed["active"]["history"][0]["type"], "IVL")
         self.assertTrue(self.service.thumbnail_for_pixel(pixel_id).is_file())
+
+    def test_hover_without_measurement_returns_not_found(self) -> None:
+        active = self.service.create_series(series_payload(self.root))["active"]
+        with self.assertRaisesRegex(SeriesNotFoundError, "нет файла ВАЯХ"):
+            self.service.thumbnail_for_pixel(active["pixels"][0]["pixel_id"])
 
     def test_invalid_root_and_date_return_operator_facing_errors(self) -> None:
         with self.assertRaises(SeriesNotFoundError):

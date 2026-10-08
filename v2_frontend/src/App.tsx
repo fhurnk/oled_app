@@ -359,7 +359,7 @@ function App() {
         ) : activeView === "diagnostics" ? (
           <DiagnosticsWorkspace />
         ) : activeView === "series" ? (
-            <SeriesWorkspace onMeasureIvl={(target) => { setGuidedCameraTarget(null); setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setGuidedCameraTarget(null); setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setGuidedCameraTarget(null); setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={() => void refreshAppState()} />
+            <SeriesWorkspace onMeasureIvl={(target) => { setGuidedCameraTarget(null); setIvlTarget(target); setActiveView("ivl"); }} onMeasureSpectrum={(target) => { setSpectrumTarget(target); setActiveView("spectrum"); }} onMeasureStability={(target) => { setGuidedCameraTarget(null); setStabilityTarget(target); setActiveView("stability"); }} onOpenCamera={(target) => { setGuidedCameraTarget(null); setCameraTarget(target); setActiveView("camera"); }} onSeriesChanged={refreshAppState} />
           ) : (
             <>
           <div className={`connection-banner connection-banner--${loadState}`}>

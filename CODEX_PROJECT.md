@@ -104,6 +104,10 @@ Checkpoint 27 restores the legacy holder-map appearance in the v2 series
 workspace: a full-width white map above the table, physical L-shaped substrate
 groups in quarters `2 1 / 3 4`, deposition dates above, substrate IDs below,
 legacy status colors and selectable pixels in `1 2 / 4 3` order.
+Checkpoint 28 adds a delayed, viewport-bounded IVL hover/focus preview in
+`v2_frontend/src/HolderPixelPreview.tsx`, with cancellation and per-series
+image caching. Missing/stale thumbnails are rendered on request in the API
+worker without holding the active-series lock.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.

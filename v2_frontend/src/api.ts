@@ -529,10 +529,10 @@ export function setSpectrumPriority(
   });
 }
 
-export async function fetchSeriesThumbnail(pixelId: string): Promise<Blob> {
+export async function fetchSeriesThumbnail(pixelId: string, signal?: AbortSignal): Promise<Blob> {
   const response = await fetch(
     `/api/series/current/thumbnail/${encodeURIComponent(pixelId)}`,
-    { cache: "no-store", headers: desktopHeaders() }
+    { cache: "no-store", headers: desktopHeaders(), signal }
   );
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { detail?: string } | null;

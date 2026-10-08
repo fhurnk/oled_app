@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Checkpoint 27 keeps the shared mutable prerelease version.
+# Checkpoint 28 keeps the shared mutable prerelease version.
 APP_VERSION = "2.0.0-alpha"
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 

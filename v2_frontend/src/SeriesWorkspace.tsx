@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import HolderPixelPreview, { type PixelPreviewTarget } from "./HolderPixelPreview";
 
 import {
   type ActiveSeries,
@@ -163,6 +164,24 @@ function HolderMap({
   selectedPixel: string;
   onSelect: (pixelId: string) => void;
 }) {
+  const [mouseTarget, setMouseTarget] = useState<PixelPreviewTarget | null>(null);
+  const [focusTarget, setFocusTarget] = useState<PixelPreviewTarget | null>(null);
+  const previewTarget = mouseTarget ?? focusTarget;
+  useEffect(() => {
+    const dismiss = () => { setMouseTarget(null); setFocusTarget(null); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  useEffect(() => { setMouseTarget(null); setFocusTarget(null); }, [active]);
   const depositionDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(active.deposition_date);
   const mapDate = depositionDate
     ? `${depositionDate[3]}.${depositionDate[2]}.${depositionDate[1].slice(-2)}`
@@ -201,12 +220,20 @@ function HolderMap({
                             <button
                               aria-label={`${pixel.pixel_id}: ${status.label}`}
                               aria-pressed={selectedPixel === pixel.pixel_id}
+                              aria-describedby={previewTarget?.pixel.pixel_id === pixel.pixel_id ? "holder-pixel-preview" : undefined}
                               className={`holder-pixel holder-pixel--${status.tone} ${
                                 selectedPixel === pixel.pixel_id ? "holder-pixel--selected" : ""
                               } ${pixel.status.toUpperCase() === "NEEDS_REVIEW" ? "holder-pixel--review" : ""}`}
                               key={pixel.pixel_id}
                               onClick={() => onSelect(pixel.pixel_id)}
-                              title={`${pixel.pixel_id} · ${status.label}`}
+                              onMouseEnter={(event) => setMouseTarget({ pixel, anchor: event.currentTarget.getBoundingClientRect() })}
+                              onMouseLeave={() => setMouseTarget(null)}
+                              onFocus={(event) => {
+                                if (event.currentTarget.matches(":focus-visible")) {
+                                  setFocusTarget({ pixel, anchor: event.currentTarget.getBoundingClientRect() });
+                                }
+                              }}
+                              onBlur={() => setFocusTarget(null)}
                               type="button"
                             >
                               {pixel.pixel_number}
@@ -223,6 +250,7 @@ function HolderMap({
           );
         })}
       </div>
+      <HolderPixelPreview target={previewTarget} pixels={active.pixels} />
     </div>
   );
 }
@@ -537,7 +565,7 @@ export default function SeriesWorkspace({
           <section className="series-stage4-grid">
             <Panel className="series-holder-panel">
               <div className="panel__header"><div><p className="panel__eyebrow">Физический порядок</p><h2>Карта пикселей</h2></div></div>
-              <HolderMap active={active} onSelect={setSelectedPixelId} selectedPixel={selectedPixelId} />
+              <HolderMap key={active.path} active={active} onSelect={setSelectedPixelId} selectedPixel={selectedPixelId} />
               <div className="holder-legend">
                 <span><i className="holder-pixel--success" />Рабочий</span>
                 <span><i className="holder-pixel--warning" />Нет контакта</span>
