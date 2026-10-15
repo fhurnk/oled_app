@@ -108,6 +108,9 @@ Checkpoint 28 adds a delayed, viewport-bounded IVL hover/focus preview in
 `v2_frontend/src/HolderPixelPreview.tsx`, with cancellation and per-series
 image caching. Missing/stale thumbnails are rendered on request in the API
 worker without holding the active-series lock.
+Checkpoint 29 fixes report-screen crashes when toggling excluded quarters,
+selecting spectral pixels or editing per-pixel voltage grids: React event values
+are captured synchronously before deferred state updates.
 Current progress is in
 `docs/v2_migration_status.md`. The modular Tkinter launcher remains the default
 application until v2 passes the full parity and hardware checklist.

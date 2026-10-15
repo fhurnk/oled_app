@@ -179,7 +179,10 @@ export default function ReportWorkspace() {
         {includesIvl && <SelectField label="Дата ВАЯХ" value={ivlDate} onChange={(event) => setIvlDate(event.currentTarget.value)}>{options.ivl_dates.map((date) => <option key={date}>{date}</option>)}</SelectField>}
         {includesSpectra && <SelectField label="Дата спектров" value={spectrumDate} onChange={(event) => setSpectrumDate(event.currentTarget.value)}>{options.spectrum_dates.map((date) => <option key={date}>{date}</option>)}</SelectField>}
       </div>
-      <div className="report-quarters"><span>Исключить четверти:</span>{[1, 2, 3, 4].map((quarter) => <label key={quarter}><input checked={excluded.includes(quarter)} type="checkbox" onChange={(event) => setExcluded((current) => event.currentTarget.checked ? [...current, quarter].sort() : current.filter((item) => item !== quarter))} />{quarter}</label>)}</div>
+      <div className="report-quarters"><span>Исключить четверти:</span>{[1, 2, 3, 4].map((quarter) => <label key={quarter}><input checked={excluded.includes(quarter)} type="checkbox" onChange={(event) => {
+        const checked = event.currentTarget.checked;
+        setExcluded((current) => checked ? [...current, quarter].sort() : current.filter((item) => item !== quarter));
+      }} />{quarter}</label>)}</div>
     </Panel>
 
     {includesSpectra && <Panel className="report-panel">
@@ -188,11 +191,23 @@ export default function ReportWorkspace() {
         {options.groups.map((group) => {
           const choice = selection[group.key];
           const substrate = group.substrates.find((item) => item.name === choice?.substrate) ?? group.substrates[0];
-          return <section key={group.key}><strong>{group.label}</strong><SelectField label="Подложка" value={choice?.substrate ?? ""} onChange={(event) => changeSubstrate(group, event.currentTarget.value)}>{group.substrates.map((item) => <option key={item.name}>{item.name}</option>)}</SelectField><SelectField label="Пиксель" value={choice?.pixel_id ?? ""} onChange={(event) => setSelection((current) => ({ ...current, [group.key]: { substrate: substrate.name, pixel_id: event.currentTarget.value } }))}>{substrate.pixels.map((pixel) => <option key={pixel.pixel_id}>{pixel.pixel_id}</option>)}</SelectField></section>;
+          return <section key={group.key}><strong>{group.label}</strong><SelectField label="Подложка" value={choice?.substrate ?? ""} onChange={(event) => changeSubstrate(group, event.currentTarget.value)}>{group.substrates.map((item) => <option key={item.name}>{item.name}</option>)}</SelectField><SelectField label="Пиксель" value={choice?.pixel_id ?? ""} onChange={(event) => {
+            const pixelId = event.currentTarget.value;
+            setSelection((current) => ({ ...current, [group.key]: { substrate: substrate.name, pixel_id: pixelId } }));
+          }}>{substrate.pixels.map((pixel) => <option key={pixel.pixel_id}>{pixel.pixel_id}</option>)}</SelectField></section>;
         })}
       </div>}
       <label className="report-check"><input checked={sameGrid} type="checkbox" onChange={(event) => setSameGrid(event.currentTarget.checked)} /><span>Одинаковая сетка напряжений для всех выбранных спектров</span></label>
-      {sameGrid ? <div className="report-voltage-grid"><TextField label="Начало, В" type="number" step="any" value={globalGrid.start} onChange={(event) => setGlobalGrid({ ...globalGrid, start: event.currentTarget.valueAsNumber })} /><TextField label="Конец, В" type="number" step="any" value={globalGrid.stop} onChange={(event) => setGlobalGrid({ ...globalGrid, stop: event.currentTarget.valueAsNumber })} /><TextField label="Шаг, В" type="number" step="any" value={globalGrid.step} onChange={(event) => setGlobalGrid({ ...globalGrid, step: event.currentTarget.valueAsNumber })} /></div> : <div className="report-individual-grids">{selectedPixels.map((pixel) => { const grid = pixelGrids[pixel.pixel_id] ?? defaultGrid(pixel.voltages); return <section key={pixel.pixel_id}><strong>{pixel.pixel_id}</strong><TextField label="Начало, В" type="number" step="any" value={grid.start} onChange={(event) => setPixelGrids((current) => ({ ...current, [pixel.pixel_id]: { ...grid, start: event.currentTarget.valueAsNumber } }))} /><TextField label="Конец, В" type="number" step="any" value={grid.stop} onChange={(event) => setPixelGrids((current) => ({ ...current, [pixel.pixel_id]: { ...grid, stop: event.currentTarget.valueAsNumber } }))} /><TextField label="Шаг, В" type="number" step="any" value={grid.step} onChange={(event) => setPixelGrids((current) => ({ ...current, [pixel.pixel_id]: { ...grid, step: event.currentTarget.valueAsNumber } }))} /></section>; })}</div>}
+      {sameGrid ? <div className="report-voltage-grid"><TextField label="Начало, В" type="number" step="any" value={globalGrid.start} onChange={(event) => setGlobalGrid({ ...globalGrid, start: event.currentTarget.valueAsNumber })} /><TextField label="Конец, В" type="number" step="any" value={globalGrid.stop} onChange={(event) => setGlobalGrid({ ...globalGrid, stop: event.currentTarget.valueAsNumber })} /><TextField label="Шаг, В" type="number" step="any" value={globalGrid.step} onChange={(event) => setGlobalGrid({ ...globalGrid, step: event.currentTarget.valueAsNumber })} /></div> : <div className="report-individual-grids">{selectedPixels.map((pixel) => { const grid = pixelGrids[pixel.pixel_id] ?? defaultGrid(pixel.voltages); return <section key={pixel.pixel_id}><strong>{pixel.pixel_id}</strong><TextField label="Начало, В" type="number" step="any" value={grid.start} onChange={(event) => {
+        const value = event.currentTarget.valueAsNumber;
+        setPixelGrids((current) => ({ ...current, [pixel.pixel_id]: { ...grid, start: value } }));
+      }} /><TextField label="Конец, В" type="number" step="any" value={grid.stop} onChange={(event) => {
+        const value = event.currentTarget.valueAsNumber;
+        setPixelGrids((current) => ({ ...current, [pixel.pixel_id]: { ...grid, stop: value } }));
+      }} /><TextField label="Шаг, В" type="number" step="any" value={grid.step} onChange={(event) => {
+        const value = event.currentTarget.valueAsNumber;
+        setPixelGrids((current) => ({ ...current, [pixel.pixel_id]: { ...grid, step: value } }));
+      }} /></section>; })}</div>}
     </Panel>}
 
     <Panel className="report-panel report-output">

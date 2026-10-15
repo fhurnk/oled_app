@@ -91,6 +91,36 @@ class V2ReportServiceTests(unittest.TestCase):
         finally:
             workbook.close()
 
+    def test_excluded_quarters_can_be_restored_in_scope_group(self) -> None:
+        root = self.series / "measurements" / "02_SPECTRA" / "2026-09-30"
+        for quarter in (1, 2):
+            pixel = f"CG{quarter}_1_1"
+            _write_spectrum(root / f"CG{quarter}" / f"CG{quarter}_1" / pixel
+                            / f"SPECTRUM_{pixel}.xlsx", pixel)
+
+        for excluded, expected in [
+            ([], {"CG1_1_1", "CG2_1_1"}),
+            ([1], {"CG2_1_1"}),
+            ([1, 2, 3, 4], set()),
+            ([2], {"CG1_1_1"}),
+            ([], {"CG1_1_1", "CG2_1_1"}),
+        ]:
+            with self.subTest(excluded=excluded):
+                state = self.service.state(self.series, {
+                    "grouping": "settings", "excluded_quarters": excluded,
+                })
+                self.assertTrue(state["available"])
+                self.assertEqual(state["options"]["available_modes"], ["spectra"])
+                groups = state["options"]["groups"]
+                self.assertEqual(len(groups), 1 if expected else 0)
+                pixels = {
+                    pixel["pixel_id"]
+                    for group in groups
+                    for substrate in group["substrates"]
+                    for pixel in substrate["pixels"]
+                }
+                self.assertEqual(pixels, expected)
+
     def test_spectrum_xlsx_uses_explicit_pixel_and_grid(self) -> None:
         root = self.series / "measurements" / "02_SPECTRA" / "2026-09-30"
         _write_spectrum(root / "CG1" / "CG1_1" / "CG1_1_1" / "SPECTRUM_CG1_1_1.xlsx", "CG1_1_1")
